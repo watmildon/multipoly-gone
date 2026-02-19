@@ -7,9 +7,13 @@ import java.awt.event.ActionEvent;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import javax.swing.AbstractAction;
 import javax.swing.DefaultListCellRenderer;
@@ -20,7 +24,11 @@ import javax.swing.JScrollPane;
 import javax.swing.ListSelectionModel;
 
 import org.openstreetmap.josm.actions.AutoScaleAction;
+import org.openstreetmap.josm.data.osm.DataSelectionListener;
 import org.openstreetmap.josm.data.osm.DataSet;
+import org.openstreetmap.josm.data.osm.OsmPrimitive;
+import org.openstreetmap.josm.data.osm.Relation;
+import org.openstreetmap.josm.data.osm.event.SelectionEventManager;
 import org.openstreetmap.josm.gui.MainApplication;
 import org.openstreetmap.josm.gui.SideButton;
 import org.openstreetmap.josm.gui.dialogs.ToggleDialog;
@@ -28,9 +36,11 @@ import org.openstreetmap.josm.gui.layer.MainLayerManager.ActiveLayerChangeEvent;
 import org.openstreetmap.josm.gui.layer.MainLayerManager.ActiveLayerChangeListener;
 import org.openstreetmap.josm.gui.layer.OsmDataLayer;
 import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixableRelation;
+import org.openstreetmap.josm.tools.ImageProvider;
 import org.openstreetmap.josm.tools.Shortcut;
 
-public class MultipolyGoneDialog extends ToggleDialog implements ActiveLayerChangeListener {
+public class MultipolyGoneDialog extends ToggleDialog
+        implements ActiveLayerChangeListener, DataSelectionListener {
 
     private final DefaultListModel<FixableRelation> listModel;
     private final JList<FixableRelation> list;
@@ -38,6 +48,9 @@ public class MultipolyGoneDialog extends ToggleDialog implements ActiveLayerChan
     private final AbstractAction refreshAction;
     private final AbstractAction goneAction;
     private final AbstractAction allGoneAction;
+
+    /** Guard to prevent selection feedback loop (list click -> map select -> list select -> ...) */
+    private boolean updatingSelection;
 
     public MultipolyGoneDialog() {
         super(
@@ -58,10 +71,20 @@ public class MultipolyGoneDialog extends ToggleDialog implements ActiveLayerChan
         list.setCellRenderer(new FixableRelationRenderer());
 
         list.addListSelectionListener(e -> {
-            if (!e.getValueIsAdjusting()) {
-                FixableRelation selected = list.getSelectedValue();
-                if (selected != null && selected.getRelation().getDataSet() != null) {
-                    selected.getRelation().getDataSet().setSelected(selected.getRelation());
+            if (!e.getValueIsAdjusting() && !updatingSelection) {
+                updatingSelection = true;
+                try {
+                    List<FixableRelation> selected = list.getSelectedValuesList();
+                    DataSet ds = getDataSet();
+                    if (ds != null && !selected.isEmpty()) {
+                        List<OsmPrimitive> primitives = new ArrayList<>();
+                        for (FixableRelation fr : selected) {
+                            primitives.add(fr.getRelation());
+                        }
+                        ds.setSelected(primitives);
+                    }
+                } finally {
+                    updatingSelection = false;
                 }
             }
         });
@@ -84,6 +107,7 @@ public class MultipolyGoneDialog extends ToggleDialog implements ActiveLayerChan
                 refresh();
             }
         };
+        new ImageProvider("dialogs", "refresh").getResource().attachImageIcon(refreshAction, true);
 
         goneAction = new AbstractAction(tr("Gone")) {
             @Override
@@ -91,6 +115,7 @@ public class MultipolyGoneDialog extends ToggleDialog implements ActiveLayerChan
                 fixSelected();
             }
         };
+        new ImageProvider("dialogs", "fix").getResource().attachImageIcon(goneAction, true);
 
         allGoneAction = new AbstractAction(tr("All Gone")) {
             @Override
@@ -98,6 +123,7 @@ public class MultipolyGoneDialog extends ToggleDialog implements ActiveLayerChan
                 fixAll();
             }
         };
+        new ImageProvider("dialogs", "fix").getResource().attachImageIcon(allGoneAction, true);
 
         createLayout(new JScrollPane(list), false, Arrays.asList(
             new SideButton(refreshAction),
@@ -135,7 +161,7 @@ public class MultipolyGoneDialog extends ToggleDialog implements ActiveLayerChan
     }
 
     private void fixAll() {
-        List<FixableRelation> all = new java.util.ArrayList<>();
+        List<FixableRelation> all = new ArrayList<>();
         for (int i = 0; i < listModel.size(); i++) {
             all.add(listModel.get(i));
         }
@@ -155,17 +181,56 @@ public class MultipolyGoneDialog extends ToggleDialog implements ActiveLayerChan
     @Override
     public void showNotify() {
         MainApplication.getLayerManager().addActiveLayerChangeListener(this);
+        SelectionEventManager.getInstance().addSelectionListenerForEdt(this);
         refresh();
     }
 
     @Override
     public void hideNotify() {
         MainApplication.getLayerManager().removeActiveLayerChangeListener(this);
+        SelectionEventManager.getInstance().removeSelectionListener(this);
     }
 
     @Override
     public void activeOrEditLayerChanged(ActiveLayerChangeEvent e) {
         refresh();
+    }
+
+    @Override
+    public void selectionChanged(SelectionChangeEvent event) {
+        if (updatingSelection) {
+            return;
+        }
+        updatingSelection = true;
+        try {
+            Collection<? extends OsmPrimitive> selected = event.getSelection();
+            Set<Relation> selectedRelations = selected.stream()
+                .filter(Relation.class::isInstance)
+                .map(Relation.class::cast)
+                .collect(Collectors.toSet());
+
+            if (selectedRelations.isEmpty()) {
+                list.clearSelection();
+                return;
+            }
+
+            List<Integer> indices = new ArrayList<>();
+            for (int i = 0; i < listModel.size(); i++) {
+                if (selectedRelations.contains(listModel.get(i).getRelation())) {
+                    indices.add(i);
+                }
+            }
+
+            if (indices.isEmpty()) {
+                list.clearSelection();
+            } else {
+                int[] arr = indices.stream().mapToInt(Integer::intValue).toArray();
+                list.setSelectedIndices(arr);
+                list.ensureIndexIsVisible(arr[0]);
+            }
+        } finally {
+            updatingSelection = false;
+        }
     }
 
     private static class FixableRelationRenderer extends DefaultListCellRenderer {

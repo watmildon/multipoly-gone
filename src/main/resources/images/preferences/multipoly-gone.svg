@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <!-- Green polygon icon for multipoly-gone preferences -->
+  <!-- Colors inlined for JOSM svgSalamander compatibility -->
+  <polygon fill="#4CAF50" stroke="#2E7D32" stroke-width="1.5" stroke-linejoin="round"
+    points="12,2 21,8 18,19 6,19 3,8"/>
+</svg>

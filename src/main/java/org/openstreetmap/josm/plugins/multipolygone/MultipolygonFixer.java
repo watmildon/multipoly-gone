@@ -16,6 +16,7 @@ import org.openstreetmap.josm.command.DeleteCommand;
 import org.openstreetmap.josm.command.SequenceCommand;
 import org.openstreetmap.josm.data.UndoRedoHandler;
 import org.openstreetmap.josm.data.osm.DataSet;
+import org.openstreetmap.josm.data.osm.AbstractPrimitive;
 import org.openstreetmap.josm.data.osm.OsmPrimitive;
 import org.openstreetmap.josm.data.osm.Relation;
 import org.openstreetmap.josm.data.osm.RelationMember;
@@ -99,16 +100,12 @@ public class MultipolygonFixer {
         List<Command> commands = new ArrayList<>();
         DataSet ds = relation.getDataSet();
 
-        // Create new closed way from the chained nodes
+        // Create new closed way from the chained nodes, with tags set before adding to dataset
         Way newWay = new Way();
         newWay.setNodes(fixable.getChainedNodes());
-        commands.add(new AddCommand(ds, newWay));
-
-        // Apply tags to the new way
         Map<String, String> tags = getTransferrableTags(relation);
-        for (Map.Entry<String, String> tag : tags.entrySet()) {
-            commands.add(new ChangePropertyCommand(newWay, tag.getKey(), tag.getValue()));
-        }
+        newWay.setKeys(tags);
+        commands.add(new AddCommand(ds, newWay));
 
         // Delete the relation
         commands.add(new DeleteCommand(relation));
@@ -144,14 +141,22 @@ public class MultipolygonFixer {
     }
 
     private static Set<String> getInsignificantTags() {
-        String pref = Config.getPref().get(PREF_INSIGNIFICANT_TAGS, DEFAULT_INSIGNIFICANT_TAGS);
         Set<String> tags = new HashSet<>();
+
+        // Add user-configured insignificant tags
+        String pref = Config.getPref().get(PREF_INSIGNIFICANT_TAGS, DEFAULT_INSIGNIFICANT_TAGS);
         for (String tag : pref.split(";")) {
             String trimmed = tag.trim();
             if (!trimmed.isEmpty()) {
                 tags.add(trimmed);
             }
         }
+
+        // Add JOSM's built-in discardable keys (tiger:*, created_by, odbl, etc.)
+        if (Config.getPref().getBoolean(MultipolyGonePreferences.PREF_USE_DISCARDABLE_KEYS, true)) {
+            tags.addAll(AbstractPrimitive.getDiscardableKeys());
+        }
+
         return tags;
     }
 }
