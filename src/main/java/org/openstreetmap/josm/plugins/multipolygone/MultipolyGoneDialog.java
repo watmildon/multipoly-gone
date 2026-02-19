@@ -35,15 +35,15 @@ import org.openstreetmap.josm.gui.dialogs.ToggleDialog;
 import org.openstreetmap.josm.gui.layer.MainLayerManager.ActiveLayerChangeEvent;
 import org.openstreetmap.josm.gui.layer.MainLayerManager.ActiveLayerChangeListener;
 import org.openstreetmap.josm.gui.layer.OsmDataLayer;
-import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixableRelation;
+import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixPlan;
 import org.openstreetmap.josm.tools.ImageProvider;
 import org.openstreetmap.josm.tools.Shortcut;
 
 public class MultipolyGoneDialog extends ToggleDialog
         implements ActiveLayerChangeListener, DataSelectionListener {
 
-    private final DefaultListModel<FixableRelation> listModel;
-    private final JList<FixableRelation> list;
+    private final DefaultListModel<FixPlan> listModel;
+    private final JList<FixPlan> list;
 
     private final AbstractAction refreshAction;
     private final AbstractAction goneAction;
@@ -68,17 +68,17 @@ public class MultipolyGoneDialog extends ToggleDialog
         listModel = new DefaultListModel<>();
         list = new JList<>(listModel);
         list.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
-        list.setCellRenderer(new FixableRelationRenderer());
+        list.setCellRenderer(new FixPlanRenderer());
 
         list.addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting() && !updatingSelection) {
                 updatingSelection = true;
                 try {
-                    List<FixableRelation> selected = list.getSelectedValuesList();
+                    List<FixPlan> selected = list.getSelectedValuesList();
                     DataSet ds = getDataSet();
                     if (ds != null && !selected.isEmpty()) {
                         List<OsmPrimitive> primitives = new ArrayList<>();
-                        for (FixableRelation fr : selected) {
+                        for (FixPlan fr : selected) {
                             primitives.add(fr.getRelation());
                         }
                         ds.setSelected(primitives);
@@ -93,7 +93,7 @@ public class MultipolyGoneDialog extends ToggleDialog
             @Override
             public void mouseClicked(MouseEvent e) {
                 if (e.getClickCount() == 2) {
-                    FixableRelation selected = list.getSelectedValue();
+                    FixPlan selected = list.getSelectedValue();
                     if (selected != null) {
                         AutoScaleAction.zoomTo(Collections.singleton(selected.getRelation()));
                     }
@@ -141,18 +141,24 @@ public class MultipolyGoneDialog extends ToggleDialog
         listModel.clear();
         DataSet ds = getDataSet();
         if (ds == null) {
+            setTitle(tr("Multipoly-Gone"));
             updateButtonState();
             return;
         }
-        List<FixableRelation> fixables = MultipolygonAnalyzer.findFixableRelations(ds);
-        for (FixableRelation f : fixables) {
+        List<FixPlan> fixables = MultipolygonAnalyzer.findFixableRelations(ds);
+        for (FixPlan f : fixables) {
             listModel.addElement(f);
+        }
+        if (fixables.isEmpty()) {
+            setTitle(tr("Multipoly-Gone"));
+        } else {
+            setTitle(tr("Multipoly-Gone: {0}", fixables.size()));
         }
         updateButtonState();
     }
 
     private void fixSelected() {
-        List<FixableRelation> selected = list.getSelectedValuesList();
+        List<FixPlan> selected = list.getSelectedValuesList();
         if (selected.isEmpty()) {
             return;
         }
@@ -161,7 +167,7 @@ public class MultipolyGoneDialog extends ToggleDialog
     }
 
     private void fixAll() {
-        List<FixableRelation> all = new ArrayList<>();
+        List<FixPlan> all = new ArrayList<>();
         for (int i = 0; i < listModel.size(); i++) {
             all.add(listModel.get(i));
         }
@@ -233,13 +239,13 @@ public class MultipolyGoneDialog extends ToggleDialog
         }
     }
 
-    private static class FixableRelationRenderer extends DefaultListCellRenderer {
+    private static class FixPlanRenderer extends DefaultListCellRenderer {
         @Override
         public Component getListCellRendererComponent(JList<?> jlist, Object value,
                 int index, boolean isSelected, boolean cellHasFocus) {
             JLabel label = (JLabel) super.getListCellRendererComponent(
                 jlist, value, index, isSelected, cellHasFocus);
-            if (value instanceof FixableRelation fr) {
+            if (value instanceof FixPlan fr) {
                 long id = fr.getRelation().getId();
                 String idStr = id < 0 ? "new" : String.valueOf(id);
                 label.setText(String.format("Relation %s: %s", idStr, fr.getDescription()));
