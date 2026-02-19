@@ -1,0 +1,97 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<osm version='0.6' generator='JOSM'>
+  <node id='-91451' action='modify' visible='true' lat='47.70620953512' lon='-122.21276701033' />
+  <node id='-91452' action='modify' visible='true' lat='47.70702536398' lon='-122.21158683836' />
+  <node id='-91453' action='modify' visible='true' lat='47.70590991336' lon='-122.21077144682' />
+  <node id='-91454' action='modify' visible='true' lat='47.70538647361' lon='-122.21198916972' />
+  <node id='-91456' action='modify' visible='true' lat='47.70459949912' lon='-122.21123278677' />
+  <node id='-91457' action='modify' visible='true' lat='47.70520597592' lon='-122.20995069087' />
+  <node id='-91471' action='modify' visible='true' lat='47.70621314501' lon='-122.21029401362' />
+  <node id='-91472' action='modify' visible='true' lat='47.70676184543' lon='-122.21033692896' />
+  <node id='-91473' action='modify' visible='true' lat='47.70672213704' lon='-122.20922649443' />
+  <node id='-91474' action='modify' visible='true' lat='47.70606513931' lon='-122.20928550303' />
+  <node id='-91476' action='modify' visible='true' lat='47.70612289768' lon='-122.20871687472' />
+  <node id='-91477' action='modify' visible='true' lat='47.70670408777' lon='-122.20873833239' />
+  <node id='-91478' action='modify' visible='true' lat='47.70670408777' lon='-122.20785856783' />
+  <node id='-91479' action='modify' visible='true' lat='47.70606513931' lon='-122.20785320342' />
+  <node id='-91499' action='modify' visible='true' lat='47.70578717623' lon='-122.20863640845' />
+  <node id='-91500' action='modify' visible='true' lat='47.70575829687' lon='-122.20755816042' />
+  <node id='-91501' action='modify' visible='true' lat='47.7052673452' lon='-122.20750988066' />
+  <node id='-91502' action='modify' visible='true' lat='47.70529261489' lon='-122.20848620474' />
+  <way id='-18600' action='modify' visible='true'>
+    <nd ref='-91451' />
+    <nd ref='-91452' />
+    <nd ref='-91453' />
+  </way>
+  <way id='-18602' action='modify' visible='true'>
+    <nd ref='-91451' />
+    <nd ref='-91454' />
+  </way>
+  <way id='-18603' action='modify' visible='true'>
+    <nd ref='-91454' />
+    <nd ref='-91453' />
+  </way>
+  <way id='-18611' action='modify' visible='true'>
+    <nd ref='-91454' />
+    <nd ref='-91456' />
+  </way>
+  <way id='-18612' action='modify' visible='true'>
+    <nd ref='-91456' />
+    <nd ref='-91457' />
+  </way>
+  <way id='-18613' action='modify' visible='true'>
+    <nd ref='-91457' />
+    <nd ref='-91453' />
+  </way>
+  <way id='-18635' action='modify' visible='true'>
+    <nd ref='-91471' />
+    <nd ref='-91472' />
+    <nd ref='-91473' />
+    <nd ref='-91474' />
+    <nd ref='-91471' />
+  </way>
+  <way id='-18639' action='modify' visible='true'>
+    <nd ref='-91476' />
+    <nd ref='-91477' />
+    <nd ref='-91478' />
+    <nd ref='-91479' />
+    <nd ref='-91476' />
+  </way>
+  <way id='-18686' action='modify' visible='true'>
+    <nd ref='-91499' />
+    <nd ref='-91500' />
+    <nd ref='-91501' />
+    <nd ref='-91502' />
+    <nd ref='-91499' />
+  </way>
+  <relation id='-67' action='modify' visible='true'>
+    <member type='way' ref='-18600' role='outer' />
+    <member type='way' ref='-18603' role='outer' />
+    <member type='way' ref='-18602' role='outer' />
+    <tag k='_test_id' v='3' />
+    <tag k='landuse' v='grass' />
+    <tag k='type' v='multipolygon' />
+  </relation>
+  <relation id='-101' action='modify' visible='true'>
+    <member type='way' ref='-18611' role='outer' />
+    <member type='way' ref='-18612' role='outer' />
+    <member type='way' ref='-18613' role='outer' />
+    <member type='way' ref='-18603' role='outer' />
+    <tag k='_test_id' v='4' />
+    <tag k='landuse' v='retail' />
+    <tag k='type' v='multipolygon' />
+  </relation>
+  <relation id='-125' action='modify' visible='true'>
+    <member type='way' ref='-18635' role='outer' />
+    <tag k='_test_id' v='2' />
+    <tag k='landuse' v='residential' />
+    <tag k='type' v='multipolygon' />
+  </relation>
+  <relation id='-128' action='modify' visible='true'>
+    <member type='way' ref='-18639' role='' />
+    <member type='way' ref='-18686' role='' />
+    <tag k='_test_id' v='1' />
+    <tag k='natural' v='wood' />
+    <tag k='type' v='multipolygon' />
+  </relation>
+</osm>

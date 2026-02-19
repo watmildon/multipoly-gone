@@ -1,0 +1,26 @@
+plugins {
+    id 'java'
+    id 'org.openstreetmap.josm' version '0.8.2'
+}
+
+josm {
+    pluginName = 'multipoly-gone'
+    josmCompileVersion = 19439
+    manifest {
+        description = 'Dissolve unnecessary multipolygon relations into simpler closed ways'
+        mainClass = 'org.openstreetmap.josm.plugins.multipolygone.MultipolyGonePlugin'
+        minJosmVersion = 19439
+    }
+}
+
+tasks.withType(JavaExec).configureEach {
+    jvmArgs += [
+        '--add-exports=java.base/sun.security.action=ALL-UNNAMED',
+        '--add-exports=java.desktop/com.sun.imageio.plugins.jpeg=ALL-UNNAMED',
+        '--add-exports=java.desktop/com.sun.imageio.spi=ALL-UNNAMED'
+    ]
+}
+
+repositories {
+    mavenCentral()
+}
