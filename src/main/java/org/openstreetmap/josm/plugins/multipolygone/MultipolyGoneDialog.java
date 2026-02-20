@@ -174,7 +174,7 @@ public class MultipolyGoneDialog extends ToggleDialog
         if (all.isEmpty()) {
             return;
         }
-        MultipolygonFixer.fixRelations(all);
+        MultipolygonFixer.fixRelationsUntilConvergence(all);
         refresh();
     }
 

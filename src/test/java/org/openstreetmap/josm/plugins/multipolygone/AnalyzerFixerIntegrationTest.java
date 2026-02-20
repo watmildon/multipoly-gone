@@ -598,4 +598,83 @@ class AnalyzerFixerIntegrationTest {
         assertEquals(countBefore, plansAfter.size(),
             "Undo should restore same number of fixable relations");
     }
+
+    // ---- Finalboss tests ----
+    // Input: 11 relations from real-world data (1 is type=boundary, not multipolygon)
+    // Expected: fixRelationsUntilConvergence resolves everything in one call
+
+    @Test
+    void finalboss_shouldFindFixableRelations() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-finalboss.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        assertFalse(plans.isEmpty(), "Should find fixable relations");
+    }
+
+    @Test
+    void finalboss_singlePassDoesNotConverge() {
+        // Documents the problem: a single fixRelations pass leaves fixable relations
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-finalboss.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+
+        MultipolygonFixer.fixRelations(plans);
+
+        List<FixPlan> remaining = MultipolygonAnalyzer.findFixableRelations(ds);
+        assertTrue(remaining.size() > 0,
+            "Single pass should NOT converge (remaining fixable relations demonstrate the need for iteration)");
+    }
+
+    @Test
+    void finalboss_iterativeConverges() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-finalboss.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+
+        MultipolygonFixer.fixRelationsUntilConvergence(plans);
+
+        List<FixPlan> remaining = MultipolygonAnalyzer.findFixableRelations(ds);
+        assertEquals(0, remaining.size(),
+            "After iterative fix, no relations should be fixable. Remaining: " +
+            remaining.stream()
+                .map(p -> "rel " + p.getRelation().getUniqueId() + ": " + p.getDescription())
+                .toList());
+    }
+
+    @Test
+    void finalboss_iterative_singleUndo() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-finalboss.osm");
+        List<FixPlan> plansBefore = MultipolygonAnalyzer.findFixableRelations(ds);
+        int countBefore = plansBefore.size();
+        long relCountBefore = ds.getRelations().stream().filter(r -> !r.isDeleted()).count();
+
+        MultipolygonFixer.fixRelationsUntilConvergence(plansBefore);
+
+        // Should be single undo
+        assertTrue(UndoRedoHandler.getInstance().hasUndoCommands());
+        UndoRedoHandler.getInstance().undo();
+
+        long relCountAfter = ds.getRelations().stream().filter(r -> !r.isDeleted()).count();
+        assertEquals(relCountBefore, relCountAfter,
+            "Single undo should restore all original relations");
+
+        List<FixPlan> plansAfter = MultipolygonAnalyzer.findFixableRelations(ds);
+        assertEquals(countBefore, plansAfter.size(),
+            "Single undo should restore same number of fixable relations");
+    }
+
+    @Test
+    void finalboss_iterative_noOrphanedWays() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-finalboss.osm");
+        MultipolygonFixer.fixRelationsUntilConvergence(
+            MultipolygonAnalyzer.findFixableRelations(ds));
+
+        List<Way> orphans = ds.getWays().stream()
+            .filter(w -> !w.isDeleted()
+                && w.getReferrers().stream()
+                    .noneMatch(r -> r instanceof Relation && !r.isDeleted())
+                && w.getKeys().keySet().stream()
+                    .noneMatch(k -> !k.startsWith("_") && !"source".equals(k) && !"created_by".equals(k)))
+            .filter(w -> w.getNodesCount() > 2)
+            .collect(Collectors.toList());
+        assertTrue(orphans.isEmpty(),
+            "No ways should be orphaned (standalone + untagged), found " + orphans.size());
+    }
 }

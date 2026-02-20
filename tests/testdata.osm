@@ -96,6 +96,13 @@
   <node id='-92073' action='modify' visible='true' lat='47.6917076528' lon='-122.22366601135' />
   <node id='-92074' action='modify' visible='true' lat='47.6909923605' lon='-122.22246674013' />
   <node id='-92075' action='modify' visible='true' lat='47.68984787243' lon='-122.2237419146' />
+  <node id='-92076' action='modify' visible='true' lat='47.70364996022' lon='-122.27949605446' />
+  <node id='-92077' action='modify' visible='true' lat='47.70770537447' lon='-122.27529988064' />
+  <node id='-92078' action='modify' visible='true' lat='47.70554252614' lon='-122.27056802506' />
+  <node id='-92079' action='modify' visible='true' lat='47.70241825343' lon='-122.27302323315' />
+  <node id='-92080' action='modify' visible='true' lat='47.69923370586' lon='-122.28061205814' />
+  <node id='-92081' action='modify' visible='true' lat='47.69974444829' lon='-122.28851336416' />
+  <node id='-92082' action='modify' visible='true' lat='47.70560260647' lon='-122.28601351593' />
   <way id='-19782' action='modify' visible='true'>
     <nd ref='-91938' />
     <nd ref='-91939' />
@@ -287,6 +294,26 @@
     <nd ref='-92075' />
     <nd ref='-92072' />
   </way>
+  <way id='-20102' action='modify' visible='true'>
+    <nd ref='-92076' />
+    <nd ref='-92077' />
+    <nd ref='-92078' />
+  </way>
+  <way id='-20104' action='modify' visible='true'>
+    <nd ref='-92078' />
+    <nd ref='-92079' />
+    <nd ref='-92076' />
+  </way>
+  <way id='-20106' action='modify' visible='true'>
+    <nd ref='-92076' />
+    <nd ref='-92080' />
+    <nd ref='-92081' />
+    <nd ref='-92082' />
+  </way>
+  <way id='-20109' action='modify' visible='true'>
+    <nd ref='-92082' />
+    <nd ref='-92076' />
+  </way>
   <relation id='-352' action='modify' visible='true'>
     <member type='way' ref='-19785' role='outer' />
     <member type='way' ref='-19786' role='inner' />
@@ -382,6 +409,15 @@
     <member type='way' ref='-20068' role='inner' />
     <member type='way' ref='-20069' role='inner' />
     <tag k='_test_id' v='6.2' />
+    <tag k='natural' v='water' />
+    <tag k='type' v='multipolygon' />
+  </relation>
+  <relation id='-414' action='modify' visible='true'>
+    <member type='way' ref='-20102' role='outer' />
+    <member type='way' ref='-20104' role='outer' />
+    <member type='way' ref='-20106' role='outer' />
+    <member type='way' ref='-20109' role='outer' />
+    <tag k='_test_id' v='10' />
     <tag k='natural' v='water' />
     <tag k='type' v='multipolygon' />
   </relation>

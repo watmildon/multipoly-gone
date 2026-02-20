@@ -29,17 +29,80 @@ import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixOp;
 import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixOpType;
 import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixPlan;
 import org.openstreetmap.josm.spi.preferences.Config;
+import org.openstreetmap.josm.tools.Logging;
 
 public class MultipolygonFixer {
 
     private static final String PREF_INSIGNIFICANT_TAGS = "multipolygone.insignificantTags";
     private static final String DEFAULT_INSIGNIFICANT_TAGS = "source;created_by";
+    private static final int MAX_ITERATIONS = 10;
 
     public static void fixRelations(List<FixPlan> plans) {
         if (plans.isEmpty()) {
             return;
         }
 
+        List<Command> allCommands = buildAllCommands(plans);
+
+        if (!allCommands.isEmpty()) {
+            Command cmd = SequenceCommand.wrapIfNeeded(
+                tr("Dissolve unnecessary multipolygon(s)"), allCommands);
+            UndoRedoHandler.getInstance().add(cmd);
+        }
+    }
+
+    /**
+     * Fixes all given plans, then re-analyzes the DataSet for newly fixable relations
+     * and repeats until convergence. All changes are wrapped in a single SequenceCommand
+     * so that Ctrl+Z undoes the entire operation.
+     */
+    public static void fixRelationsUntilConvergence(List<FixPlan> initialPlans) {
+        if (initialPlans.isEmpty()) {
+            return;
+        }
+
+        DataSet ds = initialPlans.get(0).getRelation().getDataSet();
+        List<Command> allCommands = new ArrayList<>();
+        List<FixPlan> currentPlans = initialPlans;
+
+        for (int iteration = 0; iteration < MAX_ITERATIONS && !currentPlans.isEmpty(); iteration++) {
+            List<Command> passCommands = buildAllCommands(currentPlans);
+            if (passCommands.isEmpty()) {
+                break;
+            }
+
+            // Execute commands directly to mutate the DataSet (without UndoRedoHandler)
+            for (Command cmd : passCommands) {
+                cmd.executeCommand();
+            }
+            allCommands.addAll(passCommands);
+
+            // Re-analyze for newly fixable relations
+            List<FixPlan> newPlans = MultipolygonAnalyzer.findFixableRelations(ds);
+            if (newPlans.size() >= currentPlans.size()) {
+                Logging.warn("Multipoly-Gone: iteration did not reduce fixable count ({0} -> {1}), stopping",
+                    currentPlans.size(), newPlans.size());
+                break;
+            }
+            currentPlans = newPlans;
+        }
+
+        if (allCommands.isEmpty()) {
+            return;
+        }
+
+        // Undo all commands to restore original DataSet state
+        for (int i = allCommands.size() - 1; i >= 0; i--) {
+            allCommands.get(i).undoCommand();
+        }
+
+        // Wrap everything and add to UndoRedoHandler (which replays as a single undoable unit)
+        Command cmd = SequenceCommand.wrapIfNeeded(
+            tr("Dissolve unnecessary multipolygon(s)"), allCommands);
+        UndoRedoHandler.getInstance().add(cmd);
+    }
+
+    private static List<Command> buildAllCommands(List<FixPlan> plans) {
         Set<String> insignificantTags = getInsignificantTags();
 
         // All processed relations should be ignored for cleanup referrer checks,
@@ -72,11 +135,7 @@ public class MultipolygonFixer {
             }
         }
 
-        if (!allCommands.isEmpty()) {
-            Command cmd = SequenceCommand.wrapIfNeeded(
-                tr("Dissolve unnecessary multipolygon(s)"), allCommands);
-            UndoRedoHandler.getInstance().add(cmd);
-        }
+        return allCommands;
     }
 
     private static List<Command> buildCommandsForPlan(FixPlan plan, Set<Way> waysToCleanup,
