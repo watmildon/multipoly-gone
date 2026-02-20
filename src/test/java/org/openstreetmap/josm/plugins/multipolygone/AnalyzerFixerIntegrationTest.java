@@ -57,44 +57,51 @@ class AnalyzerFixerIntegrationTest {
             "After undo, should find same number of fixable relations");
     }
 
-    // ---- Test case 10: touching rings (figure-8) ----
-
     // ---- Megafarmland tests ----
+    // Input: 1 relation (20032389), 124 outers + 21 inners, all open fragments
+    // Expected: relation survives with 1 outer + 10 inners, 2 standalone landuse=farmland ways
 
     @Test
-    void megafarmland_shouldFindFixableRelations() {
+    void megafarmland_shouldFind1FixableRelation() {
         DataSet ds = JosmTestSetup.loadDataSet("testdata-megafarmland.osm");
         List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
-        assertFalse(plans.isEmpty(),
-            "Megafarmland test data should have fixable relations");
+        assertEquals(1, plans.size());
+        assertFalse(plans.get(0).dissolvesRelation(),
+            "Should not dissolve (inners remain)");
+    }
+
+    @Test
+    void megafarmland_fixAll_relationSurvivesWithConsolidatedOuter() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-megafarmland.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+
+        MultipolygonFixer.fixRelations(plans);
+
+        Relation rel = plans.get(0).getRelation();
+        assertFalse(rel.isDeleted(), "Relation should survive with inners");
+        assertEquals(11, rel.getMembersCount(),
+            "Should have 1 outer + 10 inners");
+
+        long outerCount = rel.getMembers().stream()
+            .filter(m -> "outer".equals(m.getRole())).count();
+        long innerCount = rel.getMembers().stream()
+            .filter(m -> "inner".equals(m.getRole())).count();
+        assertEquals(1, outerCount, "Should have 1 consolidated outer");
+        assertEquals(10, innerCount, "Should have 10 inners");
+
+        Way outer = rel.getMembers().stream()
+            .filter(m -> "outer".equals(m.getRole()))
+            .findFirst().orElseThrow().getWay();
+        assertTrue(outer.isClosed(), "Consolidated outer should be closed");
     }
 
     @Test
     void megafarmland_fixAll_extractsStandaloneOuters() {
         DataSet ds = JosmTestSetup.loadDataSet("testdata-megafarmland.osm");
         List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
-        assertEquals(1, plans.size());
-
-        FixPlan plan = plans.get(0);
-        assertFalse(plan.dissolvesRelation(),
-            "Should not dissolve (inners remain)");
 
         MultipolygonFixer.fixRelations(plans);
 
-        Relation rel = plan.getRelation();
-        assertFalse(rel.isDeleted(), "Relation should survive with inners");
-
-        // After extract: only 1 outer (the blob with inners) should remain in the relation
-        long outerCount = rel.getMembers().stream()
-            .filter(m -> "outer".equals(m.getRole())).count();
-        assertEquals(1, outerCount,
-            "Only 1 outer blob (the one with inners) should remain in relation");
-
-        long innerCount = rel.getMembers().stream()
-            .filter(m -> "inner".equals(m.getRole())).count();
-        assertTrue(innerCount > 0, "Inners should still be in relation");
-
-        // The 2 extracted outers should be standalone tagged ways
         List<Way> farmlandWays = ds.getWays().stream()
             .filter(w -> !w.isDeleted() && "farmland".equals(w.get("landuse"))
                 && w.isClosed()
@@ -106,24 +113,284 @@ class AnalyzerFixerIntegrationTest {
     }
 
     @Test
-    void megafarmland_fixAll_multiPass_eventuallyConverges() {
+    void megafarmland_fixAll_allSurvivingWaysAreClosed() {
         DataSet ds = JosmTestSetup.loadDataSet("testdata-megafarmland.osm");
+        MultipolygonFixer.fixRelations(MultipolygonAnalyzer.findFixableRelations(ds));
 
-        // SPLIT_RELATION can create sub-relations that are themselves fixable,
-        // so multiple passes may be needed to fully simplify.
-        int maxPasses = 5;
-        int pass = 0;
-        List<FixPlan> plans;
-        while (pass < maxPasses) {
-            plans = MultipolygonAnalyzer.findFixableRelations(ds);
-            if (plans.isEmpty()) break;
-            MultipolygonFixer.fixRelations(plans);
-            pass++;
-        }
+        List<Way> unclosed = ds.getWays().stream()
+            .filter(w -> !w.isDeleted() && !w.isClosed())
+            .collect(Collectors.toList());
+        assertTrue(unclosed.isEmpty(),
+            "All surviving ways should be closed, but found " + unclosed.size() + " unclosed");
+    }
+
+    @Test
+    void megafarmland_fixAll_convergesInOnePass() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-megafarmland.osm");
+        MultipolygonFixer.fixRelations(MultipolygonAnalyzer.findFixableRelations(ds));
 
         List<FixPlan> remaining = MultipolygonAnalyzer.findFixableRelations(ds);
         assertEquals(0, remaining.size(),
-            "After " + pass + " passes, megafarmland should have no fixable relations");
+            "After fixing, no relations should be fixable");
+    }
+
+    @Test
+    void megafarmland_fixAll_undoRestoresAll() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-megafarmland.osm");
+        long relCountBefore = ds.getRelations().stream().filter(r -> !r.isDeleted()).count();
+
+        MultipolygonFixer.fixRelations(MultipolygonAnalyzer.findFixableRelations(ds));
+        UndoRedoHandler.getInstance().undo();
+
+        long relCountAfter = ds.getRelations().stream().filter(r -> !r.isDeleted()).count();
+        assertEquals(relCountBefore, relCountAfter, "Undo should restore all relations");
+        assertEquals(1, MultipolygonAnalyzer.findFixableRelations(ds).size(),
+            "Undo should restore the fixable relation");
+    }
+
+    // ---- Megaheath tests ----
+    // Input: 1 relation (19980748), 7 closed outers + 20 closed inners, all 27 ways closed
+    // Expected: split into 7 sub-relations (1 outer + N inners each), 0 standalone ways
+
+    @Test
+    void megaheath_shouldFind1FixableRelation() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-megaheath.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        assertEquals(1, plans.size());
+    }
+
+    @Test
+    void megaheath_fixAll_splitsInto7Relations() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-megaheath.osm");
+        MultipolygonFixer.fixRelations(MultipolygonAnalyzer.findFixableRelations(ds));
+
+        List<Relation> surviving = ds.getRelations().stream()
+            .filter(r -> !r.isDeleted())
+            .collect(Collectors.toList());
+        assertEquals(7, surviving.size(),
+            "Should split into 7 sub-relations");
+
+        // Every surviving relation should have natural=heath
+        for (Relation rel : surviving) {
+            assertEquals("heath", rel.get("natural"),
+                "Each sub-relation should have natural=heath");
+            assertEquals("multipolygon", rel.get("type"),
+                "Each sub-relation should have type=multipolygon");
+        }
+    }
+
+    @Test
+    void megaheath_fixAll_eachRelationHas1Outer() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-megaheath.osm");
+        MultipolygonFixer.fixRelations(MultipolygonAnalyzer.findFixableRelations(ds));
+
+        for (Relation rel : ds.getRelations()) {
+            if (rel.isDeleted()) continue;
+            long outerCount = rel.getMembers().stream()
+                .filter(m -> "outer".equals(m.getRole())).count();
+            assertEquals(1, outerCount,
+                "Relation " + rel.getUniqueId() + " should have exactly 1 outer");
+
+            Way outer = rel.getMembers().stream()
+                .filter(m -> "outer".equals(m.getRole()))
+                .findFirst().orElseThrow().getWay();
+            assertTrue(outer.isClosed(),
+                "Outer of relation " + rel.getUniqueId() + " should be closed");
+        }
+    }
+
+    @Test
+    void megaheath_fixAll_originalRelationKeptAsLargest() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-megaheath.osm");
+        MultipolygonFixer.fixRelations(MultipolygonAnalyzer.findFixableRelations(ds));
+
+        Relation original = findRelationById(ds, 19980748);
+        assertNotNull(original, "Original relation should still exist");
+        assertFalse(original.isDeleted(), "Original relation should survive as largest component");
+
+        long innerCount = original.getMembers().stream()
+            .filter(m -> "inner".equals(m.getRole())).count();
+        assertEquals(10, innerCount,
+            "Original relation should keep 10 inners (largest component)");
+    }
+
+    @Test
+    void megaheath_fixAll_noWaysDeleted() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-megaheath.osm");
+        long waysBefore = ds.getWays().stream().filter(w -> !w.isDeleted()).count();
+
+        MultipolygonFixer.fixRelations(MultipolygonAnalyzer.findFixableRelations(ds));
+
+        // Megaheath has all closed ways — no consolidation needed, no ways deleted
+        long waysAfter = ds.getWays().stream().filter(w -> !w.isDeleted()).count();
+        assertTrue(waysAfter >= waysBefore,
+            "No original ways should be deleted (all were already closed)");
+    }
+
+    @Test
+    void megaheath_fixAll_noStandaloneTaggedWays() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-megaheath.osm");
+        MultipolygonFixer.fixRelations(MultipolygonAnalyzer.findFixableRelations(ds));
+
+        List<Way> standalone = ds.getWays().stream()
+            .filter(w -> !w.isDeleted()
+                && (w.hasKey("natural") || w.hasKey("landuse"))
+                && w.getReferrers().stream()
+                    .noneMatch(r -> r instanceof Relation && !r.isDeleted()))
+            .collect(Collectors.toList());
+        assertTrue(standalone.isEmpty(),
+            "All tagged ways should remain in relations, but found " + standalone.size() + " standalone");
+    }
+
+    @Test
+    void megaheath_fixAll_convergesInOnePass() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-megaheath.osm");
+        MultipolygonFixer.fixRelations(MultipolygonAnalyzer.findFixableRelations(ds));
+
+        List<FixPlan> remaining = MultipolygonAnalyzer.findFixableRelations(ds);
+        assertEquals(0, remaining.size(),
+            "After fixing, no relations should be fixable");
+    }
+
+    @Test
+    void megaheath_fixAll_undoRestoresAll() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-megaheath.osm");
+        long relCountBefore = ds.getRelations().stream().filter(r -> !r.isDeleted()).count();
+
+        MultipolygonFixer.fixRelations(MultipolygonAnalyzer.findFixableRelations(ds));
+        UndoRedoHandler.getInstance().undo();
+
+        long relCountAfter = ds.getRelations().stream().filter(r -> !r.isDeleted()).count();
+        assertEquals(relCountBefore, relCountAfter, "Undo should restore original relation count");
+        assertEquals(1, MultipolygonAnalyzer.findFixableRelations(ds).size(),
+            "Undo should restore the fixable relation");
+    }
+
+    // ---- Megawetland tests ----
+    // Input: 1 relation (19980750), 233 outers + 34 inners
+    // Expected: 4 relations (original + 3 new), each 1 outer + N inners,
+    //           48 standalone wetland ways, no untagged orphans
+
+    @Test
+    void megawetland_shouldFind1FixableRelation() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-megawetland.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        assertEquals(1, plans.size());
+    }
+
+    @Test
+    void megawetland_fixAll_splitsInto4Relations() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-megawetland.osm");
+        MultipolygonFixer.fixRelations(MultipolygonAnalyzer.findFixableRelations(ds));
+
+        List<Relation> surviving = ds.getRelations().stream()
+            .filter(r -> !r.isDeleted())
+            .collect(Collectors.toList());
+        assertEquals(4, surviving.size(),
+            "Should split into 4 sub-relations");
+
+        for (Relation rel : surviving) {
+            assertEquals("wetland", rel.get("natural"),
+                "Each sub-relation should have natural=wetland");
+        }
+    }
+
+    @Test
+    void megawetland_fixAll_eachRelationHas1ClosedOuter() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-megawetland.osm");
+        MultipolygonFixer.fixRelations(MultipolygonAnalyzer.findFixableRelations(ds));
+
+        for (Relation rel : ds.getRelations()) {
+            if (rel.isDeleted()) continue;
+            long outerCount = rel.getMembers().stream()
+                .filter(m -> "outer".equals(m.getRole())).count();
+            assertEquals(1, outerCount,
+                "Relation " + rel.getUniqueId() + " should have exactly 1 outer");
+
+            Way outer = rel.getMembers().stream()
+                .filter(m -> "outer".equals(m.getRole()))
+                .findFirst().orElseThrow().getWay();
+            assertTrue(outer.isClosed(),
+                "Outer of relation " + rel.getUniqueId() + " should be closed");
+        }
+    }
+
+    @Test
+    void megawetland_fixAll_originalRelationKeptAsLargest() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-megawetland.osm");
+        MultipolygonFixer.fixRelations(MultipolygonAnalyzer.findFixableRelations(ds));
+
+        Relation original = findRelationById(ds, 19980750);
+        assertNotNull(original);
+        assertFalse(original.isDeleted(), "Original relation should survive as largest component");
+
+        long innerCount = original.getMembers().stream()
+            .filter(m -> "inner".equals(m.getRole())).count();
+        assertEquals(20, innerCount,
+            "Original relation should keep 20 inners (largest component)");
+    }
+
+    @Test
+    void megawetland_fixAll_48standaloneWetlandWays() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-megawetland.osm");
+        MultipolygonFixer.fixRelations(MultipolygonAnalyzer.findFixableRelations(ds));
+
+        List<Way> standaloneWetland = ds.getWays().stream()
+            .filter(w -> !w.isDeleted()
+                && "wetland".equals(w.get("natural"))
+                && "wet_meadow".equals(w.get("wetland"))
+                && w.getReferrers().stream()
+                    .noneMatch(r -> r instanceof Relation && !r.isDeleted()))
+            .collect(Collectors.toList());
+        assertEquals(48, standaloneWetland.size(),
+            "48 standalone outers should be extracted with wetland tags");
+
+        for (Way w : standaloneWetland) {
+            assertTrue(w.isClosed(),
+                "Standalone wetland way " + w.getUniqueId() + " should be closed");
+        }
+    }
+
+    @Test
+    void megawetland_fixAll_noUntaggedOrphans() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-megawetland.osm");
+        MultipolygonFixer.fixRelations(MultipolygonAnalyzer.findFixableRelations(ds));
+
+        // No surviving way should be both standalone AND untagged
+        List<Way> orphans = ds.getWays().stream()
+            .filter(w -> !w.isDeleted()
+                && w.getReferrers().stream()
+                    .noneMatch(r -> r instanceof Relation && !r.isDeleted())
+                && w.getKeys().keySet().stream()
+                    .noneMatch(k -> !k.startsWith("_") && !"source".equals(k) && !"created_by".equals(k)))
+            .filter(w -> w.getNodesCount() > 2)
+            .collect(Collectors.toList());
+        assertTrue(orphans.isEmpty(),
+            "No ways should be orphaned (standalone + untagged), found " + orphans.size());
+    }
+
+    @Test
+    void megawetland_fixAll_convergesInOnePass() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-megawetland.osm");
+        MultipolygonFixer.fixRelations(MultipolygonAnalyzer.findFixableRelations(ds));
+
+        List<FixPlan> remaining = MultipolygonAnalyzer.findFixableRelations(ds);
+        assertEquals(0, remaining.size(),
+            "After fixing, no relations should be fixable");
+    }
+
+    @Test
+    void megawetland_fixAll_undoRestoresAll() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-megawetland.osm");
+        long relCountBefore = ds.getRelations().stream().filter(r -> !r.isDeleted()).count();
+
+        MultipolygonFixer.fixRelations(MultipolygonAnalyzer.findFixableRelations(ds));
+        UndoRedoHandler.getInstance().undo();
+
+        long relCountAfter = ds.getRelations().stream().filter(r -> !r.isDeleted()).count();
+        assertEquals(relCountBefore, relCountAfter, "Undo should restore original relation count");
+        assertEquals(1, MultipolygonAnalyzer.findFixableRelations(ds).size(),
+            "Undo should restore the fixable relation");
     }
 
     // ---- Real-world data tests ----
