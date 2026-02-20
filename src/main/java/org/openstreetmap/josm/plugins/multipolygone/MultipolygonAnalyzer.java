@@ -189,14 +189,22 @@ public class MultipolygonAnalyzer {
             return null;
         }
 
-        // Detect disconnected components among all member ways
+        // Try the single-relation path first — it handles all original test cases
+        // and relations where outers form valid rings (even with disconnected closed ways).
+        FixPlan singleResult = analyzeSingleRelation(relation, outerWays, innerWays);
+        if (singleResult != null) {
+            return singleResult;
+        }
+
+        // Single-relation path failed (e.g., outers can't form rings globally).
+        // Try splitting into disconnected components (e.g., megafarmland).
         List<Way> allWays = new ArrayList<>(outerWays);
         allWays.addAll(innerWays);
         List<Set<Way>> components = findConnectedComponents(allWays);
 
         if (components.size() <= 1) {
-            // Single component: use original analysis path
-            return analyzeSingleRelation(relation, outerWays, innerWays);
+            // Only one component and single-relation already failed — not fixable
+            return null;
         }
 
         // Multiple components: analyze each independently
