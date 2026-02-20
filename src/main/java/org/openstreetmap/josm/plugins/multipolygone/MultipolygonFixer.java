@@ -24,6 +24,7 @@ import org.openstreetmap.josm.data.osm.OsmPrimitive;
 import org.openstreetmap.josm.data.osm.Relation;
 import org.openstreetmap.josm.data.osm.RelationMember;
 import org.openstreetmap.josm.data.osm.Way;
+import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.ComponentResult;
 import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixOp;
 import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixOpType;
 import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixPlan;
@@ -162,6 +163,180 @@ public class MultipolygonFixer {
                     }
                     commands.add(new DeleteCommand(relation));
                     relationDeleted = true;
+                }
+
+                case SPLIT_RELATION -> {
+                    Set<Way> waysToRemoveFromRelation = new HashSet<>();
+                    Map<Way, Way> splitReplacements = new HashMap<>();
+                    // Non-dissolving components that need to become sub-relations
+                    List<List<RelationMember>> subRelationMemberLists = new ArrayList<>();
+
+                    for (ComponentResult comp : op.getComponents()) {
+                        if (comp == null) continue;
+
+                        Map<WayChainBuilder.Ring, Way> compRingToWay = new HashMap<>();
+                        // Track replacements local to this component for sub-relation building
+                        Map<Way, Way> compReplacements = new HashMap<>();
+
+                        for (FixOp subOp : comp.getOperations()) {
+                            switch (subOp.getType()) {
+                                case CONSOLIDATE_RINGS -> {
+                                    for (WayChainBuilder.Ring ring : subOp.getRings()) {
+                                        Way newWay = new Way();
+                                        newWay.setNodes(ring.getNodes());
+                                        commands.add(new AddCommand(ds, newWay));
+                                        compRingToWay.put(ring, newWay);
+                                        for (Way src : ring.getSourceWays()) {
+                                            splitReplacements.put(src, newWay);
+                                            compReplacements.put(src, newWay);
+                                        }
+                                        waysToCleanup.addAll(ring.getSourceWays());
+                                    }
+                                }
+                                case EXTRACT_OUTERS -> {
+                                    for (WayChainBuilder.Ring ring : subOp.getRings()) {
+                                        Way targetWay = compRingToWay.get(ring);
+                                        if (targetWay != null) {
+                                            targetWay.setKeys(tags);
+                                        } else if (ring.isAlreadyClosed()) {
+                                            targetWay = ring.getSourceWays().get(0);
+                                            for (Map.Entry<String, String> tag : tags.entrySet()) {
+                                                commands.add(new ChangePropertyCommand(targetWay, tag.getKey(), tag.getValue()));
+                                            }
+                                        }
+                                        waysToRemoveFromRelation.addAll(ring.getSourceWays());
+                                    }
+                                }
+                                case DISSOLVE -> {
+                                    for (WayChainBuilder.Ring ring : subOp.getRings()) {
+                                        Way targetWay = compRingToWay.get(ring);
+                                        if (targetWay != null) {
+                                            targetWay.setKeys(tags);
+                                        } else if (ring.isAlreadyClosed()) {
+                                            targetWay = ring.getSourceWays().get(0);
+                                            for (Map.Entry<String, String> tag : tags.entrySet()) {
+                                                commands.add(new ChangePropertyCommand(targetWay, tag.getKey(), tag.getValue()));
+                                            }
+                                        }
+                                    }
+                                    waysToRemoveFromRelation.addAll(comp.getOuterWays());
+                                    waysToRemoveFromRelation.addAll(comp.getInnerWays());
+                                }
+                                case TOUCHING_INNER_MERGE -> {
+                                    for (List<Node> wayNodes : subOp.getMergedWays()) {
+                                        Way newWay = new Way();
+                                        newWay.setNodes(wayNodes);
+                                        newWay.setKeys(tags);
+                                        commands.add(new AddCommand(ds, newWay));
+                                    }
+                                    waysToRemoveFromRelation.addAll(comp.getOuterWays());
+                                    waysToRemoveFromRelation.addAll(comp.getInnerWays());
+                                    waysToCleanup.addAll(comp.getOuterWays());
+                                    waysToCleanup.addAll(comp.getInnerWays());
+                                }
+                                default -> { }
+                            }
+                        }
+
+                        // Non-dissolving component: build member list for a sub-relation
+                        if (!comp.dissolvesCompletely()) {
+                            Set<Way> compWaySet = new HashSet<>();
+                            compWaySet.addAll(comp.getOuterWays());
+                            compWaySet.addAll(comp.getInnerWays());
+                            List<RelationMember> subMembers = new ArrayList<>();
+                            Set<Way> alreadyReplacedInComp = new HashSet<>();
+
+                            for (RelationMember member : relation.getMembers()) {
+                                if (!member.isWay()) continue;
+                                Way way = member.getWay();
+                                if (!compWaySet.contains(way)) continue;
+
+                                if (compReplacements.containsKey(way)) {
+                                    Way replacement = compReplacements.get(way);
+                                    if (!alreadyReplacedInComp.contains(replacement)) {
+                                        subMembers.add(new RelationMember(member.getRole(), replacement));
+                                        alreadyReplacedInComp.add(replacement);
+                                    }
+                                } else {
+                                    subMembers.add(member);
+                                }
+                            }
+                            if (!subMembers.isEmpty()) {
+                                subRelationMemberLists.add(subMembers);
+                            }
+                            // Mark these ways for removal from the original relation
+                            waysToRemoveFromRelation.addAll(comp.getOuterWays());
+                            waysToRemoveFromRelation.addAll(comp.getInnerWays());
+                        }
+                    }
+
+                    // Create sub-relations: keep the largest in the original relation,
+                    // create new relations for the rest
+                    if (!subRelationMemberLists.isEmpty()) {
+                        // Find the largest sub-relation to keep in the original
+                        int largestIdx = 0;
+                        for (int i = 1; i < subRelationMemberLists.size(); i++) {
+                            if (subRelationMemberLists.get(i).size() > subRelationMemberLists.get(largestIdx).size()) {
+                                largestIdx = i;
+                            }
+                        }
+
+                        // Create new sub-relations for all except the largest
+                        Map<String, String> relTags = new java.util.LinkedHashMap<>(relation.getKeys());
+                        for (int i = 0; i < subRelationMemberLists.size(); i++) {
+                            if (i == largestIdx) continue;
+                            Relation subRel = new Relation();
+                            subRel.setKeys(relTags);
+                            subRel.setMembers(subRelationMemberLists.get(i));
+                            commands.add(new AddCommand(ds, subRel));
+                        }
+
+                        // Un-mark the largest component's ways from removal —
+                        // they stay in the original relation
+                        List<RelationMember> keptMembers = subRelationMemberLists.get(largestIdx);
+                        for (RelationMember m : keptMembers) {
+                            if (m.isWay()) {
+                                waysToRemoveFromRelation.remove(m.getWay());
+                            }
+                        }
+                    }
+
+                    // Modify the original relation: remove consumed/split-out members,
+                    // replace consolidated ones
+                    Relation modified = new Relation(relation);
+                    List<RelationMember> splitMembers = new ArrayList<>();
+                    Set<Way> alreadyReplacedInSplit = new HashSet<>();
+
+                    for (RelationMember member : relation.getMembers()) {
+                        if (!member.isWay()) {
+                            splitMembers.add(member);
+                            continue;
+                        }
+                        Way way = member.getWay();
+
+                        if (waysToRemoveFromRelation.contains(way)) {
+                            continue;
+                        }
+
+                        if (splitReplacements.containsKey(way)) {
+                            Way replacement = splitReplacements.get(way);
+                            if (!alreadyReplacedInSplit.contains(replacement)) {
+                                splitMembers.add(new RelationMember(member.getRole(), replacement));
+                                alreadyReplacedInSplit.add(replacement);
+                            }
+                            continue;
+                        }
+
+                        splitMembers.add(member);
+                    }
+
+                    if (splitMembers.isEmpty()) {
+                        commands.add(new DeleteCommand(relation));
+                        relationDeleted = true;
+                    } else {
+                        modified.setMembers(splitMembers);
+                        commands.add(new ChangeCommand(relation, modified));
+                    }
                 }
             }
         }
