@@ -517,12 +517,7 @@ public class MultipolygonAnalyzer {
                     null, null, String.join(", ", descParts));
             }
 
-            if (!extractable.isEmpty()) {
-                ops.add(new FixOp(FixOpType.DISSOLVE, retained, null));
-                descParts.add("remainder dissolved");
-                return new ComponentResult(outerWays, innerWays, ops, true,
-                    null, null, String.join(", ", descParts));
-            }
+            // Inner doesn't touch outer — relation must be kept with this outer+inner pair
         }
 
         // Component survives with remaining members

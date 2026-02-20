@@ -50,13 +50,16 @@ public class MultipolygonFixer {
 
         List<Command> allCommands = new ArrayList<>();
         Set<Way> waysToCleanup = new HashSet<>();
+        // Track {source-way-set} → consolidated-way across all plans so that when
+        // multiple relations reference the exact same set of ways, consolidation is shared
+        Map<Set<Way>, Way> globalConsolidations = new HashMap<>();
 
         for (FixPlan plan : plans) {
             Relation relation = plan.getRelation();
             if (relation.isDeleted()) {
                 continue;
             }
-            allCommands.addAll(buildCommandsForPlan(plan, waysToCleanup));
+            allCommands.addAll(buildCommandsForPlan(plan, waysToCleanup, globalConsolidations));
         }
 
         // Cleanup pass: delete unused source ways
@@ -76,7 +79,8 @@ public class MultipolygonFixer {
         }
     }
 
-    private static List<Command> buildCommandsForPlan(FixPlan plan, Set<Way> waysToCleanup) {
+    private static List<Command> buildCommandsForPlan(FixPlan plan, Set<Way> waysToCleanup,
+            Map<Set<Way>, Way> globalConsolidations) {
         List<Command> commands = new ArrayList<>();
         Relation relation = plan.getRelation();
         DataSet ds = relation.getDataSet();
@@ -94,15 +98,26 @@ public class MultipolygonFixer {
             switch (op.getType()) {
                 case CONSOLIDATE_RINGS -> {
                     for (WayChainBuilder.Ring ring : op.getRings()) {
-                        Way newWay = new Way();
-                        newWay.setNodes(ring.getNodes());
-                        commands.add(new AddCommand(ds, newWay));
-                        ringToWay.put(ring, newWay);
+                        Set<Way> sourceSet = new HashSet<>(ring.getSourceWays());
+                        // Check if these exact source ways were already consolidated by a prior plan
+                        Way existing = globalConsolidations.get(sourceSet);
+                        if (existing != null) {
+                            ringToWay.put(ring, existing);
+                            for (Way src : ring.getSourceWays()) {
+                                memberReplacements.put(src, existing);
+                            }
+                        } else {
+                            Way newWay = new Way();
+                            newWay.setNodes(ring.getNodes());
+                            commands.add(new AddCommand(ds, newWay));
+                            ringToWay.put(ring, newWay);
 
-                        for (Way src : ring.getSourceWays()) {
-                            memberReplacements.put(src, newWay);
+                            for (Way src : ring.getSourceWays()) {
+                                memberReplacements.put(src, newWay);
+                            }
+                            globalConsolidations.put(sourceSet, newWay);
+                            waysToCleanup.addAll(ring.getSourceWays());
                         }
-                        waysToCleanup.addAll(ring.getSourceWays());
                     }
                 }
 
@@ -112,6 +127,9 @@ public class MultipolygonFixer {
                         if (targetWay != null) {
                             // Was consolidated in a prior step — tag the new way
                             targetWay.setKeys(tags);
+                            // Also mark the consolidated way for removal from the relation,
+                            // since source ways were already replaced by it
+                            membersToRemove.add(targetWay);
                         } else if (ring.isAlreadyClosed()) {
                             // Tag existing way in place
                             targetWay = ring.getSourceWays().get(0);
@@ -292,11 +310,22 @@ public class MultipolygonFixer {
                         }
 
                         // Un-mark the largest component's ways from removal —
-                        // they stay in the original relation
+                        // they stay in the original relation.
+                        // Un-mark both the final member ways (replacements + inners)
+                        // AND their source ways so that source ways can be found
+                        // by splitReplacements during the member update loop.
                         List<RelationMember> keptMembers = subRelationMemberLists.get(largestIdx);
+                        Set<Way> keptWays = new HashSet<>();
                         for (RelationMember m : keptMembers) {
                             if (m.isWay()) {
+                                keptWays.add(m.getWay());
                                 waysToRemoveFromRelation.remove(m.getWay());
+                            }
+                        }
+                        // Also un-mark source ways that map to kept replacement ways
+                        for (Map.Entry<Way, Way> entry : splitReplacements.entrySet()) {
+                            if (keptWays.contains(entry.getValue())) {
+                                waysToRemoveFromRelation.remove(entry.getKey());
                             }
                         }
                     }
@@ -357,7 +386,9 @@ public class MultipolygonFixer {
                 // Was this way replaced by a consolidated ring?
                 if (memberReplacements.containsKey(way)) {
                     Way replacement = memberReplacements.get(way);
-                    if (!alreadyReplaced.contains(replacement)) {
+                    // Skip if the replacement was itself extracted (e.g., consolidated then extracted)
+                    if (!membersToRemove.contains(replacement)
+                            && !alreadyReplaced.contains(replacement)) {
                         newMembers.add(new RelationMember(member.getRole(), replacement));
                         alreadyReplaced.add(replacement);
                     }

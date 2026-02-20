@@ -77,9 +77,10 @@ public class WayChainBuilder {
             endpointMap.computeIfAbsent(last, k -> new ArrayList<>()).add(new WayEndpoint(way, true));
         }
 
-        // Every endpoint must have degree 2 for valid closed loops
+        // Every endpoint must have even degree for valid closed loops.
+        // Degree 2 = simple ring, degree 4+ = junction where rings touch.
         for (List<WayEndpoint> endpoints : endpointMap.values()) {
-            if (endpoints.size() != 2) {
+            if (endpoints.size() % 2 != 0) {
                 return Optional.empty();
             }
         }

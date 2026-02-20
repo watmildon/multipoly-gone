@@ -48,8 +48,8 @@ class MultipolygonAnalyzerTest {
 
     @Test
     void findsExpectedNumberOfFixableRelations() {
-        assertTrue(fixPlans.size() >= 9,
-            "Expected at least 9 fixable relations, got " + fixPlans.size());
+        assertTrue(fixPlans.size() >= 10,
+            "Expected at least 10 fixable relations, got " + fixPlans.size());
     }
 
     @Test
@@ -108,27 +108,33 @@ class MultipolygonAnalyzerTest {
         assertEquals(1, consolidate.getRings().size(), "Should consolidate into 1 ring");
     }
 
-    // --- Test case 5: 2 closed outers + 1 inner → EXTRACT_OUTERS ---
+    // --- Test case 5: 2 closed outers + 1 inner → EXTRACT_OUTERS (relation kept) ---
 
     @Test
-    void testCase5_extractOuters() {
+    void testCase5_extractOuters_relationKept() {
         FixPlan plan = plansByTestId.get("5");
         assertNotNull(plan, "Test case 5 should be fixable");
-        assertTrue(opTypes(plan).contains(FixOpType.EXTRACT_OUTERS),
-            "Test 5 should include EXTRACT_OUTERS");
+        assertEquals(List.of(FixOpType.EXTRACT_OUTERS), opTypes(plan));
+        assertFalse(plan.dissolvesRelation(),
+            "Test 5 should keep relation (1 outer + 1 inner remain)");
+
+        FixOp extract = plan.getOperations().get(0);
+        assertEquals(1, extract.getRings().size(),
+            "Should extract 1 standalone outer");
     }
 
-    // --- Test case 6: complex extract + dissolve ---
+    // --- Test case 6: complex extract (relation kept with 1 outer + 1 inner) ---
 
     @Test
-    void testCase6_extractAndDissolve() {
+    void testCase6_extractOuters_relationKept() {
         FixPlan plan = plansByTestId.get("6");
         assertNotNull(plan, "Test case 6 should be fixable");
 
         List<FixOpType> types = opTypes(plan);
         assertTrue(types.contains(FixOpType.EXTRACT_OUTERS),
             "Test 6 should include EXTRACT_OUTERS");
-        assertTrue(plan.dissolvesRelation());
+        assertFalse(plan.dissolvesRelation(),
+            "Test 6 should keep relation (1 outer + 1 inner remain)");
     }
 
     // --- Test case 8: 1 outer + 1 inner sharing 2 nodes → TOUCHING_INNER_MERGE ---
@@ -187,6 +193,20 @@ class MultipolygonAnalyzerTest {
             assertEquals(wayNodes.get(0), wayNodes.get(wayNodes.size() - 1),
                 "Each merged way should be closed");
         }
+    }
+
+    // --- Test case 10: touching rings (figure-8) → CONSOLIDATE + DISSOLVE ---
+
+    @Test
+    void testCase10_consolidateAndDissolve() {
+        FixPlan plan = plansByTestId.get("10");
+        assertNotNull(plan, "Test case 10 should be fixable");
+        assertEquals(List.of(FixOpType.CONSOLIDATE_RINGS, FixOpType.DISSOLVE), opTypes(plan));
+        assertTrue(plan.dissolvesRelation());
+
+        FixOp consolidate = plan.getOperations().get(0);
+        assertEquals(2, consolidate.getRings().size(),
+            "Should consolidate 2 rings (touching at one node)");
     }
 
     // --- getPrimaryTag ---

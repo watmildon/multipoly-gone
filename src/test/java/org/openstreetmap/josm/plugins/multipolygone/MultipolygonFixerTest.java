@@ -87,6 +87,91 @@ class MultipolygonFixerTest {
         }
     }
 
+    // --- Test case 5: EXTRACT_OUTERS (relation kept) ---
+
+    @Test
+    void testCase5_extractOuters_keepsRelation() {
+        DataSet ds = freshDataSet();
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "5");
+        assertNotNull(plan);
+
+        var relation = plan.getRelation();
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        assertFalse(relation.isDeleted(), "Relation should be kept after extract");
+        assertEquals(2, relation.getMembersCount(),
+            "Relation should have 1 outer + 1 inner remaining");
+        assertTrue(relation.getMembers().stream()
+            .anyMatch(m -> "inner".equals(m.getRole())),
+            "Relation should still have an inner member");
+
+        // Extracted outer should be a standalone tagged way
+        List<Way> extractedWays = ds.getWays().stream()
+            .filter(w -> !w.isDeleted() && "grass".equals(w.get("landuse"))
+                && w.getReferrers().stream().noneMatch(r -> r instanceof org.openstreetmap.josm.data.osm.Relation))
+            .collect(Collectors.toList());
+        assertFalse(extractedWays.isEmpty(),
+            "Should have at least one standalone way with landuse=grass");
+    }
+
+    // --- Test case 6: EXTRACT_OUTERS (relation kept) ---
+
+    @Test
+    void testCase6_extractOuters_keepsRelation() {
+        DataSet ds = freshDataSet();
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "6");
+        assertNotNull(plan);
+
+        var relation = plan.getRelation();
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        assertFalse(relation.isDeleted(), "Relation should be kept after extract");
+        assertTrue(relation.getMembers().stream()
+            .anyMatch(m -> "inner".equals(m.getRole())),
+            "Relation should still have an inner member");
+        assertTrue(relation.getMembers().stream()
+            .anyMatch(m -> "outer".equals(m.getRole())),
+            "Relation should still have an outer member");
+    }
+
+    // --- Test case 6.2: cross-relation consolidation preserves tags ---
+
+    @Test
+    void testCase6_2_consolidatedInnerRetainsTags() {
+        DataSet ds = freshDataSet();
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+
+        // Find both 6.2 relations: one is the outer (landuse=grass, 3 outers)
+        // and the other is the container (natural=water, 1 outer + 3 inners).
+        // When both are fixed together, the consolidated inner way should keep
+        // the landuse=grass tag from the dissolved relation.
+        List<FixPlan> plans6_2 = plans.stream()
+            .filter(p -> "6.2".equals(p.getRelation().get("_test_id")))
+            .collect(Collectors.toList());
+        assertEquals(2, plans6_2.size(), "Should find 2 relations with _test_id=6.2");
+
+        FixPlan waterPlan = plans6_2.stream()
+            .filter(p -> "water".equals(p.getRelation().get("natural")))
+            .findFirst().orElseThrow();
+
+        MultipolygonFixer.fixRelations(plans6_2);
+
+        // The water relation should be kept with its inner
+        var waterRelation = waterPlan.getRelation();
+        assertFalse(waterRelation.isDeleted(), "Water relation should be kept");
+
+        // The inner member should be a closed way with landuse=grass
+        var innerMember = waterRelation.getMembers().stream()
+            .filter(m -> "inner".equals(m.getRole()))
+            .findFirst().orElseThrow();
+        Way innerWay = innerMember.getWay();
+        assertTrue(innerWay.isClosed(), "Inner way should be closed");
+        assertEquals("grass", innerWay.get("landuse"),
+            "Inner way should have landuse=grass from the dissolved relation");
+    }
+
     // --- Test case 8: TOUCHING_INNER_MERGE ---
 
     @Test
@@ -127,6 +212,38 @@ class MultipolygonFixerTest {
             "Test 9 should produce at least 2 ways, got " + grassWays.size());
         for (Way w : grassWays) {
             assertTrue(w.isClosed(), "Each merged way should be closed");
+        }
+    }
+
+    // --- Test case 10: CONSOLIDATE + DISSOLVE (touching rings / figure-8) ---
+
+    @Test
+    void testCase10_touchingRings_dissolvesRelation() {
+        DataSet ds = freshDataSet();
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "10");
+        assertNotNull(plan);
+
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        assertTrue(plan.getRelation().isDeleted(), "Relation should be deleted after dissolve");
+    }
+
+    @Test
+    void testCase10_touchingRings_createsTwoClosedWays() {
+        DataSet ds = freshDataSet();
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "10");
+
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        List<Way> waterWays = ds.getWays().stream()
+            .filter(w -> !w.isDeleted() && "water".equals(w.get("natural")))
+            .collect(Collectors.toList());
+        assertEquals(2, waterWays.size(),
+            "Test 10 should produce 2 standalone ways with natural=water");
+        for (Way w : waterWays) {
+            assertTrue(w.isClosed(), "Each consolidated way should be closed");
         }
     }
 
