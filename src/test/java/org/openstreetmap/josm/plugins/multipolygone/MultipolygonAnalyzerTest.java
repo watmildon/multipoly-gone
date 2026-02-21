@@ -48,8 +48,8 @@ class MultipolygonAnalyzerTest {
 
     @Test
     void findsExpectedNumberOfFixableRelations() {
-        assertTrue(fixPlans.size() >= 10,
-            "Expected at least 10 fixable relations, got " + fixPlans.size());
+        assertTrue(fixPlans.size() >= 13,
+            "Expected at least 13 fixable relations, got " + fixPlans.size());
     }
 
     @Test
@@ -207,6 +207,107 @@ class MultipolygonAnalyzerTest {
         FixOp consolidate = plan.getOperations().get(0);
         assertEquals(2, consolidate.getRings().size(),
             "Should consolidate 2 rings (touching at one node)");
+    }
+
+    // --- Test case 11: 2 open outers (1 tagged with highway) → CONSOLIDATE + DISSOLVE ---
+
+    @Test
+    void testCase11_consolidateAndDissolve() {
+        FixPlan plan = plansByTestId.get("11");
+        assertNotNull(plan, "Test case 11 should be fixable");
+        assertEquals(List.of(FixOpType.CONSOLIDATE_RINGS, FixOpType.DISSOLVE), opTypes(plan));
+        assertTrue(plan.dissolvesRelation());
+
+        FixOp consolidate = plan.getOperations().get(0);
+        assertEquals(1, consolidate.getRings().size(), "Should consolidate 1 ring");
+        assertEquals(2, consolidate.getRings().get(0).getSourceWays().size(),
+            "Ring should have 2 source ways");
+    }
+
+    // --- Test case 12: 3 closed outers + 1 touching inner → EXTRACT_OUTERS + TOUCHING_INNER_MERGE ---
+
+    @Test
+    void testCase12_extractAndTouchingMerge() {
+        FixPlan plan = plansByTestId.get("12");
+        assertNotNull(plan, "Test case 12 should be fixable");
+
+        List<FixOpType> types = opTypes(plan);
+        assertTrue(types.contains(FixOpType.EXTRACT_OUTERS),
+            "Test 12 should include EXTRACT_OUTERS");
+        assertTrue(types.contains(FixOpType.TOUCHING_INNER_MERGE),
+            "Test 12 should include TOUCHING_INNER_MERGE");
+        assertTrue(plan.dissolvesRelation(),
+            "Test 12 should dissolve the relation");
+    }
+
+    // --- Test case 13: 1 outer + 1 inner sharing 1 node → TOUCHING_INNER_MERGE ---
+
+    @Test
+    void testCase13_touchingInnerMerge_singleSharedNode() {
+        FixPlan plan = plansByTestId.get("13");
+        assertNotNull(plan, "Test case 13 should be fixable");
+        assertTrue(opTypes(plan).contains(FixOpType.TOUCHING_INNER_MERGE));
+        assertTrue(plan.dissolvesRelation());
+
+        FixOp mergeOp = plan.getOperations().stream()
+            .filter(op -> op.getType() == FixOpType.TOUCHING_INNER_MERGE)
+            .findFirst().orElseThrow();
+        assertEquals(1, mergeOp.getMergedWays().size(),
+            "Test 13 (1 shared node) should produce 1 merged way");
+    }
+
+    // --- Test case 14: 2 disconnected outers + 2 inners → SPLIT_RELATION ---
+
+    @Test
+    void testCase14_splitRelation() {
+        FixPlan plan = plansByTestId.get("14");
+        assertNotNull(plan, "Test case 14 should be fixable");
+        assertEquals(List.of(FixOpType.SPLIT_RELATION), opTypes(plan));
+    }
+
+    // --- Test case 15: self-intersecting bowtie → CONSOLIDATE + DECOMPOSE + DISSOLVE ---
+
+    @Test
+    void testCase15_decomposeAndDissolve() {
+        FixPlan plan = plansByTestId.get("15");
+        assertNotNull(plan, "Test case 15 should be fixable");
+        List<FixOpType> types = opTypes(plan);
+        assertTrue(types.contains(FixOpType.CONSOLIDATE_RINGS),
+            "Test 15 should include CONSOLIDATE_RINGS");
+        assertTrue(types.contains(FixOpType.DECOMPOSE_SELF_INTERSECTIONS),
+            "Test 15 should include DECOMPOSE_SELF_INTERSECTIONS");
+        assertTrue(types.contains(FixOpType.DISSOLVE),
+            "Test 15 should include DISSOLVE");
+        assertTrue(plan.dissolvesRelation());
+    }
+
+    @Test
+    void testCase15_decomposesIntoMultipleSubRings() {
+        FixPlan plan = plansByTestId.get("15");
+        FixOp decompOp = plan.getOperations().stream()
+            .filter(op -> op.getType() == FixOpType.DECOMPOSE_SELF_INTERSECTIONS)
+            .findFirst().orElseThrow();
+        assertNotNull(decompOp.getDecomposedRings());
+        assertEquals(1, decompOp.getDecomposedRings().size(),
+            "Should decompose 1 ring");
+
+        var decomp = decompOp.getDecomposedRings().get(0);
+        assertTrue(decomp.getSubRings().size() >= 3,
+            "Bowtie should decompose into at least 3 sub-rings, got " + decomp.getSubRings().size());
+        assertTrue(decomp.getNewIntersectionNodes().size() >= 2,
+            "Should create at least 2 intersection nodes, got " + decomp.getNewIntersectionNodes().size());
+    }
+
+    @Test
+    void testCase13_mergedWayIsClosed() {
+        FixPlan plan = plansByTestId.get("13");
+        FixOp mergeOp = plan.getOperations().stream()
+            .filter(op -> op.getType() == FixOpType.TOUCHING_INNER_MERGE)
+            .findFirst().orElseThrow();
+        for (var wayNodes : mergeOp.getMergedWays()) {
+            assertEquals(wayNodes.get(0), wayNodes.get(wayNodes.size() - 1),
+                "Merged way should be closed (first == last node)");
+        }
     }
 
     // --- getPrimaryTag ---

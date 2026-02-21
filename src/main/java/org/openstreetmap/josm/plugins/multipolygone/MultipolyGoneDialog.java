@@ -28,6 +28,8 @@ import org.openstreetmap.josm.data.osm.DataSelectionListener;
 import org.openstreetmap.josm.data.osm.DataSet;
 import org.openstreetmap.josm.data.osm.OsmPrimitive;
 import org.openstreetmap.josm.data.osm.Relation;
+import org.openstreetmap.josm.data.osm.RelationMember;
+import org.openstreetmap.josm.data.osm.Way;
 import org.openstreetmap.josm.data.osm.event.SelectionEventManager;
 import org.openstreetmap.josm.gui.MainApplication;
 import org.openstreetmap.josm.gui.SideButton;
@@ -215,9 +217,24 @@ public class MultipolyGoneDialog extends ToggleDialog
                 .map(Relation.class::cast)
                 .collect(Collectors.toSet());
 
+            // If no relations are directly selected, check if any selected way
+            // is a member of a fixable relation in our list
             if (selectedRelations.isEmpty()) {
-                list.clearSelection();
-                return;
+                Set<Way> selectedWays = selected.stream()
+                    .filter(Way.class::isInstance)
+                    .map(Way.class::cast)
+                    .collect(Collectors.toSet());
+                if (!selectedWays.isEmpty()) {
+                    for (int i = 0; i < listModel.size(); i++) {
+                        Relation r = listModel.get(i).getRelation();
+                        for (RelationMember m : r.getMembers()) {
+                            if (m.isWay() && selectedWays.contains(m.getWay())) {
+                                selectedRelations.add(r);
+                                break;
+                            }
+                        }
+                    }
+                }
             }
 
             List<Integer> indices = new ArrayList<>();

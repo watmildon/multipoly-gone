@@ -45,9 +45,12 @@ public class MultipolygonFixer {
         List<Command> allCommands = buildAllCommands(plans);
 
         if (!allCommands.isEmpty()) {
+            Logging.info("Multipoly-Gone: executing {0} commands for {1} plan(s)", allCommands.size(), plans.size());
             Command cmd = SequenceCommand.wrapIfNeeded(
                 tr("Dissolve unnecessary multipolygon(s)"), allCommands);
             UndoRedoHandler.getInstance().add(cmd);
+        } else {
+            Logging.warn("Multipoly-Gone: no commands generated for {0} plan(s)", plans.size());
         }
     }
 
@@ -122,7 +125,7 @@ public class MultipolygonFixer {
             if (relation.isDeleted()) {
                 continue;
             }
-            allCommands.addAll(buildCommandsForPlan(plan, waysToCleanup, globalConsolidations));
+            allCommands.addAll(buildCommandsForPlan(plan, waysToCleanup, globalConsolidations, insignificantTags));
         }
 
         // Cleanup pass: delete unused source ways
@@ -139,7 +142,7 @@ public class MultipolygonFixer {
     }
 
     private static List<Command> buildCommandsForPlan(FixPlan plan, Set<Way> waysToCleanup,
-            Map<Set<Way>, Way> globalConsolidations) {
+            Map<Set<Way>, Way> globalConsolidations, Set<String> insignificantTags) {
         List<Command> commands = new ArrayList<>();
         Relation relation = plan.getRelation();
         DataSet ds = relation.getDataSet();
@@ -166,16 +169,77 @@ public class MultipolygonFixer {
                                 memberReplacements.put(src, existing);
                             }
                         } else {
-                            Way newWay = new Way();
-                            newWay.setNodes(ring.getNodes());
-                            commands.add(new AddCommand(ds, newWay));
-                            ringToWay.put(ring, newWay);
-
+                            // Check if any source way has significant tags (e.g., highway=residential).
+                            // If so, reuse an untagged source way instead of creating a new one,
+                            // so that the tagged way remains untouched.
+                            boolean anyTagged = false;
+                            Way reusableWay = null;
                             for (Way src : ring.getSourceWays()) {
-                                memberReplacements.put(src, newWay);
+                                if (hasSignificantTags(src, insignificantTags)) {
+                                    anyTagged = true;
+                                } else if (reusableWay == null) {
+                                    reusableWay = src;
+                                }
                             }
-                            globalConsolidations.put(sourceSet, newWay);
-                            waysToCleanup.addAll(ring.getSourceWays());
+
+                            Way targetWay;
+                            if (anyTagged && reusableWay != null) {
+                                // Reuse the untagged way by changing its nodes to form the closed ring
+                                Way modified = new Way(reusableWay);
+                                modified.setNodes(ring.getNodes());
+                                commands.add(new ChangeCommand(reusableWay, modified));
+                                targetWay = reusableWay;
+
+                                // Only add other untagged source ways to cleanup.
+                                // Tagged source ways must NOT be touched.
+                                for (Way src : ring.getSourceWays()) {
+                                    if (src != reusableWay && !hasSignificantTags(src, insignificantTags)) {
+                                        waysToCleanup.add(src);
+                                    }
+                                }
+                            } else {
+                                // Default: create a new way (either no tagged ways, or all are tagged)
+                                targetWay = new Way();
+                                targetWay.setNodes(ring.getNodes());
+                                commands.add(new AddCommand(ds, targetWay));
+                                waysToCleanup.addAll(ring.getSourceWays());
+                            }
+
+                            ringToWay.put(ring, targetWay);
+                            for (Way src : ring.getSourceWays()) {
+                                memberReplacements.put(src, targetWay);
+                            }
+                            globalConsolidations.put(sourceSet, targetWay);
+                        }
+                    }
+                }
+
+                case DECOMPOSE_SELF_INTERSECTIONS -> {
+                    for (MultipolygonAnalyzer.DecomposedRing decomp : op.getDecomposedRings()) {
+                        // Remove the AddCommand for the consolidated way created in CONSOLIDATE_RINGS,
+                        // since it will be replaced by the decomposed sub-rings
+                        Way consolidatedWay = ringToWay.get(decomp.getOriginalRing());
+                        if (consolidatedWay != null) {
+                            commands.removeIf(cmd -> cmd instanceof AddCommand
+                                && ((AddCommand) cmd).getParticipatingPrimitives().contains(consolidatedWay));
+                        }
+                        // Add new intersection nodes to the DataSet
+                        for (Node node : decomp.getNewIntersectionNodes()) {
+                            commands.add(new AddCommand(ds, node));
+                        }
+                        // Create a Way for each sub-ring
+                        for (WayChainBuilder.Ring subRing : decomp.getSubRings()) {
+                            Way newWay = new Way();
+                            newWay.setNodes(subRing.getNodes());
+                            commands.add(new AddCommand(ds, newWay));
+                            ringToWay.put(subRing, newWay);
+                        }
+                        // Queue original source ways for cleanup
+                        waysToCleanup.addAll(decomp.getOriginalRing().getSourceWays());
+                        // Map source ways to the first sub-ring way for member replacement
+                        Way firstSubWay = ringToWay.get(decomp.getSubRings().get(0));
+                        for (Way src : decomp.getOriginalRing().getSourceWays()) {
+                            memberReplacements.put(src, firstSubWay);
                         }
                     }
                 }
@@ -184,8 +248,15 @@ public class MultipolygonFixer {
                     for (WayChainBuilder.Ring ring : op.getRings()) {
                         Way targetWay = ringToWay.get(ring);
                         if (targetWay != null) {
-                            // Was consolidated in a prior step — tag the new way
-                            targetWay.setKeys(tags);
+                            // Was consolidated in a prior step — tag the way
+                            if (targetWay.getDataSet() != null) {
+                                // Reused existing way — must use commands
+                                for (Map.Entry<String, String> tag : tags.entrySet()) {
+                                    commands.add(new ChangePropertyCommand(targetWay, tag.getKey(), tag.getValue()));
+                                }
+                            } else {
+                                targetWay.setKeys(tags);
+                            }
                             // Also mark the consolidated way for removal from the relation,
                             // since source ways were already replaced by it
                             membersToRemove.add(targetWay);
@@ -212,8 +283,15 @@ public class MultipolygonFixer {
                     for (WayChainBuilder.Ring ring : op.getRings()) {
                         Way targetWay = ringToWay.get(ring);
                         if (targetWay != null) {
-                            // Consolidated way — set tags before it's added
-                            targetWay.setKeys(tags);
+                            if (targetWay.getDataSet() != null) {
+                                // Reused existing way — must use commands
+                                for (Map.Entry<String, String> tag : tags.entrySet()) {
+                                    commands.add(new ChangePropertyCommand(targetWay, tag.getKey(), tag.getValue()));
+                                }
+                            } else {
+                                // New way not yet in DataSet — direct mutation is fine
+                                targetWay.setKeys(tags);
+                            }
                         } else if (ring.isAlreadyClosed()) {
                             targetWay = ring.getSourceWays().get(0);
                             for (Map.Entry<String, String> tag : tags.entrySet()) {
@@ -232,9 +310,10 @@ public class MultipolygonFixer {
                         newWay.setKeys(tags);
                         commands.add(new AddCommand(ds, newWay));
                     }
-                    // Collect all relation member ways for cleanup
+                    // Collect only the member ways that participated in the merge
+                    // (i.e., not those already extracted by a prior EXTRACT_OUTERS step).
                     for (RelationMember member : relation.getMembers()) {
-                        if (member.isWay()) {
+                        if (member.isWay() && !membersToRemove.contains(member.getWay())) {
                             waysToCleanup.add(member.getWay());
                         }
                     }
@@ -259,22 +338,77 @@ public class MultipolygonFixer {
                             switch (subOp.getType()) {
                                 case CONSOLIDATE_RINGS -> {
                                     for (WayChainBuilder.Ring ring : subOp.getRings()) {
-                                        Way newWay = new Way();
-                                        newWay.setNodes(ring.getNodes());
-                                        commands.add(new AddCommand(ds, newWay));
-                                        compRingToWay.put(ring, newWay);
+                                        boolean anyTagged = false;
+                                        Way reusableWay = null;
                                         for (Way src : ring.getSourceWays()) {
-                                            splitReplacements.put(src, newWay);
-                                            compReplacements.put(src, newWay);
+                                            if (hasSignificantTags(src, insignificantTags)) {
+                                                anyTagged = true;
+                                            } else if (reusableWay == null) {
+                                                reusableWay = src;
+                                            }
                                         }
-                                        waysToCleanup.addAll(ring.getSourceWays());
+
+                                        Way targetWay;
+                                        if (anyTagged && reusableWay != null) {
+                                            Way modified = new Way(reusableWay);
+                                            modified.setNodes(ring.getNodes());
+                                            commands.add(new ChangeCommand(reusableWay, modified));
+                                            targetWay = reusableWay;
+                                            for (Way src : ring.getSourceWays()) {
+                                                if (src != reusableWay && !hasSignificantTags(src, insignificantTags)) {
+                                                    waysToCleanup.add(src);
+                                                }
+                                            }
+                                        } else {
+                                            targetWay = new Way();
+                                            targetWay.setNodes(ring.getNodes());
+                                            commands.add(new AddCommand(ds, targetWay));
+                                            waysToCleanup.addAll(ring.getSourceWays());
+                                        }
+
+                                        compRingToWay.put(ring, targetWay);
+                                        for (Way src : ring.getSourceWays()) {
+                                            splitReplacements.put(src, targetWay);
+                                            compReplacements.put(src, targetWay);
+                                        }
+                                    }
+                                }
+                                case DECOMPOSE_SELF_INTERSECTIONS -> {
+                                    for (MultipolygonAnalyzer.DecomposedRing decomp : subOp.getDecomposedRings()) {
+                                        // Remove the AddCommand for the consolidated way
+                                        Way consolidatedWay = compRingToWay.get(decomp.getOriginalRing());
+                                        if (consolidatedWay != null) {
+                                            commands.removeIf(cmd -> cmd instanceof AddCommand
+                                                && ((AddCommand) cmd).getParticipatingPrimitives().contains(consolidatedWay));
+                                        }
+                                        for (Node node : decomp.getNewIntersectionNodes()) {
+                                            commands.add(new AddCommand(ds, node));
+                                        }
+                                        for (WayChainBuilder.Ring subRing : decomp.getSubRings()) {
+                                            Way newWay = new Way();
+                                            newWay.setNodes(subRing.getNodes());
+                                            commands.add(new AddCommand(ds, newWay));
+                                            compRingToWay.put(subRing, newWay);
+                                        }
+                                        waysToCleanup.addAll(decomp.getOriginalRing().getSourceWays());
+                                        Way firstSubWay = compRingToWay.get(decomp.getSubRings().get(0));
+                                        for (Way src : decomp.getOriginalRing().getSourceWays()) {
+                                            splitReplacements.put(src, firstSubWay);
+                                            compReplacements.put(src, firstSubWay);
+                                        }
                                     }
                                 }
                                 case EXTRACT_OUTERS -> {
                                     for (WayChainBuilder.Ring ring : subOp.getRings()) {
                                         Way targetWay = compRingToWay.get(ring);
                                         if (targetWay != null) {
-                                            targetWay.setKeys(tags);
+                                            if (targetWay.getDataSet() != null) {
+                                                for (Map.Entry<String, String> tag : tags.entrySet()) {
+                                                    commands.add(new ChangePropertyCommand(targetWay, tag.getKey(), tag.getValue()));
+                                                }
+                                            } else {
+                                                targetWay.setKeys(tags);
+                                            }
                                         } else if (ring.isAlreadyClosed()) {
                                             targetWay = ring.getSourceWays().get(0);
                                             for (Map.Entry<String, String> tag : tags.entrySet()) {
@@ -288,7 +422,13 @@ public class MultipolygonFixer {
                                     for (WayChainBuilder.Ring ring : subOp.getRings()) {
                                         Way targetWay = compRingToWay.get(ring);
                                         if (targetWay != null) {
-                                            targetWay.setKeys(tags);
+                                            if (targetWay.getDataSet() != null) {
+                                                for (Map.Entry<String, String> tag : tags.entrySet()) {
+                                                    commands.add(new ChangePropertyCommand(targetWay, tag.getKey(), tag.getValue()));
+                                                }
+                                            } else {
+                                                targetWay.setKeys(tags);
+                                            }
                                         } else if (ring.isAlreadyClosed()) {
                                             targetWay = ring.getSourceWays().get(0);
                                             for (Map.Entry<String, String> tag : tags.entrySet()) {
@@ -490,6 +630,15 @@ public class MultipolygonFixer {
         }
 
         return true;
+    }
+
+    private static boolean hasSignificantTags(Way way, Set<String> insignificantTags) {
+        for (String key : way.getKeys().keySet()) {
+            if (!insignificantTags.contains(key)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static Set<String> getInsignificantTags() {

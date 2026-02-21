@@ -9,11 +9,14 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
+import org.openstreetmap.josm.data.coor.EastNorth;
+import org.openstreetmap.josm.data.coor.LatLon;
 import org.openstreetmap.josm.data.osm.DataSet;
 import org.openstreetmap.josm.data.osm.Node;
 import org.openstreetmap.josm.data.osm.Relation;
 import org.openstreetmap.josm.data.osm.RelationMember;
 import org.openstreetmap.josm.data.osm.Way;
+import org.openstreetmap.josm.data.projection.ProjectionRegistry;
 import org.openstreetmap.josm.tools.Geometry;
 
 public class MultipolygonAnalyzer {
@@ -21,6 +24,8 @@ public class MultipolygonAnalyzer {
     public enum FixOpType {
         /** Chain open outer ways into closed rings within the relation. */
         CONSOLIDATE_RINGS,
+        /** Decompose self-intersecting rings into non-self-intersecting sub-rings. */
+        DECOMPOSE_SELF_INTERSECTIONS,
         /** Extract standalone outer rings (no inners) as independent tagged ways. */
         EXTRACT_OUTERS,
         /** Push relation tags to remaining outer ways, delete relation. */
@@ -66,17 +71,39 @@ public class MultipolygonAnalyzer {
         public String getDescription() { return description; }
     }
 
+    /**
+     * Result of decomposing a self-intersecting ring into non-self-intersecting sub-rings.
+     */
+    public static class DecomposedRing {
+        private final WayChainBuilder.Ring originalRing;
+        private final List<WayChainBuilder.Ring> subRings;
+        private final List<Node> newIntersectionNodes;
+
+        DecomposedRing(WayChainBuilder.Ring originalRing, List<WayChainBuilder.Ring> subRings,
+                List<Node> newIntersectionNodes) {
+            this.originalRing = originalRing;
+            this.subRings = subRings;
+            this.newIntersectionNodes = newIntersectionNodes;
+        }
+
+        public WayChainBuilder.Ring getOriginalRing() { return originalRing; }
+        public List<WayChainBuilder.Ring> getSubRings() { return subRings; }
+        public List<Node> getNewIntersectionNodes() { return newIntersectionNodes; }
+    }
+
     public static class FixOp {
         private final FixOpType type;
         private final List<WayChainBuilder.Ring> rings;
         private final List<List<Node>> mergedWays;
         private final List<ComponentResult> components;
+        private final List<DecomposedRing> decomposedRings;
 
         FixOp(FixOpType type, List<WayChainBuilder.Ring> rings, List<List<Node>> mergedWays) {
             this.type = type;
             this.rings = rings;
             this.mergedWays = mergedWays;
             this.components = null;
+            this.decomposedRings = null;
         }
 
         FixOp(FixOpType type, List<ComponentResult> components) {
@@ -84,6 +111,15 @@ public class MultipolygonAnalyzer {
             this.rings = null;
             this.mergedWays = null;
             this.components = components;
+            this.decomposedRings = null;
+        }
+
+        FixOp(FixOpType type, List<DecomposedRing> decomposedRings, @SuppressWarnings("unused") Void marker) {
+            this.type = type;
+            this.rings = null;
+            this.mergedWays = null;
+            this.components = null;
+            this.decomposedRings = decomposedRings;
         }
 
         public FixOpType getType() {
@@ -100,6 +136,10 @@ public class MultipolygonAnalyzer {
 
         public List<ComponentResult> getComponents() {
             return components;
+        }
+
+        public List<DecomposedRing> getDecomposedRings() {
+            return decomposedRings;
         }
     }
 
@@ -356,8 +396,12 @@ public class MultipolygonAnalyzer {
         }
 
         // A split is only worthwhile if there are multiple outer components
-        // (the split itself is the fix, even if no component simplifies internally)
+        // and at least one component is actually fixable
         if (outerComponents.size() < 2) {
+            return null;
+        }
+        boolean anyNonNull = results.stream().anyMatch(r -> r != null);
+        if (!anyNonNull) {
             return null;
         }
 
@@ -403,6 +447,11 @@ public class MultipolygonAnalyzer {
             }
         }
 
+        // Skip if any outer ring is nested inside another — ambiguous mapping error
+        if (hasNestedOuters(outerRings)) {
+            return null;
+        }
+
         List<FixOp> ops = new ArrayList<>();
         List<String> descParts = new ArrayList<>();
 
@@ -418,6 +467,37 @@ public class MultipolygonAnalyzer {
             descParts.add(needsChaining.size() == 1
                 ? "1 ring chained"
                 : needsChaining.size() + " rings chained");
+        }
+
+        // Check all outer rings for self-intersections and decompose
+        List<DecomposedRing> decompositions = new ArrayList<>();
+        for (WayChainBuilder.Ring ring : outerRings) {
+            DecomposedRing decomp = decomposeIfSelfIntersecting(ring);
+            if (decomp != null) {
+                // Check node limits on sub-rings
+                boolean withinLimits = true;
+                for (WayChainBuilder.Ring sub : decomp.getSubRings()) {
+                    if (sub.getNodes().size() - 1 > MAX_WAY_NODES) {
+                        withinLimits = false;
+                        break;
+                    }
+                }
+                if (withinLimits) {
+                    decompositions.add(decomp);
+                }
+            }
+        }
+        if (!decompositions.isEmpty()) {
+            ops.add(new FixOp(FixOpType.DECOMPOSE_SELF_INTERSECTIONS, decompositions, null));
+            // Replace decomposed rings with their sub-rings in outerRings
+            for (DecomposedRing d : decompositions) {
+                outerRings.remove(d.getOriginalRing());
+                outerRings.addAll(d.getSubRings());
+            }
+            int totalSubs = decompositions.stream()
+                .mapToInt(d -> d.getSubRings().size())
+                .sum();
+            descParts.add(totalSubs + " sub-rings from decomposition");
         }
 
         // No inners: dissolve everything
@@ -649,11 +729,59 @@ public class MultipolygonAnalyzer {
             }
         }
 
-        if (sharedSet.size() < 2) {
+        if (sharedSet.isEmpty()) {
             return null;
         }
 
+        if (sharedSet.size() == 1) {
+            return mergeSingleSharedNode(outerNodes, outerSize, innerNodes, innerSize,
+                sharedSet.iterator().next());
+        }
+
         return mergeOuterInner(outerNodes, innerNodes, sharedSet);
+    }
+
+    /**
+     * Merges an outer ring and an inner ring sharing exactly 1 node into a single
+     * closed way that passes through the shared node twice (figure-8 style).
+     * Result: shared → outer[1..n] → shared → inner[1..m] → shared
+     */
+    private static List<List<Node>> mergeSingleSharedNode(
+            List<Node> outerNodes, int outerSize,
+            List<Node> innerNodes, int innerSize, Node shared) {
+        // Find shared node index in outer
+        int outerIdx = -1;
+        for (int i = 0; i < outerSize; i++) {
+            if (outerNodes.get(i).equals(shared)) {
+                outerIdx = i;
+                break;
+            }
+        }
+        // Find shared node index in inner
+        int innerIdx = -1;
+        for (int i = 0; i < innerSize; i++) {
+            if (innerNodes.get(i).equals(shared)) {
+                innerIdx = i;
+                break;
+            }
+        }
+        if (outerIdx == -1 || innerIdx == -1) {
+            return null;
+        }
+
+        // Build: shared → outer[1..n] → shared → inner[1..m] → shared
+        List<Node> way = new ArrayList<>();
+        way.add(shared);
+        for (int step = 1; step < outerSize; step++) {
+            way.add(outerNodes.get((outerIdx + step) % outerSize));
+        }
+        way.add(shared);
+        for (int step = 1; step < innerSize; step++) {
+            way.add(innerNodes.get((innerIdx + step) % innerSize));
+        }
+        way.add(shared);
+
+        return List.of(way);
     }
 
     /**
@@ -764,6 +892,50 @@ public class MultipolygonAnalyzer {
             result.add(way);
         }
 
+        // When 3+ consecutive shared nodes exist between two boundaries, the outer path
+        // prefers the outer-only direction, skipping intermediate shared nodes. Walk the
+        // outer ring to find runs of non-boundary shared nodes that aren't covered by any
+        // merged way, and produce additional closed ways for them.
+        for (int s = 0; s < innerOnlySegments.size(); s++) {
+            Node bStart = segStartBoundary.get(s); // last shared before inner-only
+            Node bEnd = segEndBoundary.get(s);     // first shared after inner-only
+
+            Integer outerIdxStart = outerIndexMap.get(bStart);
+            Integer outerIdxEnd = outerIndexMap.get(bEnd);
+
+            // Walk outer from bEnd toward bStart through shared nodes.
+            // Only produce an extra way if there are intermediate shared nodes
+            // that are NOT boundary nodes of other segments (those are already covered).
+            List<Node> sharedIntermediates = new ArrayList<>();
+            boolean allShared = true;
+            boolean hasNonBoundary = false;
+            for (int i = (outerIdxEnd + 1) % outerSize; i != outerIdxStart; i = (i + 1) % outerSize) {
+                Node n = outerNodes.get(i);
+                if (!sharedSet.contains(n)) {
+                    allShared = false;
+                    break;
+                }
+                sharedIntermediates.add(n);
+                if (!allBoundaryNodes.contains(n)) {
+                    hasNonBoundary = true;
+                }
+            }
+
+            if (allShared && hasNonBoundary) {
+                // Build way: bEnd → shared intermediates → bStart → inner(reversed) → bEnd
+                List<Node> way2 = new ArrayList<>();
+                way2.add(bEnd);
+                way2.addAll(sharedIntermediates);
+                way2.add(bStart);
+                List<Node> innerSeg = innerOnlySegments.get(s);
+                for (int i = innerSeg.size() - 1; i >= 0; i--) {
+                    way2.add(innerSeg.get(i));
+                }
+                way2.add(bEnd);
+                result.add(way2);
+            }
+        }
+
         return result;
     }
 
@@ -833,6 +1005,254 @@ public class MultipolygonAnalyzer {
             }
         }
         return null;
+    }
+
+    /**
+     * Returns true if any outer ring is geometrically contained within another outer ring.
+     * This indicates an ambiguous mapping error (likely a missing inner role).
+     */
+    private static boolean hasNestedOuters(List<WayChainBuilder.Ring> outerRings) {
+        if (outerRings.size() < 2) {
+            return false;
+        }
+        for (int i = 0; i < outerRings.size(); i++) {
+            WayChainBuilder.Ring candidate = outerRings.get(i);
+            for (int j = 0; j < outerRings.size(); j++) {
+                if (i == j) continue;
+                WayChainBuilder.Ring container = outerRings.get(j);
+                Set<Node> containerNodes = new HashSet<>(container.getNodes());
+                for (Node testNode : candidate.getNodes()) {
+                    if (containerNodes.contains(testNode)) {
+                        continue;
+                    }
+                    if (Geometry.nodeInsidePolygon(testNode, container.getNodes())) {
+                        return true;
+                    }
+                    break;
+                }
+            }
+        }
+        return false;
+    }
+
+    // ---- Self-intersection detection and decomposition ----
+
+    private static class Crossing {
+        final int segmentA;
+        final int segmentB;
+        final EastNorth point;
+        Node node;
+
+        Crossing(int segmentA, int segmentB, EastNorth point) {
+            this.segmentA = segmentA;
+            this.segmentB = segmentB;
+            this.point = point;
+        }
+    }
+
+    /**
+     * Finds all self-intersections in a closed ring's node list.
+     * Checks every non-adjacent segment pair for crossings.
+     */
+    static List<Crossing> findSelfIntersections(List<Node> ringNodes) {
+        int segCount = ringNodes.size() - 1;
+        List<Crossing> crossings = new ArrayList<>();
+
+        for (int i = 0; i < segCount; i++) {
+            for (int j = i + 2; j < segCount; j++) {
+                // Skip adjacent wrap-around pair
+                if (i == 0 && j == segCount - 1) continue;
+
+                EastNorth p1 = ringNodes.get(i).getEastNorth();
+                EastNorth p2 = ringNodes.get(i + 1).getEastNorth();
+                EastNorth p3 = ringNodes.get(j).getEastNorth();
+                EastNorth p4 = ringNodes.get(j + 1).getEastNorth();
+
+                // Skip if segments share any endpoint node (not a true crossing)
+                if (ringNodes.get(i) == ringNodes.get(j) || ringNodes.get(i) == ringNodes.get(j + 1)
+                    || ringNodes.get(i + 1) == ringNodes.get(j) || ringNodes.get(i + 1) == ringNodes.get(j + 1)) {
+                    continue;
+                }
+
+                EastNorth intersection = Geometry.getSegmentSegmentIntersection(p1, p2, p3, p4);
+                if (intersection != null) {
+                    // Verify the intersection is not at a segment endpoint (tolerance-based)
+                    double tol = 1e-6;
+                    if (isNear(intersection, p1, tol) || isNear(intersection, p2, tol)
+                        || isNear(intersection, p3, tol) || isNear(intersection, p4, tol)) {
+                        continue;
+                    }
+                    crossings.add(new Crossing(i, j, intersection));
+                }
+            }
+        }
+        return crossings;
+    }
+
+    private static boolean isNear(EastNorth a, EastNorth b, double tol) {
+        return Math.abs(a.east() - b.east()) < tol && Math.abs(a.north() - b.north()) < tol;
+    }
+
+    /**
+     * Decomposes a self-intersecting ring into non-self-intersecting sub-rings.
+     * Returns null if the ring does not self-intersect.
+     */
+    static DecomposedRing decomposeIfSelfIntersecting(WayChainBuilder.Ring ring) {
+        List<Node> ringNodes = ring.getNodes();
+        List<Crossing> crossings = findSelfIntersections(ringNodes);
+        if (crossings.isEmpty()) {
+            return null;
+        }
+
+        // Create nodes at crossing points
+        List<Node> newNodes = new ArrayList<>();
+        for (Crossing c : crossings) {
+            LatLon ll = ProjectionRegistry.getProjection().eastNorth2latlon(c.point);
+            c.node = new Node(ll);
+            newNodes.add(c.node);
+        }
+
+        // Build augmented ring with crossing nodes inserted
+        List<List<Node>> subRingNodeLists = splitAtCrossings(ringNodes, crossings);
+        if (subRingNodeLists == null || subRingNodeLists.size() <= 1) {
+            return null;
+        }
+
+        // Create synthetic Ring objects for each sub-ring
+        List<WayChainBuilder.Ring> subRings = new ArrayList<>();
+        for (List<Node> subNodes : subRingNodeLists) {
+            subRings.add(new WayChainBuilder.Ring(subNodes, ring.getSourceWays()));
+        }
+
+        return new DecomposedRing(ring, subRings, newNodes);
+    }
+
+    /**
+     * Splits a ring at crossing points into multiple non-self-intersecting sub-rings.
+     *
+     * Algorithm:
+     * 1. Group crossings by segment and sort by parametric distance along each segment.
+     * 2. Build an augmented node list with crossing nodes inserted.
+     * 3. Record each crossing node's two positions in the augmented list.
+     * 4. Trace sub-rings by walking the augmented list and switching at crossing nodes.
+     */
+    static List<List<Node>> splitAtCrossings(List<Node> ringNodes, List<Crossing> crossings) {
+        int segCount = ringNodes.size() - 1;
+
+        // For each segment, collect the crossings that intersect it, with parametric t
+        // A crossing at segmentA intersects that segment, and also at segmentB
+        @SuppressWarnings("unchecked")
+        List<double[]>[] segCrossings = new List[segCount];
+        for (int i = 0; i < segCount; i++) {
+            segCrossings[i] = new ArrayList<>();
+        }
+
+        for (int ci = 0; ci < crossings.size(); ci++) {
+            Crossing c = crossings.get(ci);
+
+            // Parametric t on segmentA
+            EastNorth a1 = ringNodes.get(c.segmentA).getEastNorth();
+            EastNorth a2 = ringNodes.get(c.segmentA + 1).getEastNorth();
+            double tA = paramT(a1, a2, c.point);
+            segCrossings[c.segmentA].add(new double[]{tA, ci});
+
+            // Parametric t on segmentB
+            EastNorth b1 = ringNodes.get(c.segmentB).getEastNorth();
+            EastNorth b2 = ringNodes.get(c.segmentB + 1).getEastNorth();
+            double tB = paramT(b1, b2, c.point);
+            segCrossings[c.segmentB].add(new double[]{tB, ci});
+        }
+
+        // Sort each segment's crossings by t
+        for (int i = 0; i < segCount; i++) {
+            segCrossings[i].sort((a, b) -> Double.compare(a[0], b[0]));
+        }
+
+        // Build augmented node list: original nodes with crossing nodes inserted
+        List<Object> augmented = new ArrayList<>(); // Node or crossing-index marker
+        // Also track which positions in augmented belong to each crossing node
+        // Each crossing node appears twice (once per segment)
+        int[][] crossingPositions = new int[crossings.size()][2];
+        int[] posCount = new int[crossings.size()];
+
+        for (int seg = 0; seg < segCount; seg++) {
+            augmented.add(ringNodes.get(seg));
+            for (double[] entry : segCrossings[seg]) {
+                int ci = (int) entry[1];
+                int pos = augmented.size();
+                augmented.add(crossings.get(ci).node);
+                crossingPositions[ci][posCount[ci]] = pos;
+                posCount[ci]++;
+            }
+        }
+        // Close: the augmented ring wraps back to position 0
+        // (don't add the closing node — we handle wrap via modular arithmetic)
+
+        int augLen = augmented.size();
+        Set<Node> crossingNodeSet = new HashSet<>();
+        for (Crossing c : crossings) {
+            crossingNodeSet.add(c.node);
+        }
+
+        // Build a map from crossing Node -> its two positions
+        Map<Node, int[]> nodePositions = new HashMap<>();
+        for (int ci = 0; ci < crossings.size(); ci++) {
+            nodePositions.put(crossings.get(ci).node, crossingPositions[ci]);
+        }
+
+        // Trace sub-rings
+        boolean[] usedEdge = new boolean[augLen]; // edge from pos to (pos+1)%augLen
+        List<List<Node>> subRings = new ArrayList<>();
+
+        for (int start = 0; start < augLen; start++) {
+            if (usedEdge[start]) continue;
+
+            List<Node> subRing = new ArrayList<>();
+            int pos = start;
+            boolean valid = true;
+
+            do {
+                Node current = (Node) augmented.get(pos);
+                subRing.add(current);
+
+                int nextPos = (pos + 1) % augLen;
+                if (usedEdge[pos]) {
+                    valid = false;
+                    break;
+                }
+                usedEdge[pos] = true;
+
+                // If the next node is a crossing node, switch to its other occurrence
+                Node nextNode = (Node) augmented.get(nextPos);
+                if (crossingNodeSet.contains(nextNode)) {
+                    int[] positions = nodePositions.get(nextNode);
+                    // nextPos is one of the two positions; switch to the other
+                    if (nextPos == positions[0]) {
+                        pos = positions[1];
+                    } else {
+                        pos = positions[0];
+                    }
+                } else {
+                    pos = nextPos;
+                }
+            } while (pos != start);
+
+            if (!valid || subRing.size() < 3) continue;
+
+            // Close the sub-ring
+            subRing.add(subRing.get(0));
+            subRings.add(subRing);
+        }
+
+        return subRings.size() > 1 ? subRings : null;
+    }
+
+    private static double paramT(EastNorth from, EastNorth to, EastNorth point) {
+        double dx = to.east() - from.east();
+        double dy = to.north() - from.north();
+        double len2 = dx * dx + dy * dy;
+        if (len2 < 1e-20) return 0;
+        return ((point.east() - from.east()) * dx + (point.north() - from.north()) * dy) / len2;
     }
 
     static String getPrimaryTag(Relation relation) {

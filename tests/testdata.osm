@@ -103,6 +103,12 @@
   <node id='-92080' action='modify' visible='true' lat='47.69923370586' lon='-122.28061205814' />
   <node id='-92081' action='modify' visible='true' lat='47.69974444829' lon='-122.28851336416' />
   <node id='-92082' action='modify' visible='true' lat='47.70560260647' lon='-122.28601351593' />
+  <node id='-92083' action='modify' visible='true' lat='47.69405828581' lon='-122.32543973935' />
+  <node id='-92084' action='modify' visible='true' lat='47.70324176034' lon='-122.31894213372' />
+  <node id='-92085' action='modify' visible='true' lat='47.71198642272' lon='-122.31273331056' />
+  <node id='-92086' action='modify' visible='true' lat='47.72228381022' lon='-122.30414203201' />
+  <node id='-92103' action='modify' visible='true' lat='47.69891746855' lon='-122.30522496628' />
+  <node id='-92104' action='modify' visible='true' lat='47.70989755342' lon='-122.30197616347' />
   <way id='-19782' action='modify' visible='true'>
     <nd ref='-91938' />
     <nd ref='-91939' />
@@ -314,7 +320,31 @@
     <nd ref='-92082' />
     <nd ref='-92076' />
   </way>
-  <relation id='-352' action='modify' visible='true'>
+  <way id='-20146' action='modify' visible='true'>
+    <nd ref='-92083' />
+    <nd ref='-92084' />
+    <tag k='highway' v='residential' />
+    <tag k='name' v='Foo' />
+  </way>
+  <way id='-20147' action='modify' visible='true'>
+    <nd ref='-92084' />
+    <nd ref='-92085' />
+    <tag k='highway' v='residential' />
+    <tag k='name' v='Foo' />
+  </way>
+  <way id='-20148' action='modify' visible='true'>
+    <nd ref='-92085' />
+    <nd ref='-92086' />
+    <tag k='highway' v='residential' />
+    <tag k='name' v='Foo' />
+  </way>
+  <way id='-20220' action='modify' visible='true'>
+    <nd ref='-92084' />
+    <nd ref='-92103' />
+    <nd ref='-92104' />
+    <nd ref='-92085' />
+  </way>
+  <relation id='-813' action='modify' visible='true'>
     <member type='way' ref='-19785' role='outer' />
     <member type='way' ref='-19786' role='inner' />
     <member type='way' ref='-19787' role='outer' />
@@ -322,7 +352,7 @@
     <tag k='landuse' v='grass' />
     <tag k='type' v='multipolygon' />
   </relation>
-  <relation id='-353' action='modify' visible='true'>
+  <relation id='-814' action='modify' visible='true'>
     <member type='way' ref='-19789' role='outer' />
     <member type='way' ref='-19791' role='outer' />
     <member type='way' ref='-19790' role='outer' />
@@ -332,7 +362,7 @@
     <tag k='landuse' v='grass' />
     <tag k='type' v='multipolygon' />
   </relation>
-  <relation id='-354' action='modify' visible='true'>
+  <relation id='-815' action='modify' visible='true'>
     <member type='way' ref='-19793' role='outer' />
     <member type='way' ref='-19794' role='inner' />
     <tag k='_test_id' v='8' />
@@ -341,7 +371,7 @@
     <tag k='type' v='multipolygon' />
     <tag k='water' v='reservoir' />
   </relation>
-  <relation id='-355' action='modify' visible='true'>
+  <relation id='-816' action='modify' visible='true'>
     <member type='way' ref='-19798' role='outer' />
     <member type='way' ref='-19799' role='inner' />
     <tag k='_test_id' v='9' />
@@ -349,21 +379,21 @@
     <tag k='note' v='outer with inner touching outer ring in 2 places' />
     <tag k='type' v='multipolygon' />
   </relation>
-  <relation id='-356' action='modify' visible='true'>
+  <relation id='-817' action='modify' visible='true'>
     <member type='way' ref='-19784' role='outer' />
     <member type='way' ref='-19783' role='outer' />
     <tag k='_test_id' v='1' />
     <tag k='natural' v='wood' />
     <tag k='type' v='multipolygon' />
   </relation>
-  <relation id='-357' action='modify' visible='true'>
+  <relation id='-818' action='modify' visible='true'>
     <member type='way' ref='-19782' role='outer' />
     <member type='way' ref='-19800' role='outer' />
     <tag k='_test_id' v='2' />
     <tag k='landuse' v='grass' />
     <tag k='type' v='multipolygon' />
   </relation>
-  <relation id='-358' action='modify' visible='true'>
+  <relation id='-819' action='modify' visible='true'>
     <member type='way' ref='-19804' role='outer' />
     <member type='way' ref='-19801' role='outer' />
     <member type='way' ref='-19802' role='outer' />
@@ -372,14 +402,14 @@
     <tag k='landuse' v='grass' />
     <tag k='type' v='multipolygon' />
   </relation>
-  <relation id='-359' action='modify' visible='true'>
+  <relation id='-820' action='modify' visible='true'>
     <member type='way' ref='-19801' role='outer' />
     <member type='way' ref='-19797' role='outer' />
     <tag k='_test_id' v='3' />
     <tag k='natural' v='heath' />
     <tag k='type' v='multipolygon' />
   </relation>
-  <relation id='-360' action='modify' visible='true'>
+  <relation id='-821' action='modify' visible='true'>
     <member type='way' ref='-19806' role='outer' />
     <member type='way' ref='-19795' role='outer' />
     <member type='way' ref='-19805' role='outer' />
@@ -387,7 +417,7 @@
     <tag k='landuse' v='grass' />
     <tag k='type' v='multipolygon' />
   </relation>
-  <relation id='-363' action='modify' visible='true'>
+  <relation id='-822' action='modify' visible='true'>
     <member type='way' ref='-19847' role='outer' />
     <member type='way' ref='-19851' role='inner' />
     <member type='way' ref='-19853' role='inner' />
@@ -395,7 +425,7 @@
     <tag k='landuse' v='grass' />
     <tag k='type' v='multipolygon' />
   </relation>
-  <relation id='-375' action='modify' visible='true'>
+  <relation id='-823' action='modify' visible='true'>
     <member type='way' ref='-20067' role='outer' />
     <member type='way' ref='-20068' role='outer' />
     <member type='way' ref='-20069' role='outer' />
@@ -403,7 +433,7 @@
     <tag k='landuse' v='grass' />
     <tag k='type' v='multipolygon' />
   </relation>
-  <relation id='-412' action='modify' visible='true'>
+  <relation id='-824' action='modify' visible='true'>
     <member type='way' ref='-20063' role='outer' />
     <member type='way' ref='-20067' role='inner' />
     <member type='way' ref='-20068' role='inner' />
@@ -412,13 +442,191 @@
     <tag k='natural' v='water' />
     <tag k='type' v='multipolygon' />
   </relation>
-  <relation id='-414' action='modify' visible='true'>
+  <relation id='-825' action='modify' visible='true'>
     <member type='way' ref='-20102' role='outer' />
     <member type='way' ref='-20104' role='outer' />
     <member type='way' ref='-20106' role='outer' />
     <member type='way' ref='-20109' role='outer' />
     <tag k='_test_id' v='10' />
     <tag k='natural' v='water' />
+    <tag k='type' v='multipolygon' />
+  </relation>
+  <relation id='-827' action='modify' visible='true'>
+    <member type='way' ref='-20147' role='outer' />
+    <member type='way' ref='-20220' role='outer' />
+    <tag k='_test_id' v='11' />
+    <tag k='natural' v='grassland' />
+    <tag k='type' v='multipolygon' />
+  </relation>
+  <!-- Test case 12: EXTRACT_OUTERS + TOUCHING_INNER_MERGE -->
+  <!-- 3 closed outers + 1 inner touching outer1 at 2 shared nodes -->
+  <!-- outer1 (octagon) shares nodes -92200 and -92201 with inner -->
+  <node id='-92200' action='modify' visible='true' lat='47.715' lon='-122.215' />
+  <node id='-92201' action='modify' visible='true' lat='47.7157' lon='-122.2143' />
+  <node id='-92202' action='modify' visible='true' lat='47.716' lon='-122.213' />
+  <node id='-92203' action='modify' visible='true' lat='47.7157' lon='-122.2117' />
+  <node id='-92204' action='modify' visible='true' lat='47.715' lon='-122.211' />
+  <node id='-92205' action='modify' visible='true' lat='47.7143' lon='-122.2117' />
+  <node id='-92206' action='modify' visible='true' lat='47.714' lon='-122.213' />
+  <node id='-92207' action='modify' visible='true' lat='47.7143' lon='-122.2143' />
+  <!-- inner-only nodes -->
+  <node id='-92210' action='modify' visible='true' lat='47.7153' lon='-122.2138' />
+  <node id='-92211' action='modify' visible='true' lat='47.7153' lon='-122.2125' />
+  <node id='-92212' action='modify' visible='true' lat='47.7147' lon='-122.2125' />
+  <node id='-92213' action='modify' visible='true' lat='47.7147' lon='-122.2138' />
+  <!-- outer2 nodes -->
+  <node id='-92220' action='modify' visible='true' lat='47.716' lon='-122.209' />
+  <node id='-92221' action='modify' visible='true' lat='47.7165' lon='-122.208' />
+  <node id='-92222' action='modify' visible='true' lat='47.715' lon='-122.2075' />
+  <node id='-92223' action='modify' visible='true' lat='47.7145' lon='-122.2085' />
+  <!-- outer3 nodes -->
+  <node id='-92230' action='modify' visible='true' lat='47.716' lon='-122.207' />
+  <node id='-92231' action='modify' visible='true' lat='47.7165' lon='-122.206' />
+  <node id='-92232' action='modify' visible='true' lat='47.715' lon='-122.2055' />
+  <node id='-92233' action='modify' visible='true' lat='47.7145' lon='-122.2065' />
+  <!-- outer1: octagon -->
+  <way id='-20300' action='modify' visible='true'>
+    <nd ref='-92200' /><nd ref='-92201' /><nd ref='-92202' /><nd ref='-92203' />
+    <nd ref='-92204' /><nd ref='-92205' /><nd ref='-92206' /><nd ref='-92207' />
+    <nd ref='-92200' />
+  </way>
+  <!-- inner: hexagon sharing nodes -92200 and -92201 with outer1 -->
+  <way id='-20301' action='modify' visible='true'>
+    <nd ref='-92200' /><nd ref='-92201' />
+    <nd ref='-92210' /><nd ref='-92211' /><nd ref='-92212' /><nd ref='-92213' />
+    <nd ref='-92200' />
+  </way>
+  <!-- outer2: standalone quad -->
+  <way id='-20302' action='modify' visible='true'>
+    <nd ref='-92220' /><nd ref='-92221' /><nd ref='-92222' /><nd ref='-92223' />
+    <nd ref='-92220' />
+  </way>
+  <!-- outer3: standalone quad -->
+  <way id='-20303' action='modify' visible='true'>
+    <nd ref='-92230' /><nd ref='-92231' /><nd ref='-92232' /><nd ref='-92233' />
+    <nd ref='-92230' />
+  </way>
+  <relation id='-828' action='modify' visible='true'>
+    <member type='way' ref='-20300' role='outer' />
+    <member type='way' ref='-20302' role='outer' />
+    <member type='way' ref='-20303' role='outer' />
+    <member type='way' ref='-20301' role='inner' />
+    <tag k='_test_id' v='12' />
+    <tag k='natural' v='water' />
+    <tag k='type' v='multipolygon' />
+  </relation>
+  <!-- Test case 13: TOUCHING_INNER_MERGE with 1 shared node (figure-8) -->
+  <!-- outer (hexagon) and inner (quad) share exactly 1 node: -92300 (top of outer) -->
+  <!-- outer centered at (47.720, -122.213), inner is a small quad inside it touching the top -->
+  <node id='-92300' action='modify' visible='true' lat='47.721' lon='-122.213' />
+  <node id='-92301' action='modify' visible='true' lat='47.7207' lon='-122.2115' />
+  <node id='-92302' action='modify' visible='true' lat='47.7197' lon='-122.2115' />
+  <node id='-92303' action='modify' visible='true' lat='47.719' lon='-122.213' />
+  <node id='-92304' action='modify' visible='true' lat='47.7197' lon='-122.2145' />
+  <node id='-92305' action='modify' visible='true' lat='47.7207' lon='-122.2145' />
+  <!-- inner-only nodes (small quad inside the outer, touching top node) -->
+  <node id='-92310' action='modify' visible='true' lat='47.7206' lon='-122.2135' />
+  <node id='-92311' action='modify' visible='true' lat='47.7202' lon='-122.2135' />
+  <node id='-92312' action='modify' visible='true' lat='47.7202' lon='-122.2125' />
+  <node id='-92313' action='modify' visible='true' lat='47.7206' lon='-122.2125' />
+  <!-- outer: hexagon -->
+  <way id='-20310' action='modify' visible='true'>
+    <nd ref='-92300' /><nd ref='-92301' /><nd ref='-92302' />
+    <nd ref='-92303' /><nd ref='-92304' /><nd ref='-92305' /><nd ref='-92300' />
+  </way>
+  <!-- inner: quad sharing only node -92300 (top of outer) -->
+  <way id='-20311' action='modify' visible='true'>
+    <nd ref='-92300' /><nd ref='-92313' /><nd ref='-92312' />
+    <nd ref='-92311' /><nd ref='-92310' /><nd ref='-92300' />
+  </way>
+  <relation id='-829' action='modify' visible='true'>
+    <member type='way' ref='-20310' role='outer' />
+    <member type='way' ref='-20311' role='inner' />
+    <tag k='_test_id' v='13' />
+    <tag k='natural' v='water' />
+    <tag k='type' v='multipolygon' />
+  </relation>
+
+  <!-- Test case 14: 2 disconnected closed outers, each with 1 inner (SPLIT_RELATION) -->
+  <!-- Outer 1: hexagon centered at (47.730, -122.218) -->
+  <node id='-92400' action='modify' visible='true' lat='47.731' lon='-122.218' />
+  <node id='-92401' action='modify' visible='true' lat='47.7305' lon='-122.2165' />
+  <node id='-92402' action='modify' visible='true' lat='47.7295' lon='-122.2165' />
+  <node id='-92403' action='modify' visible='true' lat='47.729' lon='-122.218' />
+  <node id='-92404' action='modify' visible='true' lat='47.7295' lon='-122.2195' />
+  <node id='-92405' action='modify' visible='true' lat='47.7305' lon='-122.2195' />
+  <!-- Inner 1: diamond inside outer 1 -->
+  <node id='-92410' action='modify' visible='true' lat='47.730' lon='-122.2173' />
+  <node id='-92411' action='modify' visible='true' lat='47.7304' lon='-122.218' />
+  <node id='-92412' action='modify' visible='true' lat='47.730' lon='-122.2187' />
+  <node id='-92413' action='modify' visible='true' lat='47.7296' lon='-122.218' />
+  <!-- Outer 2: hexagon centered at (47.730, -122.210) -->
+  <node id='-92420' action='modify' visible='true' lat='47.731' lon='-122.210' />
+  <node id='-92421' action='modify' visible='true' lat='47.7305' lon='-122.2085' />
+  <node id='-92422' action='modify' visible='true' lat='47.7295' lon='-122.2085' />
+  <node id='-92423' action='modify' visible='true' lat='47.729' lon='-122.210' />
+  <node id='-92424' action='modify' visible='true' lat='47.7295' lon='-122.2115' />
+  <node id='-92425' action='modify' visible='true' lat='47.7305' lon='-122.2115' />
+  <!-- Inner 2: diamond inside outer 2 -->
+  <node id='-92430' action='modify' visible='true' lat='47.730' lon='-122.2093' />
+  <node id='-92431' action='modify' visible='true' lat='47.7304' lon='-122.210' />
+  <node id='-92432' action='modify' visible='true' lat='47.730' lon='-122.2107' />
+  <node id='-92433' action='modify' visible='true' lat='47.7296' lon='-122.210' />
+  <!-- Outer 1 way -->
+  <way id='-20320' action='modify' visible='true'>
+    <nd ref='-92400' /><nd ref='-92401' /><nd ref='-92402' />
+    <nd ref='-92403' /><nd ref='-92404' /><nd ref='-92405' /><nd ref='-92400' />
+  </way>
+  <!-- Inner 1 way -->
+  <way id='-20321' action='modify' visible='true'>
+    <nd ref='-92410' /><nd ref='-92411' /><nd ref='-92412' />
+    <nd ref='-92413' /><nd ref='-92410' />
+  </way>
+  <!-- Outer 2 way -->
+  <way id='-20322' action='modify' visible='true'>
+    <nd ref='-92420' /><nd ref='-92421' /><nd ref='-92422' />
+    <nd ref='-92423' /><nd ref='-92424' /><nd ref='-92425' /><nd ref='-92420' />
+  </way>
+  <!-- Inner 2 way -->
+  <way id='-20323' action='modify' visible='true'>
+    <nd ref='-92430' /><nd ref='-92431' /><nd ref='-92432' />
+    <nd ref='-92433' /><nd ref='-92430' />
+  </way>
+  <relation id='-830' action='modify' visible='true'>
+    <member type='way' ref='-20320' role='outer' />
+    <member type='way' ref='-20321' role='inner' />
+    <member type='way' ref='-20322' role='outer' />
+    <member type='way' ref='-20323' role='inner' />
+    <tag k='_test_id' v='14' />
+    <tag k='natural' v='water' />
+    <tag k='type' v='multipolygon' />
+  </relation>
+
+  <!-- Test case 15: 2 open ways that chain into a self-intersecting bowtie -->
+  <!-- CONSOLIDATE + DECOMPOSE_SELF_INTERSECTIONS + DISSOLVE -->
+  <!-- A(mid-right) B(top-left) C(top-right) D(mid-left) E(bot-right) F(bot-left) -->
+  <!-- Way 1: A → B → C → D, Way 2: D → E → F → A -->
+  <!-- Chained: A → B → C → D → E → F → A -->
+  <!-- seg0 (A→B) crosses seg2 (C→D), seg3 (D→E) crosses seg5 (F→A) -->
+  <node id='-92500' action='modify' visible='true' lat='47.740' lon='-122.220' />
+  <node id='-92501' action='modify' visible='true' lat='47.741' lon='-122.2205' />
+  <node id='-92502' action='modify' visible='true' lat='47.741' lon='-122.2195' />
+  <node id='-92503' action='modify' visible='true' lat='47.740' lon='-122.221' />
+  <node id='-92504' action='modify' visible='true' lat='47.739' lon='-122.2195' />
+  <node id='-92505' action='modify' visible='true' lat='47.739' lon='-122.2205' />
+  <!-- Way 1: A → B → C → D (open) -->
+  <way id='-20330' action='modify' visible='true'>
+    <nd ref='-92500' /><nd ref='-92501' /><nd ref='-92502' /><nd ref='-92503' />
+  </way>
+  <!-- Way 2: D → E → F → A (open) -->
+  <way id='-20331' action='modify' visible='true'>
+    <nd ref='-92503' /><nd ref='-92504' /><nd ref='-92505' /><nd ref='-92500' />
+  </way>
+  <relation id='-831' action='modify' visible='true'>
+    <member type='way' ref='-20330' role='outer' />
+    <member type='way' ref='-20331' role='outer' />
+    <tag k='_test_id' v='15' />
+    <tag k='landuse' v='grass' />
     <tag k='type' v='multipolygon' />
   </relation>
 </osm>
