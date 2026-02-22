@@ -42,9 +42,7 @@ class GeometryExpectedOutputTest {
 
     @BeforeEach
     void setUp() {
-        while (UndoRedoHandler.getInstance().hasUndoCommands()) {
-            UndoRedoHandler.getInstance().undo();
-        }
+        UndoRedoHandler.getInstance().clean();
         expected = JosmTestSetup.loadDataSet("expected/testdata-geometry-actual.osm");
     }
 
@@ -357,14 +355,13 @@ class GeometryExpectedOutputTest {
         Set<Node> nodesBefore = new HashSet<>(ds.getNodes());
         MultipolygonFixer.fixRelations(List.of(plan));
 
-        // The inner segments don't cross each other (they're on opposite sides of
-        // the outer), so the merge uses the standard TOUCHING_INNER_MERGE path
-        // without creating intersection nodes.
+        // The inner segments cross each other (bridging inner with overlapping edges),
+        // so the merge must insert intersection nodes where the inner edges cross.
         List<Node> newNodes = ds.getNodes().stream()
             .filter(n -> !n.isDeleted() && !nodesBefore.contains(n))
             .collect(Collectors.toList());
-        assertEquals(0, newNodes.size(),
-            "Should not create intersection nodes (inner segments don't cross), got " + newNodes.size());
+        assertEquals(2, newNodes.size(),
+            "Should create 2 intersection nodes where inner edges cross, got " + newNodes.size());
     }
 
     @Test
@@ -499,6 +496,102 @@ class GeometryExpectedOutputTest {
             // Restore original projection
             org.openstreetmap.josm.data.projection.ProjectionRegistry.setProjection(oldProj);
         }
+    }
+
+    // ===================================================================
+    // Test case 206: large inner sharing 5 consecutive nodes with outer
+    // ===================================================================
+
+    @Test
+    void testCase206_producesExpectedGeometry() {
+        DataSet ds = freshInput();
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "206");
+        assertNotNull(plan, "Test case 206 should be fixable");
+
+        Set<Way> waysBefore = new HashSet<>(ds.getWays());
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        assertTrue(plan.getRelation().isDeleted(), "Relation should be deleted");
+
+        List<Way> expectedWays = findExpectedWays("206");
+        assertFalse(expectedWays.isEmpty(), "Expected output should have ways for test 206");
+
+        List<Way> actualWays = findActualWays(ds, waysBefore, expectedWays);
+        assertGeometryMatch("206", actualWays, expectedWays);
+    }
+
+    @Test
+    void testCase206_noOrphanedNodes() {
+        DataSet ds = freshInput();
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "206");
+
+        assertNoOrphanedNodes(plan);
+    }
+
+    // ===================================================================
+    // Test case 207: large inner sharing 6 of 12 nodes (half the ring)
+    // ===================================================================
+
+    @Test
+    void testCase207_producesExpectedGeometry() {
+        DataSet ds = freshInput();
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "207");
+        assertNotNull(plan, "Test case 207 should be fixable");
+
+        Set<Way> waysBefore = new HashSet<>(ds.getWays());
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        assertTrue(plan.getRelation().isDeleted(), "Relation should be deleted");
+
+        List<Way> expectedWays = findExpectedWays("207");
+        assertFalse(expectedWays.isEmpty(), "Expected output should have ways for test 207");
+
+        List<Way> actualWays = findActualWays(ds, waysBefore, expectedWays);
+        assertGeometryMatch("207", actualWays, expectedWays);
+    }
+
+    @Test
+    void testCase207_noOrphanedNodes() {
+        DataSet ds = freshInput();
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "207");
+
+        assertNoOrphanedNodes(plan);
+    }
+
+    // ===================================================================
+    // Test case 208: inner sharing 2 non-adjacent nodes (opposite sides)
+    // ===================================================================
+
+    @Test
+    void testCase208_producesExpectedGeometry() {
+        DataSet ds = freshInput();
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "208");
+        assertNotNull(plan, "Test case 208 should be fixable");
+
+        Set<Way> waysBefore = new HashSet<>(ds.getWays());
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        assertTrue(plan.getRelation().isDeleted(), "Relation should be deleted");
+
+        List<Way> expectedWays = findExpectedWays("208");
+        assertFalse(expectedWays.isEmpty(), "Expected output should have ways for test 208");
+
+        List<Way> actualWays = findActualWays(ds, waysBefore, expectedWays);
+        assertGeometryMatch("208", actualWays, expectedWays);
+    }
+
+    @Test
+    void testCase208_noOrphanedNodes() {
+        DataSet ds = freshInput();
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "208");
+
+        assertNoOrphanedNodes(plan);
     }
 
     // ===================================================================

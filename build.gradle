@@ -36,6 +36,10 @@ test {
         '--add-exports=java.desktop/com.sun.imageio.plugins.jpeg=ALL-UNNAMED',
         '--add-exports=java.desktop/com.sun.imageio.spi=ALL-UNNAMED'
     ]
+    maxHeapSize = '1g'
+    testLogging {
+        showStandardStreams = true
+    }
 }
 
 sourceSets {

@@ -116,6 +116,7 @@ public class MultipolygonFixer {
 
         List<Command> allCommands = new ArrayList<>();
         Set<Way> waysToCleanup = new HashSet<>();
+        Set<Node> nodesToCleanup = new HashSet<>();
         // Track {source-way-set} → consolidated-way across all plans so that when
         // multiple relations reference the exact same set of ways, consolidation is shared
         Map<Set<Way>, Way> globalConsolidations = new HashMap<>();
@@ -125,10 +126,13 @@ public class MultipolygonFixer {
             if (relation.isDeleted()) {
                 continue;
             }
-            allCommands.addAll(buildCommandsForPlan(plan, waysToCleanup, globalConsolidations, insignificantTags));
+            allCommands.addAll(buildCommandsForPlan(plan, waysToCleanup, nodesToCleanup,
+                globalConsolidations, insignificantTags));
         }
 
-        // Cleanup pass: delete unused source ways
+        // Cleanup pass: delete unused source ways first, then unused nodes.
+        // Order matters for undo: on undo (reverse), nodes are restored before ways,
+        // so ways can safely reference those nodes during Way.load().
         Set<Way> waysAlreadyDeleted = new HashSet<>();
         for (Way way : waysToCleanup) {
             if (!waysAlreadyDeleted.contains(way)
@@ -138,11 +142,18 @@ public class MultipolygonFixer {
             }
         }
 
+        // Delete orphaned nodes after ways, so undo restores nodes before ways
+        for (Node node : nodesToCleanup) {
+            if (!node.isDeleted()) {
+                allCommands.add(new DeleteCommand(node));
+            }
+        }
+
         return allCommands;
     }
 
     private static List<Command> buildCommandsForPlan(FixPlan plan, Set<Way> waysToCleanup,
-            Map<Set<Way>, Way> globalConsolidations, Set<String> insignificantTags) {
+            Set<Node> nodesToCleanup, Map<Set<Way>, Way> globalConsolidations, Set<String> insignificantTags) {
         List<Command> commands = new ArrayList<>();
         Relation relation = plan.getRelation();
         DataSet ds = relation.getDataSet();
@@ -310,17 +321,32 @@ public class MultipolygonFixer {
                             commands.add(new AddCommand(ds, newNode));
                         }
                     }
+                    // Collect all nodes referenced by the new merged ways
+                    Set<Node> mergedNodes = new HashSet<>();
                     for (List<Node> wayNodes : op.getMergedWays()) {
                         Way newWay = new Way();
                         newWay.setNodes(wayNodes);
                         newWay.setKeys(tags);
                         commands.add(new AddCommand(ds, newWay));
+                        mergedNodes.addAll(wayNodes);
                     }
-                    // Collect only the member ways that participated in the merge
-                    // (i.e., not those already extracted by a prior EXTRACT_OUTERS step).
+                    // Collect nodes from source ways and mark unused ones for deferred deletion
+                    Set<Node> sourceNodes = new HashSet<>();
                     for (RelationMember member : relation.getMembers()) {
                         if (member.isWay() && !membersToRemove.contains(member.getWay())) {
                             waysToCleanup.add(member.getWay());
+                            sourceNodes.addAll(member.getWay().getNodes());
+                        }
+                    }
+                    // Defer node deletion to cleanup pass (after way deletion) so undo restores
+                    // nodes before ways, preventing "deleted node referenced" errors
+                    for (Node node : sourceNodes) {
+                        if (!mergedNodes.contains(node)) {
+                            boolean usedElsewhere = node.getReferrers().stream()
+                                .anyMatch(r -> r instanceof Way w && !waysToCleanup.contains(w));
+                            if (!usedElsewhere) {
+                                nodesToCleanup.add(node);
+                            }
                         }
                     }
                     commands.add(new DeleteCommand(relation));
@@ -451,16 +477,31 @@ public class MultipolygonFixer {
                                             commands.add(new AddCommand(ds, newNode));
                                         }
                                     }
+                                    Set<Node> mergedNodesComp = new HashSet<>();
                                     for (List<Node> wayNodes : subOp.getMergedWays()) {
                                         Way newWay = new Way();
                                         newWay.setNodes(wayNodes);
                                         newWay.setKeys(tags);
                                         commands.add(new AddCommand(ds, newWay));
+                                        mergedNodesComp.addAll(wayNodes);
                                     }
                                     waysToRemoveFromRelation.addAll(comp.getOuterWays());
                                     waysToRemoveFromRelation.addAll(comp.getInnerWays());
                                     waysToCleanup.addAll(comp.getOuterWays());
                                     waysToCleanup.addAll(comp.getInnerWays());
+                                    // Defer node deletion to cleanup pass (after way deletion)
+                                    Set<Node> sourceNodesComp = new HashSet<>();
+                                    for (Way w : comp.getOuterWays()) sourceNodesComp.addAll(w.getNodes());
+                                    for (Way w : comp.getInnerWays()) sourceNodesComp.addAll(w.getNodes());
+                                    for (Node node : sourceNodesComp) {
+                                        if (!mergedNodesComp.contains(node)) {
+                                            boolean usedElsewhere = node.getReferrers().stream()
+                                                .anyMatch(r -> r instanceof Way w && !waysToCleanup.contains(w));
+                                            if (!usedElsewhere) {
+                                                nodesToCleanup.add(node);
+                                            }
+                                        }
+                                    }
                                 }
                                 default -> { }
                             }
