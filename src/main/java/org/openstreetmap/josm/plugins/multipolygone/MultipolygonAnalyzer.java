@@ -97,13 +97,19 @@ public class MultipolygonAnalyzer {
         private final List<List<Node>> mergedWays;
         private final List<ComponentResult> components;
         private final List<DecomposedRing> decomposedRings;
+        private final List<Node> newNodes;
 
         FixOp(FixOpType type, List<WayChainBuilder.Ring> rings, List<List<Node>> mergedWays) {
+            this(type, rings, mergedWays, null);
+        }
+
+        FixOp(FixOpType type, List<WayChainBuilder.Ring> rings, List<List<Node>> mergedWays, List<Node> newNodes) {
             this.type = type;
             this.rings = rings;
             this.mergedWays = mergedWays;
             this.components = null;
             this.decomposedRings = null;
+            this.newNodes = newNodes;
         }
 
         FixOp(FixOpType type, List<ComponentResult> components) {
@@ -112,6 +118,7 @@ public class MultipolygonAnalyzer {
             this.mergedWays = null;
             this.components = components;
             this.decomposedRings = null;
+            this.newNodes = null;
         }
 
         FixOp(FixOpType type, List<DecomposedRing> decomposedRings, @SuppressWarnings("unused") Void marker) {
@@ -120,6 +127,7 @@ public class MultipolygonAnalyzer {
             this.mergedWays = null;
             this.components = null;
             this.decomposedRings = decomposedRings;
+            this.newNodes = null;
         }
 
         public FixOpType getType() {
@@ -140,6 +148,10 @@ public class MultipolygonAnalyzer {
 
         public List<DecomposedRing> getDecomposedRings() {
             return decomposedRings;
+        }
+
+        public List<Node> getNewNodes() {
+            return newNodes;
         }
     }
 
@@ -578,20 +590,20 @@ public class MultipolygonAnalyzer {
 
         // Analyze what remains after extraction
         if (retained.size() == 1 && retainedInners.size() == 1) {
-            List<List<Node>> merged = tryTouchingInnerMerge(retained.get(0), retainedInners.get(0).getNodes());
-            if (merged != null) {
-                for (List<Node> way : merged) {
+            MergeResult mergeResult = tryTouchingInnerMerge(retained.get(0), retainedInners.get(0).getNodes());
+            if (mergeResult != null) {
+                for (List<Node> way : mergeResult.mergedWays) {
                     if (way.size() - 1 > MAX_WAY_NODES) {
                         if (ops.isEmpty()) return null;
                         return new ComponentResult(outerWays, innerWays, ops, false,
                             retained, retainedInners, String.join(", ", descParts));
                     }
                 }
-                ops.add(new FixOp(FixOpType.TOUCHING_INNER_MERGE, null, merged));
-                if (merged.size() == 1) {
+                ops.add(new FixOp(FixOpType.TOUCHING_INNER_MERGE, null, mergeResult.mergedWays, mergeResult.newNodes));
+                if (mergeResult.mergedWays.size() == 1) {
                     descParts.add("touching inner merged");
                 } else {
-                    descParts.add("inner split into " + merged.size() + " ways");
+                    descParts.add("inner split into " + mergeResult.mergedWays.size() + " ways");
                 }
                 return new ComponentResult(outerWays, innerWays, ops, true,
                     null, null, String.join(", ", descParts));
@@ -709,10 +721,23 @@ public class MultipolygonAnalyzer {
     }
 
     /**
-     * Try to merge a single outer ring with a single inner that share nodes.
-     * Returns the merged way node lists, or null if they don't share enough nodes.
+     * Result of merging an outer ring with a touching inner ring.
      */
-    private static List<List<Node>> tryTouchingInnerMerge(WayChainBuilder.Ring outerRing, List<Node> innerNodes) {
+    static class MergeResult {
+        final List<List<Node>> mergedWays;
+        final List<Node> newNodes;
+
+        MergeResult(List<List<Node>> mergedWays, List<Node> newNodes) {
+            this.mergedWays = mergedWays;
+            this.newNodes = newNodes;
+        }
+    }
+
+    /**
+     * Try to merge a single outer ring with a single inner that share nodes.
+     * Returns the merged way node lists and any new intersection nodes, or null if they don't share enough nodes.
+     */
+    private static MergeResult tryTouchingInnerMerge(WayChainBuilder.Ring outerRing, List<Node> innerNodes) {
         List<Node> outerNodes = outerRing.getNodes();
 
         Set<Node> innerNodeSet = new HashSet<>();
@@ -734,8 +759,9 @@ public class MultipolygonAnalyzer {
         }
 
         if (sharedSet.size() == 1) {
-            return mergeSingleSharedNode(outerNodes, outerSize, innerNodes, innerSize,
+            List<List<Node>> ways = mergeSingleSharedNode(outerNodes, outerSize, innerNodes, innerSize,
                 sharedSet.iterator().next());
+            return ways != null ? new MergeResult(ways, null) : null;
         }
 
         return mergeOuterInner(outerNodes, innerNodes, sharedSet);
@@ -790,7 +816,7 @@ public class MultipolygonAnalyzer {
      * nodes) is paired with the corresponding outer path between the same boundary
      * nodes to form a closed way.
      */
-    static List<List<Node>> mergeOuterInner(List<Node> outerNodes, List<Node> innerNodes, Set<Node> sharedSet) {
+    static MergeResult mergeOuterInner(List<Node> outerNodes, List<Node> innerNodes, Set<Node> sharedSet) {
         int innerSize = innerNodes.size() - 1;
         int outerSize = outerNodes.size() - 1;
 
@@ -850,6 +876,19 @@ public class MultipolygonAnalyzer {
             return null;
         }
 
+        // Check for cross-segment self-intersections in the inner ring.
+        // When 2 segments have edges that cross each other, the inner ring is
+        // self-intersecting (e.g., a "bridging" inner that divides the outer into
+        // two disconnected regions). We need to insert intersection nodes and
+        // build the merged ways by tracing through those nodes.
+        if (innerOnlySegments.size() == 2) {
+            MergeResult crossResult = tryMergeWithCrossSegmentIntersections(
+                outerNodes, innerOnlySegments, segStartBoundary, segEndBoundary, sharedSet);
+            if (crossResult != null) {
+                return crossResult;
+            }
+        }
+
         Set<Node> allBoundaryNodes = new HashSet<>();
         for (int s = 0; s < innerOnlySegments.size(); s++) {
             allBoundaryNodes.add(segStartBoundary.get(s));
@@ -858,22 +897,50 @@ public class MultipolygonAnalyzer {
 
         List<List<Node>> result = new ArrayList<>();
 
+        // Compute both forward and backward outer paths for each segment
+        List<List<Node>> forwardPaths = new ArrayList<>();
+        List<List<Node>> backwardPaths = new ArrayList<>();
+        List<Integer> outerIdxAs = new ArrayList<>();
+        List<Integer> outerIdxBs = new ArrayList<>();
+
         for (int s = 0; s < innerOnlySegments.size(); s++) {
             Node boundaryA = segStartBoundary.get(s);
             Node boundaryB = segEndBoundary.get(s);
-            List<Node> innerSegment = innerOnlySegments.get(s);
 
             Integer outerIdxA = outerIndexMap.get(boundaryA);
             Integer outerIdxB = outerIndexMap.get(boundaryB);
             if (outerIdxA == null || outerIdxB == null) {
                 return null;
             }
+            outerIdxAs.add(outerIdxA);
+            outerIdxBs.add(outerIdxB);
 
             Set<Node> otherBoundaries = new HashSet<>(allBoundaryNodes);
             otherBoundaries.remove(boundaryA);
             otherBoundaries.remove(boundaryB);
 
-            List<Node> outerPath = findOuterPath(outerNodes, outerSize, outerIdxB, outerIdxA, otherBoundaries, sharedSet);
+            List<Node> fwd = computeDirectionalPath(outerNodes, outerSize, outerIdxB, outerIdxA, otherBoundaries, true);
+            List<Node> bwd = computeDirectionalPath(outerNodes, outerSize, outerIdxB, outerIdxA, otherBoundaries, false);
+            forwardPaths.add(fwd);
+            backwardPaths.add(bwd);
+        }
+
+        // Choose outer path directions so that together they cover all outer-only nodes.
+        // For each segment, pick forward or backward; then verify full coverage.
+        List<List<Node>> chosenPaths = chooseComplementaryPaths(
+            outerNodes, outerSize, sharedSet, allBoundaryNodes,
+            forwardPaths, backwardPaths, innerOnlySegments.size());
+
+        if (chosenPaths == null) {
+            return null;
+        }
+
+        for (int s = 0; s < innerOnlySegments.size(); s++) {
+            Node boundaryA = segStartBoundary.get(s);
+            Node boundaryB = segEndBoundary.get(s);
+            List<Node> innerSegment = innerOnlySegments.get(s);
+            List<Node> outerPath = chosenPaths.get(s);
+
             if (outerPath == null) {
                 return null;
             }
@@ -890,6 +957,58 @@ public class MultipolygonAnalyzer {
             }
 
             result.add(way);
+        }
+
+        // Validate geometric consistency: for the 2-segment case, try both pairings
+        // and pick the one where the merged ways form simple (non-self-intersecting) polygons.
+        // A correct pairing produces two simple polygons whose absolute signed areas sum
+        // to the full outer-inner region. A wrong pairing produces self-intersecting ways
+        // with smaller absolute areas (the crossed lobes partially cancel in the shoelace sum).
+        if (result.size() == 2 && innerOnlySegments.size() == 2) {
+            double currentAreaSum = Math.abs(computeSignedArea(result.get(0)))
+                                  + Math.abs(computeSignedArea(result.get(1)));
+
+            // Build alternative pairing with swapped outer paths
+            List<List<Node>> altResult = new ArrayList<>();
+            List<List<Node>> altPaths = new ArrayList<>();
+            for (int s = 0; s < 2; s++) {
+                List<Node> fwd = forwardPaths.get(s);
+                List<Node> bwd = backwardPaths.get(s);
+                List<Node> current = chosenPaths.get(s);
+                altPaths.add((current == fwd) ? bwd : fwd);
+            }
+            boolean altValid = true;
+            for (int s = 0; s < 2; s++) {
+                Node bndA = segStartBoundary.get(s);
+                Node bndB = segEndBoundary.get(s);
+                List<Node> innerSeg = innerOnlySegments.get(s);
+                List<Node> altOuter = altPaths.get(s);
+                if (altOuter == null) { altValid = false; break; }
+                List<Node> way = new ArrayList<>();
+                way.add(bndA);
+                way.addAll(innerSeg);
+                way.add(bndB);
+                for (int i = 1; i < altOuter.size(); i++) {
+                    way.add(altOuter.get(i));
+                }
+                if (!way.get(way.size() - 1).equals(way.get(0))) {
+                    way.add(bndA);
+                }
+                altResult.add(way);
+            }
+
+            if (altValid) {
+                double altAreaSum = Math.abs(computeSignedArea(altResult.get(0)))
+                                  + Math.abs(computeSignedArea(altResult.get(1)));
+                if (altAreaSum > currentAreaSum) {
+                    // Alternative pairing produces larger total area = correct simple polygons
+                    result.clear();
+                    result.addAll(altResult);
+                    for (int s = 0; s < 2; s++) {
+                        chosenPaths.set(s, altPaths.get(s));
+                    }
+                }
+            }
         }
 
         // When 3+ consecutive shared nodes exist between two boundaries, the outer path
@@ -936,50 +1055,441 @@ public class MultipolygonAnalyzer {
             }
         }
 
+        return new MergeResult(result, null);
+    }
+
+    /**
+     * Cross-segment intersection node for bridging inner merges.
+     * Records which edge from each of the two segments crosses.
+     */
+    private static class InnerCrossing {
+        final int segAIdx;      // segment index (0 or 1)
+        final int segAEdge;     // edge index within the full segment (including boundary nodes)
+        final int segBIdx;      // segment index (0 or 1)
+        final int segBEdge;     // edge index within the full segment
+        final EastNorth point;
+        Node node;
+
+        InnerCrossing(int segAIdx, int segAEdge, int segBIdx, int segBEdge, EastNorth point) {
+            this.segAIdx = segAIdx;
+            this.segAEdge = segAEdge;
+            this.segBIdx = segBIdx;
+            this.segBEdge = segBEdge;
+            this.point = point;
+        }
+    }
+
+    /**
+     * When 2 inner-only segments have edges that cross each other (self-intersecting inner),
+     * the inner ring "bridges" across the outer polygon and divides it into two regions.
+     * This method detects such crossings, inserts new intersection nodes, and builds
+     * merged ways that trace the boundaries of each region correctly.
+     *
+     * Returns null if no cross-segment intersections are found.
+     */
+    private static MergeResult tryMergeWithCrossSegmentIntersections(
+            List<Node> outerNodes,
+            List<List<Node>> innerOnlySegments,
+            List<Node> segStartBoundary,
+            List<Node> segEndBoundary,
+            Set<Node> sharedSet) {
+
+        int outerSize = outerNodes.size() - 1;
+
+        // Build full segments including boundary nodes: [startBoundary, ...innerOnly..., endBoundary]
+        List<List<Node>> fullSegments = new ArrayList<>();
+        for (int s = 0; s < 2; s++) {
+            List<Node> full = new ArrayList<>();
+            full.add(segStartBoundary.get(s));
+            full.addAll(innerOnlySegments.get(s));
+            full.add(segEndBoundary.get(s));
+            fullSegments.add(full);
+        }
+
+        // Find all crossings between edges of segment 0 and edges of segment 1
+        List<InnerCrossing> crossings = new ArrayList<>();
+        List<Node> seg0 = fullSegments.get(0);
+        List<Node> seg1 = fullSegments.get(1);
+
+        for (int i = 0; i < seg0.size() - 1; i++) {
+            EastNorth p1 = seg0.get(i).getEastNorth();
+            EastNorth p2 = seg0.get(i + 1).getEastNorth();
+            for (int j = 0; j < seg1.size() - 1; j++) {
+                EastNorth p3 = seg1.get(j).getEastNorth();
+                EastNorth p4 = seg1.get(j + 1).getEastNorth();
+
+                // Skip if segments share an endpoint node
+                if (seg0.get(i) == seg1.get(j) || seg0.get(i) == seg1.get(j + 1)
+                    || seg0.get(i + 1) == seg1.get(j) || seg0.get(i + 1) == seg1.get(j + 1)) {
+                    continue;
+                }
+
+                EastNorth intersection = Geometry.getSegmentSegmentIntersection(p1, p2, p3, p4);
+                if (intersection != null) {
+                    double tol = 1e-6;
+                    if (isNear(intersection, p1, tol) || isNear(intersection, p2, tol)
+                        || isNear(intersection, p3, tol) || isNear(intersection, p4, tol)) {
+                        continue;
+                    }
+                    crossings.add(new InnerCrossing(0, i, 1, j, intersection));
+                }
+            }
+        }
+
+        if (crossings.isEmpty()) {
+            return null;
+        }
+
+        // Create nodes at crossing points
+        List<Node> newNodes = new ArrayList<>();
+        for (InnerCrossing c : crossings) {
+            LatLon ll = ProjectionRegistry.getProjection().eastNorth2latlon(c.point);
+            c.node = new Node(ll);
+            newNodes.add(c.node);
+        }
+
+        // Insert crossing nodes into both segments.
+        // For each segment, collect the crossings that affect it, sorted by edge index
+        // and parameter along that edge.
+        List<Node> augSeg0 = buildAugmentedSegment(seg0, crossings, 0);
+        List<Node> augSeg1 = buildAugmentedSegment(seg1, crossings, 1);
+
+        // Now build the two merged ways by tracing through the intersection nodes.
+        // Each way follows one outer path and then traces through both inner segments,
+        // switching at each intersection node.
+        //
+        // The two shared boundary nodes are the same for both segments (just in opposite order):
+        // Segment 0: startBoundary[0] -> ... -> endBoundary[0]
+        // Segment 1: startBoundary[1] -> ... -> endBoundary[1]
+        // where endBoundary[0] == startBoundary[1] and endBoundary[1] == startBoundary[0]
+        // (since there are exactly 2 shared nodes and 2 segments between them).
+
+        Node sharedA = segStartBoundary.get(0); // = segEndBoundary.get(1)
+        Node sharedB = segEndBoundary.get(0);   // = segStartBoundary.get(1)
+
+        // Build outer index map
+        Map<Node, Integer> outerIndexMap = new HashMap<>();
+        for (int i = 0; i < outerSize; i++) {
+            outerIndexMap.put(outerNodes.get(i), i);
+        }
+        Integer outerIdxA = outerIndexMap.get(sharedA);
+        Integer outerIdxB = outerIndexMap.get(sharedB);
+        if (outerIdxA == null || outerIdxB == null) {
+            return null;
+        }
+
+        // Compute the two outer paths (A->B forward and A->B backward)
+        List<Node> outerPathFwd = computeDirectionalPath(outerNodes, outerSize, outerIdxA, outerIdxB, Set.of(), true);
+        List<Node> outerPathBwd = computeDirectionalPath(outerNodes, outerSize, outerIdxA, outerIdxB, Set.of(), false);
+
+        if (outerPathFwd == null || outerPathBwd == null) {
+            return null;
+        }
+
+        // Build the inner path for each way by tracing through both augmented segments,
+        // switching between them at intersection nodes.
+        // There are two possible pairings: inner trace starting on seg0-reversed or seg1.
+        // We try both and pick the pairing where the first inner-only node of each path
+        // is geometrically on the same side as the corresponding outer path.
+        List<Node> innerPathA = traceInnerPath(augSeg0, augSeg1, sharedB, sharedA, newNodes, false);
+        List<Node> innerPathB = traceInnerPath(augSeg0, augSeg1, sharedB, sharedA, newNodes, true);
+
+        if (innerPathA == null || innerPathB == null) {
+            return null;
+        }
+
+        // Build candidate ways for both possible pairings and pick the one with
+        // correct geometry (both ways have positive signed area = CCW winding).
+        // Pairing 1: outerFwd + innerPathA, outerBwd + innerPathB
+        // Pairing 2: outerFwd + innerPathB, outerBwd + innerPathA
+        for (int pairing = 0; pairing < 2; pairing++) {
+            List<Node> innerForFwd = (pairing == 0) ? innerPathA : innerPathB;
+            List<Node> innerForBwd = (pairing == 0) ? innerPathB : innerPathA;
+
+            List<Node> way1 = new ArrayList<>();
+            for (Node n : outerPathFwd) {
+                way1.add(n);
+            }
+            for (int i = 1; i < innerForFwd.size(); i++) {
+                way1.add(innerForFwd.get(i));
+            }
+            if (!way1.get(way1.size() - 1).equals(way1.get(0))) {
+                way1.add(sharedA);
+            }
+
+            List<Node> way2 = new ArrayList<>();
+            for (Node n : outerPathBwd) {
+                way2.add(n);
+            }
+            for (int i = 1; i < innerForBwd.size(); i++) {
+                way2.add(innerForBwd.get(i));
+            }
+            if (!way2.get(way2.size() - 1).equals(way2.get(0))) {
+                way2.add(sharedA);
+            }
+
+            // Check if both ways have valid geometry (non-self-intersecting).
+            // Use signed area: if both are positive (CCW) or both negative (CW),
+            // this pairing is geometrically consistent.
+            double area1 = computeSignedArea(way1);
+            double area2 = computeSignedArea(way2);
+            if ((area1 > 0 && area2 > 0) || (area1 < 0 && area2 < 0)) {
+                return new MergeResult(List.of(way1, way2), newNodes);
+            }
+        }
+
+        // Neither pairing produced consistent geometry — fall back to null
+        return null;
+    }
+
+    /**
+     * Inserts crossing nodes into a segment's node list at the appropriate positions.
+     * Crossings are sorted by edge index and parameter along the edge.
+     */
+    private static List<Node> buildAugmentedSegment(List<Node> segment, List<InnerCrossing> crossings, int segIdx) {
+        // Collect crossings for this segment, keyed by edge index
+        Map<Integer, List<InnerCrossing>> edgeCrossings = new HashMap<>();
+        for (InnerCrossing c : crossings) {
+            int edgeIdx;
+            if (c.segAIdx == segIdx) {
+                edgeIdx = c.segAEdge;
+            } else if (c.segBIdx == segIdx) {
+                edgeIdx = c.segBEdge;
+            } else {
+                continue;
+            }
+            edgeCrossings.computeIfAbsent(edgeIdx, k -> new ArrayList<>()).add(c);
+        }
+
+        List<Node> result = new ArrayList<>();
+        for (int i = 0; i < segment.size() - 1; i++) {
+            result.add(segment.get(i));
+            List<InnerCrossing> edgeCross = edgeCrossings.get(i);
+            if (edgeCross != null) {
+                // Sort by parameter along the edge (distance from start node)
+                EastNorth start = segment.get(i).getEastNorth();
+                edgeCross.sort((a, b) -> {
+                    double distA = a.point.distance(start);
+                    double distB = b.point.distance(start);
+                    return Double.compare(distA, distB);
+                });
+                for (InnerCrossing c : edgeCross) {
+                    result.add(c.node);
+                }
+            }
+        }
+        result.add(segment.get(segment.size() - 1));
         return result;
+    }
+
+    /**
+     * Traces an inner path from one shared node to another through augmented inner segments,
+     * switching between segments at intersection nodes.
+     *
+     * @param augSeg0 augmented segment 0 (from sharedA to sharedB)
+     * @param augSeg1 augmented segment 1 (from sharedB to sharedA)
+     * @param fromNode starting shared node
+     * @param toNode ending shared node
+     * @param crossingNodes set of intersection nodes where we switch segments
+     * @param startWithSeg1 if true, start tracing on segment 1; if false, start on segment 0
+     * @return path from fromNode to toNode
+     */
+    private static List<Node> traceInnerPath(
+            List<Node> augSeg0, List<Node> augSeg1,
+            Node fromNode, Node toNode,
+            List<Node> crossingNodes, boolean startWithSeg1) {
+
+        Set<Node> crossingSet = new HashSet<>(crossingNodes);
+
+        // augSeg0 goes from sharedA to sharedB; augSeg1 goes from sharedB to sharedA.
+        // We need to trace from fromNode (=sharedB) to toNode (=sharedA).
+        // Segment 1 goes sharedB -> sharedA (forward direction for our purpose).
+        // Segment 0 goes sharedA -> sharedB, so reversed it goes sharedB -> sharedA.
+
+        // Build reversed augSeg0 for walking from sharedB to sharedA
+        List<Node> augSeg0Rev = new ArrayList<>(augSeg0);
+        java.util.Collections.reverse(augSeg0Rev);
+
+        // We have two paths from sharedB to sharedA:
+        // Path via seg1 (forward): augSeg1
+        // Path via seg0 (reversed): augSeg0Rev
+        // Both start at sharedB and end at sharedA.
+
+        // The tracing algorithm: start on one path, walk until hitting a crossing node,
+        // then switch to the other path (find the crossing node in the other path and
+        // continue from there).
+
+        List<Node> pathA = startWithSeg1 ? augSeg1 : augSeg0Rev;
+        List<Node> pathB = startWithSeg1 ? augSeg0Rev : augSeg1;
+
+        List<Node> result = new ArrayList<>();
+        List<Node> currentPath = pathA;
+        List<Node> otherPath = pathB;
+
+        // Find starting position: fromNode should be the first node
+        int pos = 0;
+        if (!currentPath.get(0).equals(fromNode)) {
+            return null;
+        }
+        result.add(fromNode);
+        pos = 1;
+
+        while (pos < currentPath.size()) {
+            Node n = currentPath.get(pos);
+            result.add(n);
+            if (n.equals(toNode)) {
+                return result;
+            }
+            if (crossingSet.contains(n)) {
+                // Switch to the other path: find this crossing node in the other path
+                int otherPos = -1;
+                for (int i = 0; i < otherPath.size(); i++) {
+                    if (otherPath.get(i).equals(n)) {
+                        otherPos = i;
+                        break;
+                    }
+                }
+                if (otherPos == -1) {
+                    return null;
+                }
+                // Swap paths
+                List<Node> temp = currentPath;
+                currentPath = otherPath;
+                otherPath = temp;
+                pos = otherPos + 1;
+            } else {
+                pos++;
+            }
+        }
+
+        return null; // Didn't reach toNode
+    }
+
+    /**
+     * Computes the signed area of a closed polygon using the shoelace formula.
+     * Positive = counterclockwise, negative = clockwise.
+     * Uses EastNorth (projected) coordinates for accuracy.
+     */
+    private static double computeSignedArea(List<Node> way) {
+        double area = 0;
+        int n = way.size() - 1; // exclude closing node
+        for (int i = 0; i < n; i++) {
+            EastNorth curr = way.get(i).getEastNorth();
+            EastNorth next = way.get((i + 1) % n).getEastNorth();
+            area += curr.east() * next.north() - next.east() * curr.north();
+        }
+        return area / 2.0;
+    }
+
+    /**
+     * Computes an outer path in a single direction (forward=CW or backward=CCW).
+     * Returns null if the path is blocked by a forbidden node.
+     */
+    private static List<Node> computeDirectionalPath(List<Node> outerNodes, int outerSize,
+            int fromIdx, int toIdx, Set<Node> forbidden, boolean forward) {
+        List<Node> path = new ArrayList<>();
+        path.add(outerNodes.get(fromIdx));
+        int step = forward ? 1 : -1;
+        for (int i = (fromIdx + step + outerSize) % outerSize; i != toIdx; i = (i + step + outerSize) % outerSize) {
+            Node n = outerNodes.get(i);
+            if (forbidden.contains(n)) {
+                return null;
+            }
+            path.add(n);
+        }
+        path.add(outerNodes.get(toIdx));
+        return path;
+    }
+
+    /**
+     * Chooses outer path directions for all segments so that together they cover
+     * all outer-only nodes (nodes not in sharedSet and not boundary nodes).
+     * Falls back to the old heuristic (prefer outer-only, then shorter) when
+     * complementary coverage isn't needed or can't be achieved.
+     */
+    private static List<List<Node>> chooseComplementaryPaths(
+            List<Node> outerNodes, int outerSize, Set<Node> sharedSet, Set<Node> allBoundaryNodes,
+            List<List<Node>> forwardPaths, List<List<Node>> backwardPaths, int segCount) {
+
+        // Collect all outer-only nodes that need to be covered
+        Set<Node> outerOnlyNodes = new HashSet<>();
+        for (int i = 0; i < outerSize; i++) {
+            Node n = outerNodes.get(i);
+            if (!sharedSet.contains(n)) {
+                outerOnlyNodes.add(n);
+            }
+        }
+
+        // Start with default choices using the old heuristic
+        List<List<Node>> chosen = new ArrayList<>();
+        for (int s = 0; s < segCount; s++) {
+            List<Node> fwd = forwardPaths.get(s);
+            List<Node> bwd = backwardPaths.get(s);
+            if (fwd != null && bwd != null) {
+                boolean fwdHasOuterOnly = fwd.stream().anyMatch(n -> !sharedSet.contains(n) && !allBoundaryNodes.contains(n));
+                boolean bwdHasOuterOnly = bwd.stream().anyMatch(n -> !sharedSet.contains(n) && !allBoundaryNodes.contains(n));
+                if (fwdHasOuterOnly != bwdHasOuterOnly) {
+                    chosen.add(fwdHasOuterOnly ? fwd : bwd);
+                } else {
+                    chosen.add(fwd.size() <= bwd.size() ? fwd : bwd);
+                }
+            } else if (fwd != null) {
+                chosen.add(fwd);
+            } else {
+                chosen.add(bwd);
+            }
+        }
+
+        // Check if all outer-only nodes are covered by the chosen paths
+        Set<Node> covered = new HashSet<>();
+        for (List<Node> path : chosen) {
+            if (path != null) {
+                covered.addAll(path);
+            }
+        }
+        if (covered.containsAll(outerOnlyNodes)) {
+            return chosen;
+        }
+
+        // Coverage is incomplete — try swapping each segment's path
+        for (int s = 0; s < segCount; s++) {
+            List<Node> fwd = forwardPaths.get(s);
+            List<Node> bwd = backwardPaths.get(s);
+            List<Node> current = chosen.get(s);
+            List<Node> alternative = (current == fwd) ? bwd : fwd;
+            if (alternative == null) continue;
+
+            // Try swapping this segment
+            chosen.set(s, alternative);
+            covered.clear();
+            for (List<Node> path : chosen) {
+                if (path != null) {
+                    covered.addAll(path);
+                }
+            }
+            if (covered.containsAll(outerOnlyNodes)) {
+                return chosen;
+            }
+            // Revert if no improvement
+            chosen.set(s, current);
+        }
+
+        // Couldn't achieve full coverage — return the default choices
+        // (some outer nodes may be covered by the shared-intermediate-node logic below)
+        return chosen;
     }
 
     private static List<Node> findOuterPath(List<Node> outerNodes, int outerSize,
             int fromIdx, int toIdx, Set<Node> forbidden, Set<Node> sharedSet) {
-        List<Node> forward = new ArrayList<>();
-        forward.add(outerNodes.get(fromIdx));
-        boolean forwardValid = true;
-        boolean forwardHasOuterOnly = false;
-        for (int i = (fromIdx + 1) % outerSize; i != toIdx; i = (i + 1) % outerSize) {
-            Node n = outerNodes.get(i);
-            if (forbidden.contains(n)) {
-                forwardValid = false;
-                break;
-            }
-            if (!sharedSet.contains(n)) {
-                forwardHasOuterOnly = true;
-            }
-            forward.add(n);
-        }
-        if (forwardValid) {
-            forward.add(outerNodes.get(toIdx));
-        }
+        List<Node> forward = computeDirectionalPath(outerNodes, outerSize, fromIdx, toIdx, forbidden, true);
+        List<Node> backward = computeDirectionalPath(outerNodes, outerSize, fromIdx, toIdx, forbidden, false);
 
-        List<Node> backward = new ArrayList<>();
-        backward.add(outerNodes.get(fromIdx));
-        boolean backwardValid = true;
-        boolean backwardHasOuterOnly = false;
-        for (int i = (fromIdx - 1 + outerSize) % outerSize; i != toIdx; i = (i - 1 + outerSize) % outerSize) {
-            Node n = outerNodes.get(i);
-            if (forbidden.contains(n)) {
-                backwardValid = false;
-                break;
-            }
-            if (!sharedSet.contains(n)) {
-                backwardHasOuterOnly = true;
-            }
-            backward.add(n);
-        }
-        if (backwardValid) {
-            backward.add(outerNodes.get(toIdx));
-        }
+        boolean forwardValid = forward != null;
+        boolean backwardValid = backward != null;
 
         if (forwardValid && backwardValid) {
+            boolean forwardHasOuterOnly = forward.stream().anyMatch(n -> !sharedSet.contains(n));
+            boolean backwardHasOuterOnly = backward.stream().anyMatch(n -> !sharedSet.contains(n));
             if (forwardHasOuterOnly != backwardHasOuterOnly) {
                 return forwardHasOuterOnly ? forward : backward;
             }
@@ -1095,36 +1605,115 @@ public class MultipolygonAnalyzer {
 
     /**
      * Decomposes a self-intersecting ring into non-self-intersecting sub-rings.
+     * Handles both segment-crossing intersections and vertex-touching (repeated node) cases.
      * Returns null if the ring does not self-intersect.
      */
     static DecomposedRing decomposeIfSelfIntersecting(WayChainBuilder.Ring ring) {
         List<Node> ringNodes = ring.getNodes();
+
+        // First check for segment-segment crossings
         List<Crossing> crossings = findSelfIntersections(ringNodes);
-        if (crossings.isEmpty()) {
+        if (!crossings.isEmpty()) {
+            // Create nodes at crossing points
+            List<Node> newNodes = new ArrayList<>();
+            for (Crossing c : crossings) {
+                LatLon ll = ProjectionRegistry.getProjection().eastNorth2latlon(c.point);
+                c.node = new Node(ll);
+                newNodes.add(c.node);
+            }
+
+            // Build augmented ring with crossing nodes inserted
+            List<List<Node>> subRingNodeLists = splitAtCrossings(ringNodes, crossings);
+            if (subRingNodeLists != null && subRingNodeLists.size() > 1) {
+                List<WayChainBuilder.Ring> subRings = new ArrayList<>();
+                for (List<Node> subNodes : subRingNodeLists) {
+                    subRings.add(new WayChainBuilder.Ring(subNodes, ring.getSourceWays()));
+                }
+                return new DecomposedRing(ring, subRings, newNodes);
+            }
+        }
+
+        // Then check for vertex-touching: a node that appears more than once in the ring
+        // (e.g., a bowtie that meets at a shared node rather than crossing segments)
+        DecomposedRing vertexDecomp = decomposeAtRepeatedNodes(ring);
+        if (vertexDecomp != null) {
+            return vertexDecomp;
+        }
+
+        return null;
+    }
+
+    /**
+     * Decomposes a ring at repeated nodes (vertices that appear more than once).
+     * This handles bowties where two loops share a vertex without segments crossing.
+     * Returns null if no repeated nodes are found.
+     */
+    static DecomposedRing decomposeAtRepeatedNodes(WayChainBuilder.Ring ring) {
+        List<Node> ringNodes = ring.getNodes();
+        int ringSize = ringNodes.size() - 1; // exclude closing duplicate
+
+        // Find all nodes that appear more than once
+        Map<Node, List<Integer>> occurrences = new HashMap<>();
+        for (int i = 0; i < ringSize; i++) {
+            occurrences.computeIfAbsent(ringNodes.get(i), k -> new ArrayList<>()).add(i);
+        }
+
+        // Collect repeated nodes (appear 2+ times)
+        List<Node> repeatedNodes = new ArrayList<>();
+        for (Map.Entry<Node, List<Integer>> entry : occurrences.entrySet()) {
+            if (entry.getValue().size() >= 2) {
+                repeatedNodes.add(entry.getKey());
+            }
+        }
+
+        if (repeatedNodes.isEmpty()) {
             return null;
         }
 
-        // Create nodes at crossing points
-        List<Node> newNodes = new ArrayList<>();
-        for (Crossing c : crossings) {
-            LatLon ll = ProjectionRegistry.getProjection().eastNorth2latlon(c.point);
-            c.node = new Node(ll);
-            newNodes.add(c.node);
+        // Split at the first repeated node
+        Node splitNode = repeatedNodes.get(0);
+        List<Integer> positions = occurrences.get(splitNode);
+        int p1 = positions.get(0);
+        int p2 = positions.get(1);
+
+        // Sub-ring 1: from p1 to p2 (inclusive) — already closed because
+        // ringNodes[p1] and ringNodes[p2] are the same (repeated) node
+        List<Node> sub1 = new ArrayList<>();
+        for (int i = p1; i <= p2; i++) {
+            sub1.add(ringNodes.get(i));
         }
 
-        // Build augmented ring with crossing nodes inserted
-        List<List<Node>> subRingNodeLists = splitAtCrossings(ringNodes, crossings);
-        if (subRingNodeLists == null || subRingNodeLists.size() <= 1) {
-            return null;
+        // Sub-ring 2: from p2 to end, wrap to start, up to p1 (inclusive) — already
+        // closed because ringNodes[p2] and ringNodes[p1] are the same node
+        List<Node> sub2 = new ArrayList<>();
+        for (int i = p2; i < ringSize; i++) {
+            sub2.add(ringNodes.get(i));
+        }
+        for (int i = 0; i <= p1; i++) {
+            sub2.add(ringNodes.get(i));
         }
 
-        // Create synthetic Ring objects for each sub-ring
+        if (sub1.size() < 4 || sub2.size() < 4) {
+            return null; // degenerate sub-rings
+        }
+
         List<WayChainBuilder.Ring> subRings = new ArrayList<>();
-        for (List<Node> subNodes : subRingNodeLists) {
-            subRings.add(new WayChainBuilder.Ring(subNodes, ring.getSourceWays()));
+        subRings.add(new WayChainBuilder.Ring(sub1, ring.getSourceWays()));
+        subRings.add(new WayChainBuilder.Ring(sub2, ring.getSourceWays()));
+
+        // Recursively decompose sub-rings that may themselves contain repeated nodes
+        List<WayChainBuilder.Ring> finalRings = new ArrayList<>();
+        for (WayChainBuilder.Ring subRing : subRings) {
+            DecomposedRing nested = decomposeAtRepeatedNodes(subRing);
+            if (nested != null) {
+                finalRings.addAll(nested.getSubRings());
+            } else {
+                finalRings.add(subRing);
+            }
         }
 
-        return new DecomposedRing(ring, subRings, newNodes);
+        // No new intersection nodes needed — the repeated node already exists
+        return new DecomposedRing(ring, finalRings, new ArrayList<>());
     }
 
     /**

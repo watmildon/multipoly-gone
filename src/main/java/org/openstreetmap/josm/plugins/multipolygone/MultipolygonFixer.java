@@ -304,6 +304,12 @@ public class MultipolygonFixer {
                 }
 
                 case TOUCHING_INNER_MERGE -> {
+                    // Add any new intersection nodes (e.g., from self-intersecting inner merges)
+                    if (op.getNewNodes() != null) {
+                        for (Node newNode : op.getNewNodes()) {
+                            commands.add(new AddCommand(ds, newNode));
+                        }
+                    }
                     for (List<Node> wayNodes : op.getMergedWays()) {
                         Way newWay = new Way();
                         newWay.setNodes(wayNodes);
@@ -440,6 +446,11 @@ public class MultipolygonFixer {
                                     waysToRemoveFromRelation.addAll(comp.getInnerWays());
                                 }
                                 case TOUCHING_INNER_MERGE -> {
+                                    if (subOp.getNewNodes() != null) {
+                                        for (Node newNode : subOp.getNewNodes()) {
+                                            commands.add(new AddCommand(ds, newNode));
+                                        }
+                                    }
                                     for (List<Node> wayNodes : subOp.getMergedWays()) {
                                         Way newWay = new Way();
                                         newWay.setNodes(wayNodes);

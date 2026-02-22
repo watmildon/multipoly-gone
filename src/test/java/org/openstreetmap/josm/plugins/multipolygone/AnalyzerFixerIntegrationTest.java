@@ -331,7 +331,7 @@ class AnalyzerFixerIntegrationTest {
     }
 
     @Test
-    void megawetland_fixAll_48standaloneWetlandWays() {
+    void megawetland_fixAll_50standaloneWetlandWays() {
         DataSet ds = JosmTestSetup.loadDataSet("testdata-megawetland.osm");
         MultipolygonFixer.fixRelations(MultipolygonAnalyzer.findFixableRelations(ds));
 
@@ -342,8 +342,10 @@ class AnalyzerFixerIntegrationTest {
                 && w.getReferrers().stream()
                     .noneMatch(r -> r instanceof Relation && !r.isDeleted()))
             .collect(Collectors.toList());
-        assertEquals(48, standaloneWetland.size(),
-            "48 standalone outers should be extracted with wetland tags");
+        // 50 = 48 simple outers + 2 from bowtie decomposition (previously degenerate due to
+        // duplicate node bug in decomposeAtRepeatedNodes)
+        assertEquals(50, standaloneWetland.size(),
+            "50 standalone outers should be extracted with wetland tags");
 
         for (Way w : standaloneWetland) {
             assertTrue(w.isClosed(),
