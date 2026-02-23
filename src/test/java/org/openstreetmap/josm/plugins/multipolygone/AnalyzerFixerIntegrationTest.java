@@ -613,16 +613,18 @@ class AnalyzerFixerIntegrationTest {
     }
 
     @Test
-    void finalboss_singlePassDoesNotConverge() {
-        // Documents the problem: a single fixRelations pass leaves fixable relations
+    void finalboss_singlePassConvergesForSafeRelations() {
+        // With partial-data safety checks (isOutsideDownloadArea), some relations are
+        // skipped because they have nodes outside the download bounds. The remaining
+        // fixable relations all converge in a single pass.
         DataSet ds = JosmTestSetup.loadDataSet("testdata-finalboss.osm");
         List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
 
         MultipolygonFixer.fixRelations(plans);
 
         List<FixPlan> remaining = MultipolygonAnalyzer.findFixableRelations(ds);
-        assertTrue(remaining.size() > 0,
-            "Single pass should NOT converge (remaining fixable relations demonstrate the need for iteration)");
+        assertEquals(0, remaining.size(),
+            "Single pass should converge for relations within download area");
     }
 
     @Test

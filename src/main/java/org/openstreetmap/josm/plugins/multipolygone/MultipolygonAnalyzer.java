@@ -217,6 +217,11 @@ public class MultipolygonAnalyzer {
     }
 
     private static FixPlan analyze(Relation relation) {
+        // Skip relations with incomplete members — we can't see all geometry
+        if (relation.hasIncompleteMembers()) {
+            return null;
+        }
+
         List<Way> outerWays = new ArrayList<>();
         List<Way> innerWays = new ArrayList<>();
         Set<Way> innerWaySet = new HashSet<>();
@@ -227,6 +232,11 @@ public class MultipolygonAnalyzer {
             }
             Way way = member.getWay();
             if (way.isDeleted() || way.isIncomplete() || way.getNodesCount() < 2) {
+                return null;
+            }
+            // Skip if any member way extends beyond the download area —
+            // we may not have complete context about the surrounding data
+            if (way.isOutsideDownloadArea()) {
                 return null;
             }
             if ("inner".equals(member.getRole())) {
