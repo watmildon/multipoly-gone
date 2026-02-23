@@ -936,36 +936,19 @@ public class MultipolygonAnalyzer {
         }
 
         for (int s = 0; s < innerOnlySegments.size(); s++) {
-            Node boundaryA = segStartBoundary.get(s);
-            Node boundaryB = segEndBoundary.get(s);
-            List<Node> innerSegment = innerOnlySegments.get(s);
-            List<Node> outerPath = chosenPaths.get(s);
-
-            if (outerPath == null) {
+            List<Node> way = buildMergedWay(segStartBoundary.get(s), segEndBoundary.get(s),
+                innerOnlySegments.get(s), chosenPaths.get(s));
+            if (way == null) {
                 return null;
             }
-
-            List<Node> way = new ArrayList<>();
-            way.add(boundaryA);
-            way.addAll(innerSegment);
-            way.add(boundaryB);
-            for (int i = 1; i < outerPath.size(); i++) {
-                way.add(outerPath.get(i));
-            }
-            if (!way.get(way.size() - 1).equals(way.get(0))) {
-                way.add(boundaryA);
-            }
-
             result.add(way);
         }
 
-        // Validate geometric consistency: for the 2-segment case, try both pairings
-        // and pick the correct one. The correct pairing produces merged ways whose total
-        // area equals the outer area minus the inner area. A wrong pairing either creates
-        // self-intersecting ways (smaller area due to cancellation) or ways that overlap
-        // the inner region (larger area because inner is counted extra).
+        // For 2-segment cases, validate the pairing using area comparison.
+        // The angle test handles inner segment direction, but the outer path pairing
+        // (which outer half goes with which inner segment) may be wrong. Try both
+        // pairings and pick the one whose total area matches outer - inner.
         if (result.size() == 2 && innerOnlySegments.size() == 2) {
-            // Compute expected area: |outer| - |inner|
             double outerArea = Math.abs(computeSignedArea(outerNodes));
             double innerArea = Math.abs(computeSignedArea(innerNodes));
             double expectedArea = outerArea - innerArea;
@@ -973,8 +956,7 @@ public class MultipolygonAnalyzer {
             double currentAreaSum = Math.abs(computeSignedArea(result.get(0)))
                                   + Math.abs(computeSignedArea(result.get(1)));
 
-            // Build alternative pairing with swapped outer paths
-            List<List<Node>> altResult = new ArrayList<>();
+            // Build alternative with swapped outer paths
             List<List<Node>> altPaths = new ArrayList<>();
             for (int s = 0; s < 2; s++) {
                 List<Node> fwd = forwardPaths.get(s);
@@ -983,29 +965,17 @@ public class MultipolygonAnalyzer {
                 altPaths.add((current == fwd) ? bwd : fwd);
             }
             boolean altValid = true;
+            List<List<Node>> altResult = new ArrayList<>();
             for (int s = 0; s < 2; s++) {
-                Node bndA = segStartBoundary.get(s);
-                Node bndB = segEndBoundary.get(s);
-                List<Node> innerSeg = innerOnlySegments.get(s);
-                List<Node> altOuter = altPaths.get(s);
-                if (altOuter == null) { altValid = false; break; }
-                List<Node> way = new ArrayList<>();
-                way.add(bndA);
-                way.addAll(innerSeg);
-                way.add(bndB);
-                for (int i = 1; i < altOuter.size(); i++) {
-                    way.add(altOuter.get(i));
-                }
-                if (!way.get(way.size() - 1).equals(way.get(0))) {
-                    way.add(bndA);
-                }
-                altResult.add(way);
+                List<Node> altWay = buildMergedWay(segStartBoundary.get(s), segEndBoundary.get(s),
+                    innerOnlySegments.get(s), altPaths.get(s));
+                if (altWay == null) { altValid = false; break; }
+                altResult.add(altWay);
             }
 
             if (altValid) {
                 double altAreaSum = Math.abs(computeSignedArea(altResult.get(0)))
                                   + Math.abs(computeSignedArea(altResult.get(1)));
-                // Pick the pairing whose total area is closest to the expected (outer - inner)
                 double currentDiff = Math.abs(currentAreaSum - expectedArea);
                 double altDiff = Math.abs(altAreaSum - expectedArea);
                 if (altDiff < currentDiff) {
@@ -1197,22 +1167,18 @@ public class MultipolygonAnalyzer {
             return null;
         }
 
-        // Build the inner path for each way by tracing through both augmented segments,
-        // switching between them at intersection nodes.
-        // There are two possible pairings: inner trace starting on seg0-reversed or seg1.
-        // We try both and pick the pairing where the first inner-only node of each path
-        // is geometrically on the same side as the corresponding outer path.
-        List<Node> innerPathA = traceInnerPath(augSeg0, augSeg1, sharedB, sharedA, newNodes, false);
-        List<Node> innerPathB = traceInnerPath(augSeg0, augSeg1, sharedB, sharedA, newNodes, true);
+        // Trace inner paths with both starting directions: seg0-backward and seg1-forward.
+        // At crossing nodes, direction reverses to trace complementary sub-paths.
+        List<Node> innerPathA = traceInnerPathCrossSegment(augSeg0, augSeg1, sharedB, sharedA, newNodes, false);
+        List<Node> innerPathB = traceInnerPathCrossSegment(augSeg0, augSeg1, sharedB, sharedA, newNodes, true);
 
         if (innerPathA == null || innerPathB == null) {
             return null;
         }
 
-        // Build candidate ways for both possible pairings and pick the one with
-        // the larger total absolute area (correct simple polygons).
-        // Pairing 0: outerFwd + innerPathA, outerBwd + innerPathB
-        // Pairing 1: outerFwd + innerPathB, outerBwd + innerPathA
+        // Try both pairings of inner paths with outer paths. The correct pairing
+        // produces non-self-intersecting ways with larger total area. A wrong pairing
+        // creates self-intersecting ways whose signed area partially cancels out.
         List<List<Node>> bestWays = null;
         double bestAreaSum = -1;
 
@@ -1220,10 +1186,7 @@ public class MultipolygonAnalyzer {
             List<Node> innerForFwd = (pairing == 0) ? innerPathA : innerPathB;
             List<Node> innerForBwd = (pairing == 0) ? innerPathB : innerPathA;
 
-            List<Node> way1 = new ArrayList<>();
-            for (Node n : outerPathFwd) {
-                way1.add(n);
-            }
+            List<Node> way1 = new ArrayList<>(outerPathFwd);
             for (int i = 1; i < innerForFwd.size(); i++) {
                 way1.add(innerForFwd.get(i));
             }
@@ -1231,10 +1194,7 @@ public class MultipolygonAnalyzer {
                 way1.add(sharedA);
             }
 
-            List<Node> way2 = new ArrayList<>();
-            for (Node n : outerPathBwd) {
-                way2.add(n);
-            }
+            List<Node> way2 = new ArrayList<>(outerPathBwd);
             for (int i = 1; i < innerForBwd.size(); i++) {
                 way2.add(innerForBwd.get(i));
             }
@@ -1242,8 +1202,6 @@ public class MultipolygonAnalyzer {
                 way2.add(sharedA);
             }
 
-            // The correct pairing excludes the inner region, producing smaller total area.
-            // A wrong pairing would include inner area in the merged ways, inflating the sum.
             double areaSum = Math.abs(computeSignedArea(way1)) + Math.abs(computeSignedArea(way2));
             if (bestWays == null || areaSum < bestAreaSum) {
                 bestAreaSum = areaSum;
@@ -1298,47 +1256,35 @@ public class MultipolygonAnalyzer {
     }
 
     /**
-     * Traces an inner path from one shared node to another through augmented inner segments,
-     * switching between segments at intersection nodes.
-     *
-     * At each crossing node, the trace switches to the OTHER segment and reverses direction.
-     * This correctly picks the "other side" sub-path between crossings.
+     * Traces an inner path through augmented segments for the cross-segment merge case.
+     * Switches between segments at intersection nodes, reversing direction at each crossing
+     * to trace the complementary sub-path.
      *
      * @param augSeg0 augmented segment 0 (from sharedA to sharedB)
      * @param augSeg1 augmented segment 1 (from sharedB to sharedA)
      * @param fromNode starting shared node (sharedB)
      * @param toNode ending shared node (sharedA)
      * @param crossingNodes intersection nodes where we switch segments
-     * @param startWithSeg1 if true, start tracing on segment 1; if false, start on segment 0 reversed
+     * @param startWithSeg1 if true, start on seg1 forward; if false, start on seg0 reversed
      * @return path from fromNode to toNode
      */
-    private static List<Node> traceInnerPath(
+    private static List<Node> traceInnerPathCrossSegment(
             List<Node> augSeg0, List<Node> augSeg1,
             Node fromNode, Node toNode,
             List<Node> crossingNodes, boolean startWithSeg1) {
 
         Set<Node> crossingSet = new HashSet<>(crossingNodes);
 
-        // We trace from fromNode (sharedB) to toNode (sharedA).
-        // augSeg0: sharedA → ... → sharedB (walking backward = sharedB toward sharedA)
-        // augSeg1: sharedB → ... → sharedA (walking forward = sharedB toward sharedA)
-        //
-        // At each crossing node, we switch to the other segment AND reverse walking direction.
-        // This ensures we pick the complementary sub-path between crossings.
-
-        // Current state: which segment we're on, current position, and direction (+1 or -1)
         int currentSeg;
         int pos;
         int dir;
 
         if (startWithSeg1) {
-            // Start on seg1 going forward from sharedB
             currentSeg = 1;
             pos = 0;
             dir = 1;
             if (!augSeg1.get(0).equals(fromNode)) return null;
         } else {
-            // Start on seg0 going backward from sharedB (last element)
             currentSeg = 0;
             pos = augSeg0.size() - 1;
             dir = -1;
@@ -1362,7 +1308,6 @@ public class MultipolygonAnalyzer {
             }
 
             if (crossingSet.contains(n)) {
-                // Switch to the other segment, find this crossing node, reverse direction
                 int otherSeg = 1 - currentSeg;
                 List<Node> otherSegList = (otherSeg == 0) ? augSeg0 : augSeg1;
                 int otherPos = -1;
@@ -1376,11 +1321,11 @@ public class MultipolygonAnalyzer {
 
                 currentSeg = otherSeg;
                 pos = otherPos;
-                dir = -dir; // reverse direction
+                dir = -dir; // reverse direction at crossings
             }
         }
 
-        return null; // Didn't reach toNode
+        return null;
     }
 
     /**
@@ -1397,6 +1342,51 @@ public class MultipolygonAnalyzer {
             area += curr.east() * next.north() - next.east() * curr.north();
         }
         return area / 2.0;
+    }
+
+    /**
+     * Checks if a closed polygon has any non-adjacent edge crossings (self-intersection).
+     * Uses the standard 2D segment intersection test via cross products.
+     * Adjacent edges (sharing an endpoint) are skipped.
+     */
+    private static boolean hasNonAdjacentEdgeCrossing(List<Node> way) {
+        int n = way.size() - 1; // exclude closing duplicate
+        for (int i = 0; i < n; i++) {
+            EastNorth a1 = way.get(i).getEastNorth();
+            EastNorth a2 = way.get(i + 1).getEastNorth();
+            for (int j = i + 2; j < n; j++) {
+                if (j == n - 1 && i == 0) continue; // last edge wraps to first — adjacent
+                EastNorth b1 = way.get(j).getEastNorth();
+                EastNorth b2 = way.get(j + 1).getEastNorth();
+                if (segmentsCross(a1, a2, b1, b2)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Returns true if segments (a1-a2) and (b1-b2) properly cross each other
+     * (not just touch at endpoints).
+     */
+    private static boolean segmentsCross(EastNorth a1, EastNorth a2, EastNorth b1, EastNorth b2) {
+        double d1 = cross(a1, a2, b1);
+        double d2 = cross(a1, a2, b2);
+        double d3 = cross(b1, b2, a1);
+        double d4 = cross(b1, b2, a2);
+        // Proper crossing: endpoints of each segment on opposite sides of the other
+        if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0))
+            && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) {
+            return true;
+        }
+        return false;
+    }
+
+    /** Cross product of vectors (p1→p2) and (p1→p3). */
+    private static double cross(EastNorth p1, EastNorth p2, EastNorth p3) {
+        return (p2.east() - p1.east()) * (p3.north() - p1.north())
+             - (p2.north() - p1.north()) * (p3.east() - p1.east());
     }
 
     /**
@@ -1417,6 +1407,68 @@ public class MultipolygonAnalyzer {
         }
         path.add(outerNodes.get(toIdx));
         return path;
+    }
+
+    /**
+     * Builds a merged way from an inner-only segment and an outer path,
+     * choosing the inner segment direction that produces a non-self-intersecting
+     * polygon.
+     *
+     * Tries both forward and reversed inner traversals and picks the one with
+     * larger absolute signed area. A self-intersecting polygon always has smaller
+     * absolute area than the non-self-intersecting version because overlapping
+     * "butterfly" regions cancel in the signed area computation.
+     *
+     * @param boundaryA     the shared boundary at the start of the inner segment
+     * @param boundaryB     the shared boundary at the end of the inner segment
+     * @param innerSegment  inner-only nodes (excluding boundaries)
+     * @param outerPath     the outer path from boundaryB to boundaryA
+     * @return a closed way, or null if outerPath is null
+     */
+    private static List<Node> buildMergedWay(Node boundaryA, Node boundaryB,
+            List<Node> innerSegment, List<Node> outerPath) {
+        if (outerPath == null) {
+            return null;
+        }
+
+        List<Node> fwdWay = buildMergedWayWithDirection(boundaryA, boundaryB, innerSegment, outerPath, false);
+        if (innerSegment.size() <= 1) {
+            return fwdWay;
+        }
+        List<Node> revWay = buildMergedWayWithDirection(boundaryA, boundaryB, innerSegment, outerPath, true);
+
+        // Pick the non-self-intersecting version
+        boolean fwdSelfIntersects = hasNonAdjacentEdgeCrossing(fwdWay);
+        boolean revSelfIntersects = hasNonAdjacentEdgeCrossing(revWay);
+        if (fwdSelfIntersects != revSelfIntersects) {
+            return fwdSelfIntersects ? revWay : fwdWay;
+        }
+        // Both or neither self-intersect — fall back to forward
+        return fwdWay;
+    }
+
+    /**
+     * Builds a merged way with a specific inner direction.
+     */
+    private static List<Node> buildMergedWayWithDirection(Node boundaryA, Node boundaryB,
+            List<Node> innerSegment, List<Node> outerPath, boolean reverse) {
+        List<Node> way = new ArrayList<>();
+        way.add(boundaryA);
+        if (reverse) {
+            for (int i = innerSegment.size() - 1; i >= 0; i--) {
+                way.add(innerSegment.get(i));
+            }
+        } else {
+            way.addAll(innerSegment);
+        }
+        way.add(boundaryB);
+        for (int i = 1; i < outerPath.size(); i++) {
+            way.add(outerPath.get(i));
+        }
+        if (!way.get(way.size() - 1).equals(way.get(0))) {
+            way.add(boundaryA);
+        }
+        return way;
     }
 
     /**
@@ -1495,27 +1547,6 @@ public class MultipolygonAnalyzer {
         // Couldn't achieve full coverage — return the default choices
         // (some outer nodes may be covered by the shared-intermediate-node logic below)
         return chosen;
-    }
-
-    private static List<Node> findOuterPath(List<Node> outerNodes, int outerSize,
-            int fromIdx, int toIdx, Set<Node> forbidden, Set<Node> sharedSet) {
-        List<Node> forward = computeDirectionalPath(outerNodes, outerSize, fromIdx, toIdx, forbidden, true);
-        List<Node> backward = computeDirectionalPath(outerNodes, outerSize, fromIdx, toIdx, forbidden, false);
-
-        boolean forwardValid = forward != null;
-        boolean backwardValid = backward != null;
-
-        if (forwardValid && backwardValid) {
-            boolean forwardHasOuterOnly = forward.stream().anyMatch(n -> !sharedSet.contains(n));
-            boolean backwardHasOuterOnly = backward.stream().anyMatch(n -> !sharedSet.contains(n));
-            if (forwardHasOuterOnly != backwardHasOuterOnly) {
-                return forwardHasOuterOnly ? forward : backward;
-            }
-            return forward.size() <= backward.size() ? forward : backward;
-        }
-        if (forwardValid) return forward;
-        if (backwardValid) return backward;
-        return null;
     }
 
     private static WayChainBuilder.Ring findContainingRing(WayChainBuilder.Ring inner, List<WayChainBuilder.Ring> outerRings) {

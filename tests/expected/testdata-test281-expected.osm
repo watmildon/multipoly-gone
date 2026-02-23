@@ -1,0 +1,20 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<osm version='0.6' generator='JOSM'>
+  <node id='-301014' action='modify' visible='true' lat='47.769' lon='-122.495' />
+  <node id='-301015' action='modify' visible='true' lat='47.769' lon='-122.493' />
+  <node id='-301016' action='modify' visible='true' lat='47.767' lon='-122.493' />
+  <node id='-301017' action='modify' visible='true' lat='47.767' lon='-122.495' />
+  <node id='-301018' action='modify' visible='true' lat='47.7685' lon='-122.4945' />
+  <node id='-301019' action='modify' visible='true' lat='47.7685' lon='-122.4935' />
+  <way id='-300168' action='modify' visible='true'>
+    <nd ref='-301015' />
+    <nd ref='-301016' />
+    <nd ref='-301017' />
+    <nd ref='-301014' />
+    <nd ref='-301018' />
+    <nd ref='-301019' />
+    <nd ref='-301015' />
+    <tag k='_test_id' v='281' />
+    <tag k='natural' v='water' />
+  </way>
+</osm>

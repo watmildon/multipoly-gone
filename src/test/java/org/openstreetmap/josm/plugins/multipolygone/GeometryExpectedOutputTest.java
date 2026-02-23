@@ -465,6 +465,37 @@ class GeometryExpectedOutputTest {
         assertNoOrphanedNodes(plan);
     }
 
+    @Test
+    void testCase281_producesExpectedGeometry() {
+        DataSet ds = freshInput();
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "281");
+        assertNotNull(plan, "Test case 281 should be fixable");
+
+        Set<Way> waysBefore = new HashSet<>(ds.getWays());
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        assertTrue(plan.getRelation().isDeleted(), "Relation should be deleted");
+
+        DataSet expected281 = JosmTestSetup.loadDataSet("expected/testdata-test281-expected.osm");
+        List<Way> expectedWays = expected281.getWays().stream()
+            .filter(w -> "281".equals(w.get("_test_id")))
+            .collect(Collectors.toList());
+        assertFalse(expectedWays.isEmpty(), "Expected output should have ways for test 281");
+
+        List<Way> actualWays = findActualWays(ds, waysBefore, expectedWays);
+        assertGeometryMatch("281", actualWays, expectedWays);
+    }
+
+    @Test
+    void testCase281_noOrphanedNodes() {
+        DataSet ds = freshInput();
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "281");
+
+        assertNoOrphanedNodes(plan);
+    }
+
     // ===================================================================
     // Test case 260 with Mercator projection (matches JOSM default)
     // ===================================================================
