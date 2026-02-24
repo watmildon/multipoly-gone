@@ -142,10 +142,18 @@ public class MultipolygonFixer {
             }
         }
 
-        // Delete orphaned nodes after ways, so undo restores nodes before ways
+        // Delete orphaned nodes after ways, so undo restores nodes before ways.
+        // Re-check each node: only delete if all its referrer ways are being deleted.
+        // The earlier check (during plan building) may have used stale cross-plan state.
         for (Node node : nodesToCleanup) {
             if (!node.isDeleted()) {
-                allCommands.add(new DeleteCommand(node));
+                boolean safeToDelete = node.getReferrers().stream()
+                    .filter(Way.class::isInstance)
+                    .map(Way.class::cast)
+                    .allMatch(waysAlreadyDeleted::contains);
+                if (safeToDelete) {
+                    allCommands.add(new DeleteCommand(node));
+                }
             }
         }
 
