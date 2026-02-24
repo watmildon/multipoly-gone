@@ -70,6 +70,68 @@ public class MultipolygonAnalyzer {
         public List<WayChainBuilder.Ring> getRetainedOuterRings() { return retainedOuterRings; }
         public List<WayChainBuilder.Ring> getRetainedInnerRings() { return retainedInnerRings; }
         public String getDescription() { return description; }
+
+        /**
+         * Validates that this component result will not produce invalid multipolygon states.
+         * @param relId identifier string for error messages
+         */
+        void validate(String relId) {
+            // Non-dissolving component must have outer ways
+            if (!dissolvesCompletely && outerWays.isEmpty()) {
+                throw new IllegalStateException(
+                    relId + ": non-dissolving component has no outer ways");
+            }
+
+            // Non-dissolving component with inners must have retained outers
+            if (!dissolvesCompletely && !innerWays.isEmpty()) {
+                if (retainedOuterRings == null || retainedOuterRings.isEmpty()) {
+                    // Check if there are operations that account for all outers (e.g., all extracted)
+                    // If so, the component would leave inners without any outer
+                    boolean hasExtractOrDissolve = operations.stream()
+                        .anyMatch(op -> op.getType() == FixOpType.EXTRACT_OUTERS
+                            || op.getType() == FixOpType.DISSOLVE
+                            || op.getType() == FixOpType.TOUCHING_INNER_MERGE);
+                    if (!hasExtractOrDissolve) {
+                        // No-op component retained as sub-relation — outerWays are present, this is fine
+                    } else {
+                        throw new IllegalStateException(
+                            relId + ": non-dissolving component has inners but no retained outer rings");
+                    }
+                }
+            }
+
+            // Validate sub-operations
+            for (FixOp op : operations) {
+                switch (op.getType()) {
+                    case CONSOLIDATE_RINGS ->
+                        FixPlan.validateRingsClosed(op.getRings(), relId, "component CONSOLIDATE_RINGS");
+                    case DECOMPOSE_SELF_INTERSECTIONS -> {
+                        if (op.getDecomposedRings() != null) {
+                            for (DecomposedRing decomp : op.getDecomposedRings()) {
+                                FixPlan.validateRingsClosed(decomp.getSubRings(), relId, "component DECOMPOSE sub-ring");
+                            }
+                        }
+                    }
+                    case TOUCHING_INNER_MERGE -> {
+                        if (op.getMergedWays() != null) {
+                            for (int i = 0; i < op.getMergedWays().size(); i++) {
+                                List<Node> wayNodes = op.getMergedWays().get(i);
+                                if (wayNodes.size() < 4) {
+                                    throw new IllegalStateException(
+                                        relId + ": component TOUCHING_INNER_MERGE way " + i
+                                        + " has only " + wayNodes.size() + " nodes (minimum 4)");
+                                }
+                                if (!wayNodes.get(0).equals(wayNodes.get(wayNodes.size() - 1))) {
+                                    throw new IllegalStateException(
+                                        relId + ": component TOUCHING_INNER_MERGE way " + i + " is not closed");
+                                }
+                            }
+                        }
+                    }
+                    default -> { }
+                }
+            }
+        }
     }
 
     /**
@@ -190,6 +252,105 @@ public class MultipolygonAnalyzer {
                 }
                 return false;
             });
+        }
+
+        /**
+         * Validates that this plan will not produce invalid multipolygon states.
+         * Throws IllegalStateException if any invariant is violated.
+         * Called during development to catch bugs early.
+         */
+        public void validate() {
+            String relId = "relation " + relation.getUniqueId();
+
+            for (FixOp op : operations) {
+                switch (op.getType()) {
+                    case CONSOLIDATE_RINGS -> validateRingsClosed(op.getRings(), relId, "CONSOLIDATE_RINGS");
+                    case DECOMPOSE_SELF_INTERSECTIONS -> {
+                        if (op.getDecomposedRings() != null) {
+                            for (DecomposedRing decomp : op.getDecomposedRings()) {
+                                validateRingsClosed(decomp.getSubRings(), relId, "DECOMPOSE sub-ring");
+                            }
+                        }
+                    }
+                    case TOUCHING_INNER_MERGE -> {
+                        if (op.getMergedWays() != null) {
+                            for (int i = 0; i < op.getMergedWays().size(); i++) {
+                                List<Node> wayNodes = op.getMergedWays().get(i);
+                                if (wayNodes.size() < 4) {
+                                    throw new IllegalStateException(
+                                        relId + ": TOUCHING_INNER_MERGE way " + i
+                                        + " has only " + wayNodes.size() + " nodes (minimum 4)");
+                                }
+                                if (!wayNodes.get(0).equals(wayNodes.get(wayNodes.size() - 1))) {
+                                    throw new IllegalStateException(
+                                        relId + ": TOUCHING_INNER_MERGE way " + i + " is not closed");
+                                }
+                            }
+                        }
+                    }
+                    case SPLIT_RELATION -> {
+                        if (op.getComponents() != null) {
+                            for (ComponentResult comp : op.getComponents()) {
+                                if (comp != null) {
+                                    comp.validate(relId);
+                                }
+                            }
+                        }
+                    }
+                    default -> { }
+                }
+            }
+
+            // If the relation survives, verify it will still have at least one outer
+            if (!dissolvesRelation()) {
+                validateSurvivingRelationHasOuters(relId);
+            }
+        }
+
+        private void validateSurvivingRelationHasOuters(String relId) {
+            // Count current outer members
+            long outerCount = relation.getMembers().stream()
+                .filter(m -> !"inner".equals(m.getRole()) && m.isWay())
+                .count();
+
+            // Subtract outers removed by EXTRACT_OUTERS
+            for (FixOp op : operations) {
+                if (op.getType() == FixOpType.EXTRACT_OUTERS && op.getRings() != null) {
+                    // Each extracted ring removes its source ways from the relation
+                    Set<Way> extractedSources = new HashSet<>();
+                    for (WayChainBuilder.Ring ring : op.getRings()) {
+                        extractedSources.addAll(ring.getSourceWays());
+                    }
+                    outerCount -= relation.getMembers().stream()
+                        .filter(m -> !"inner".equals(m.getRole()) && m.isWay()
+                            && extractedSources.contains(m.getWay()))
+                        .count();
+                }
+            }
+
+            if (outerCount <= 0) {
+                throw new IllegalStateException(
+                    relId + ": plan does not dissolve relation but would leave 0 outer members");
+            }
+        }
+
+        private static void validateRingsClosed(List<WayChainBuilder.Ring> rings, String relId, String context) {
+            if (rings == null) return;
+            for (int i = 0; i < rings.size(); i++) {
+                WayChainBuilder.Ring ring = rings.get(i);
+                List<Node> nodes = ring.getNodes();
+                if (nodes.size() < 4) {
+                    throw new IllegalStateException(
+                        relId + ": " + context + " ring " + i
+                        + " has only " + nodes.size() + " nodes (minimum 4)");
+                }
+                if (!nodes.get(0).equals(nodes.get(nodes.size() - 1))) {
+                    throw new IllegalStateException(
+                        relId + ": " + context + " ring " + i + " is not closed"
+                        + " (first=" + nodes.get(0).getUniqueId()
+                        + ", last=" + nodes.get(nodes.size() - 1).getUniqueId() + ")");
+                }
+            }
         }
     }
 
@@ -358,7 +519,9 @@ public class MultipolygonAnalyzer {
             ? primaryTag
             : result.getDescription() + " (" + primaryTag + ")";
 
-        return new FixPlan(relation, result.getOperations(), desc);
+        FixPlan plan = new FixPlan(relation, result.getOperations(), desc);
+        plan.validate();
+        return plan;
     }
 
     /**
@@ -504,7 +667,9 @@ public class MultipolygonAnalyzer {
 
         List<FixOp> ops = new ArrayList<>();
         ops.add(new FixOp(FixOpType.SPLIT_RELATION, results));
-        return new FixPlan(relation, ops, desc);
+        FixPlan plan = new FixPlan(relation, ops, desc);
+        plan.validate();
+        return plan;
     }
 
     /**
