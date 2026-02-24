@@ -24,8 +24,11 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
 
     public static final String PREF_USE_DISCARDABLE_KEYS = "multipolygone.useDiscardableKeys";
 
+    public static final String PREF_IDENTITY_TAGS = "multipolygone.identityTags";
+
     private JTextField insignificantTagsField;
     private JCheckBox useDiscardableKeysCheckBox;
+    private JTextField identityTagsField;
 
     public MultipolyGonePreferences() {
         super("preferences/multipoly-gone", tr("Multipoly-Gone"),
@@ -41,13 +44,43 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
 
         int row = 0;
 
+        // === Identity Tags Section ===
+        gbc.gridx = 0;
+        gbc.gridy = row++;
+        gbc.gridwidth = 2;
+        JLabel identityLabel = new JLabel(tr("Relation Identity Protection:"));
+        identityLabel.setBorder(BorderFactory.createEmptyBorder(0, 0, 5, 0));
+        panel.add(identityLabel, gbc);
+
+        gbc.gridy = row++;
+        gbc.gridwidth = 1;
+        gbc.gridx = 0;
+        panel.add(new JLabel(tr("Identity tag keys:")), gbc);
+
+        gbc.gridx = 1;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.weightx = 1.0;
+        String currentIdentityTags = Config.getPref().get(PREF_IDENTITY_TAGS,
+            MultipolygonAnalyzer.DEFAULT_IDENTITY_TAGS);
+        identityTagsField = new JTextField(currentIdentityTags, 30);
+        panel.add(identityTagsField, gbc);
+        gbc.fill = GridBagConstraints.NONE;
+        gbc.weightx = 0;
+
+        gbc.gridx = 0;
+        gbc.gridy = row++;
+        gbc.gridwidth = 2;
+        panel.add(new JLabel(tr("(semicolon-separated; use * suffix for prefix match, e.g. name:*)")), gbc);
+
         // === Cleanup Section ===
         gbc.gridx = 0;
         gbc.gridy = row++;
         gbc.gridwidth = 2;
+        gbc.insets = new Insets(15, 5, 5, 5);
         JLabel cleanupLabel = new JLabel(tr("Unused Way Cleanup:"));
         cleanupLabel.setBorder(BorderFactory.createEmptyBorder(0, 0, 5, 0));
         panel.add(cleanupLabel, gbc);
+        gbc.insets = new Insets(5, 5, 5, 5);
 
         // Use JOSM discardable keys
         gbc.gridy = row++;
@@ -84,6 +117,12 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
         gbc.fill = GridBagConstraints.HORIZONTAL;
         gbc.insets = new Insets(20, 5, 5, 5);
         JLabel explanation = new JLabel("<html><body style='width: 450px'>" +
+            tr("<b>Identity tag protection:</b> Relations with identity tags (name, wikidata, ref, etc.) " +
+               "represent a unified real-world feature. When such a relation has multiple disjoint outer " +
+               "rings, the plugin will consolidate ways but will not dissolve or split the relation into " +
+               "separate independent features. Use * suffix for prefix matching (e.g. name:* matches " +
+               "name:en, name:fr, etc.).") +
+            "<br><br>" +
             tr("<b>Unused way cleanup:</b> After dissolving a multipolygon relation where the outer ways " +
                "are chained together, the original member ways may become orphaned. Ways that belong to " +
                "no other relations and have no significant tags will be deleted.") +
@@ -108,6 +147,7 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
 
     @Override
     public boolean ok() {
+        Config.getPref().put(PREF_IDENTITY_TAGS, identityTagsField.getText().trim());
         Config.getPref().putBoolean(PREF_USE_DISCARDABLE_KEYS, useDiscardableKeysCheckBox.isSelected());
         Config.getPref().put(PREF_INSIGNIFICANT_TAGS, insignificantTagsField.getText().trim());
         return false;

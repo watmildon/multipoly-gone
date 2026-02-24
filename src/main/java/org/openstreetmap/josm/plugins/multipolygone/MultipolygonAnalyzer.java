@@ -17,6 +17,7 @@ import org.openstreetmap.josm.data.osm.Relation;
 import org.openstreetmap.josm.data.osm.RelationMember;
 import org.openstreetmap.josm.data.osm.Way;
 import org.openstreetmap.josm.data.projection.ProjectionRegistry;
+import org.openstreetmap.josm.spi.preferences.Config;
 import org.openstreetmap.josm.tools.Geometry;
 
 public class MultipolygonAnalyzer {
@@ -194,6 +195,67 @@ public class MultipolygonAnalyzer {
 
     private static final int MAX_WAY_NODES = 2000;
 
+    /**
+     * Default tag key prefixes/patterns that indicate a relation has a unified
+     * real-world identity and should not be dissolved into separate independent ways.
+     * Semicolon-delimited. Supports prefix matching with trailing '*' (e.g. "name:*"
+     * matches name:en, name:fr, etc.).
+     */
+    static final String DEFAULT_IDENTITY_TAGS =
+        "name;name:*;alt_name;old_name;loc_name;short_name;official_name;reg_name;nat_name;int_name;"
+        + "wikidata;wikipedia;ref;ref:*;"
+        + "place;boundary;admin_level;protect_class;"
+        + "operator;brand;owner";
+
+    /**
+     * Returns true if the relation has any tag key that matches the configured
+     * identity tag patterns. Relations with identity tags represent a unified
+     * real-world feature and should not be dissolved into separate ways.
+     */
+    static boolean hasIdentityTags(Relation relation) {
+        Set<String> patterns = getIdentityTagPatterns();
+        for (String key : relation.getKeys().keySet()) {
+            if (matchesAnyPattern(key, patterns)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Returns the set of identity tag patterns from preferences, falling back to defaults.
+     */
+    static Set<String> getIdentityTagPatterns() {
+        Set<String> patterns = new HashSet<>();
+        String pref = Config.getPref().get(
+            MultipolyGonePreferences.PREF_IDENTITY_TAGS, DEFAULT_IDENTITY_TAGS);
+        for (String tag : pref.split(";")) {
+            String trimmed = tag.trim();
+            if (!trimmed.isEmpty()) {
+                patterns.add(trimmed);
+            }
+        }
+        return patterns;
+    }
+
+    /**
+     * Returns true if the given key matches any of the patterns.
+     * A pattern ending with '*' is treated as a prefix match.
+     */
+    private static boolean matchesAnyPattern(String key, Set<String> patterns) {
+        for (String pattern : patterns) {
+            if (pattern.endsWith("*")) {
+                String prefix = pattern.substring(0, pattern.length() - 1);
+                if (key.startsWith(prefix)) {
+                    return true;
+                }
+            } else if (pattern.equals(key)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public static List<FixPlan> findFixableRelations(DataSet dataSet) {
         List<FixPlan> results = new ArrayList<>();
         if (dataSet == null) {
@@ -251,15 +313,23 @@ public class MultipolygonAnalyzer {
             return null;
         }
 
+        boolean identityProtected = hasIdentityTags(relation);
+
         // Try the single-relation path first — it handles all original test cases
         // and relations where outers form valid rings (even with disconnected closed ways).
-        FixPlan singleResult = analyzeSingleRelation(relation, outerWays, innerWays);
+        FixPlan singleResult = analyzeSingleRelation(relation, outerWays, innerWays, identityProtected);
         if (singleResult != null) {
             return singleResult;
         }
 
         // Single-relation path failed (e.g., outers can't form rings globally).
         // Try splitting into disconnected components (e.g., megafarmland).
+        // But if the relation has identity tags, don't split — the components
+        // should stay together as one feature.
+        if (identityProtected) {
+            return null;
+        }
+
         List<Way> allWays = new ArrayList<>(outerWays);
         allWays.addAll(innerWays);
         List<Set<Way>> components = findConnectedComponents(allWays);
@@ -276,8 +346,9 @@ public class MultipolygonAnalyzer {
     /**
      * Original single-component analysis path. Unchanged from before SPLIT_RELATION.
      */
-    private static FixPlan analyzeSingleRelation(Relation relation, List<Way> outerWays, List<Way> innerWays) {
-        ComponentResult result = analyzeComponent(outerWays, innerWays);
+    private static FixPlan analyzeSingleRelation(Relation relation, List<Way> outerWays,
+            List<Way> innerWays, boolean identityProtected) {
+        ComponentResult result = analyzeComponent(outerWays, innerWays, identityProtected);
         if (result == null) {
             return null;
         }
@@ -323,7 +394,7 @@ public class MultipolygonAnalyzer {
             // Degenerate: only one real component, shouldn't normally happen
             List<Way> allOuters = outerComponents.isEmpty() ? new ArrayList<>() : outerComponents.get(0);
             List<Way> allInners = outerCompInners.isEmpty() ? new ArrayList<>() : outerCompInners.get(0);
-            return analyzeSingleRelation(relation, allOuters, allInners);
+            return analyzeSingleRelation(relation, allOuters, allInners, false);
         }
 
         // Build outer rings for each outer component so we can do spatial containment
@@ -389,7 +460,7 @@ public class MultipolygonAnalyzer {
 
         // If only 1 outer component after inner assignment, use the simple single-relation path
         if (outerComponents.size() == 1) {
-            return analyzeSingleRelation(relation, outerComponents.get(0), outerCompInners.get(0));
+            return analyzeSingleRelation(relation, outerComponents.get(0), outerCompInners.get(0), false);
         }
 
         // Now analyze each outer component with its assigned inners
@@ -400,7 +471,7 @@ public class MultipolygonAnalyzer {
         for (int c = 0; c < outerComponents.size(); c++) {
             List<Way> compOuters = outerComponents.get(c);
             List<Way> compInners = outerCompInners.get(c);
-            ComponentResult cr = analyzeComponent(compOuters, compInners);
+            ComponentResult cr = analyzeComponent(compOuters, compInners, false);
             if (cr == null && !compInners.isEmpty()) {
                 // Component can't be simplified internally, but in a multi-component split
                 // it still needs to become its own sub-relation. Create a no-op result.
@@ -440,7 +511,8 @@ public class MultipolygonAnalyzer {
      * Analyze a single connected component of ways through the full pipeline.
      * Returns a ComponentResult, or null if the component is not fixable.
      */
-    private static ComponentResult analyzeComponent(List<Way> outerWays, List<Way> innerWays) {
+    private static ComponentResult analyzeComponent(List<Way> outerWays, List<Way> innerWays,
+            boolean identityProtected) {
         // Try building rings from outers; if that fails, try reclassifying bridging inners
         Optional<List<WayChainBuilder.Ring>> ringsOpt = WayChainBuilder.buildRings(outerWays);
 
@@ -522,8 +594,18 @@ public class MultipolygonAnalyzer {
             descParts.add(totalSubs + " sub-rings from decomposition");
         }
 
-        // No inners: dissolve everything
+        // No inners: dissolve everything (unless identity-protected with multiple outers)
         if (innerWays.isEmpty()) {
+            if (identityProtected && outerRings.size() > 1) {
+                // Identity-protected: don't dissolve disjoint outers into separate ways.
+                // Only return if we have consolidation or decomposition ops to apply.
+                if (ops.isEmpty()) {
+                    return null;
+                }
+                descParts.add("identity-protected, kept as relation");
+                return new ComponentResult(outerWays, innerWays, ops, false,
+                    outerRings, new ArrayList<>(), String.join(", ", descParts));
+            }
             ops.add(new FixOp(FixOpType.DISSOLVE, outerRings, null));
             int count = outerRings.size();
             descParts.add(count == 1
@@ -590,12 +672,17 @@ public class MultipolygonAnalyzer {
             }
         }
 
-        // Extract standalone outers if any exist
-        if (!extractable.isEmpty()) {
+        // Extract standalone outers if any exist — but not if identity-protected,
+        // since all outers should stay in the relation as one feature
+        if (!extractable.isEmpty() && !identityProtected) {
             ops.add(new FixOp(FixOpType.EXTRACT_OUTERS, extractable, null));
             descParts.add(extractable.size() == 1
                 ? "1 outer extracted"
                 : extractable.size() + " outers extracted");
+        } else if (!extractable.isEmpty() && identityProtected) {
+            // Keep extractable outers in the relation
+            retained.addAll(extractable);
+            extractable.clear();
         }
 
         // Analyze what remains after extraction

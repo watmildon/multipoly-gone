@@ -346,4 +346,220 @@ class MultipolygonAnalyzerTest {
 
         assertEquals("multipolygon", MultipolygonAnalyzer.getPrimaryTag(r));
     }
+
+    // --- Identity tag detection tests ---
+
+    @Test
+    void hasIdentityTags_nameTag_returnsTrue() {
+        DataSet ds = new DataSet();
+        Relation r = new Relation();
+        r.put("type", "multipolygon");
+        r.put("natural", "water");
+        r.put("name", "Jack and Jill Lakes");
+        ds.addPrimitive(r);
+        assertTrue(MultipolygonAnalyzer.hasIdentityTags(r));
+    }
+
+    @Test
+    void hasIdentityTags_localizedNameTag_returnsTrue() {
+        DataSet ds = new DataSet();
+        Relation r = new Relation();
+        r.put("type", "multipolygon");
+        r.put("name:en", "Some Lake");
+        ds.addPrimitive(r);
+        assertTrue(MultipolygonAnalyzer.hasIdentityTags(r));
+    }
+
+    @Test
+    void hasIdentityTags_wikidataTag_returnsTrue() {
+        DataSet ds = new DataSet();
+        Relation r = new Relation();
+        r.put("type", "multipolygon");
+        r.put("wikidata", "Q12345");
+        ds.addPrimitive(r);
+        assertTrue(MultipolygonAnalyzer.hasIdentityTags(r));
+    }
+
+    @Test
+    void hasIdentityTags_refTag_returnsTrue() {
+        DataSet ds = new DataSet();
+        Relation r = new Relation();
+        r.put("type", "multipolygon");
+        r.put("ref", "ABC-123");
+        ds.addPrimitive(r);
+        assertTrue(MultipolygonAnalyzer.hasIdentityTags(r));
+    }
+
+    @Test
+    void hasIdentityTags_operatorTag_returnsTrue() {
+        DataSet ds = new DataSet();
+        Relation r = new Relation();
+        r.put("type", "multipolygon");
+        r.put("operator", "National Park Service");
+        ds.addPrimitive(r);
+        assertTrue(MultipolygonAnalyzer.hasIdentityTags(r));
+    }
+
+    @Test
+    void hasIdentityTags_onlyClassificationTags_returnsFalse() {
+        DataSet ds = new DataSet();
+        Relation r = new Relation();
+        r.put("type", "multipolygon");
+        r.put("natural", "wood");
+        ds.addPrimitive(r);
+        assertFalse(MultipolygonAnalyzer.hasIdentityTags(r));
+    }
+
+    @Test
+    void hasIdentityTags_onlyLanduse_returnsFalse() {
+        DataSet ds = new DataSet();
+        Relation r = new Relation();
+        r.put("type", "multipolygon");
+        r.put("landuse", "farmland");
+        ds.addPrimitive(r);
+        assertFalse(MultipolygonAnalyzer.hasIdentityTags(r));
+    }
+
+    // --- Identity tag protection: prevents dissolve of multiple outers ---
+
+    @Test
+    void testCase1_withNameTag_notDissolved() {
+        // Test case 1 has 2 closed outers, no inners → normally DISSOLVE.
+        // Adding a name tag should prevent dissolution.
+        DataSet ds = JosmTestSetup.loadDataSet("testdata.osm");
+        Relation rel = findRelationByTestId(ds, "1");
+        assertNotNull(rel);
+
+        // Add identity tag
+        rel.put("name", "Twin Forests");
+
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = plans.stream()
+            .filter(p -> p.getRelation() == rel)
+            .findFirst().orElse(null);
+
+        // Should NOT be fixable (2 disjoint closed outers with identity tag)
+        assertNull(plan,
+            "Relation with name tag and 2 disjoint outers should not be fixable");
+    }
+
+    @Test
+    void testCase2_withNameTag_stillConsolidates() {
+        // Test case 2 has 2 open outers forming 1 ring → CONSOLIDATE + DISSOLVE.
+        // With name tag: should still consolidate (1 ring) and dissolve (single outer).
+        DataSet ds = JosmTestSetup.loadDataSet("testdata.osm");
+        Relation rel = findRelationByTestId(ds, "2");
+        assertNotNull(rel);
+
+        rel.put("name", "Named Grassland");
+
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = plans.stream()
+            .filter(p -> p.getRelation() == rel)
+            .findFirst().orElse(null);
+
+        // Should still be fixable — 2 open ways chain into 1 ring, then dissolve
+        assertNotNull(plan,
+            "Relation with name tag but single-ring outers should still be fixable");
+        assertTrue(plan.dissolvesRelation());
+    }
+
+    @Test
+    void testCase5_withNameTag_noExtraction() {
+        // Test case 5 has 2 closed outers + 1 inner → normally EXTRACT_OUTERS.
+        // With name tag: should not extract standalone outers.
+        DataSet ds = JosmTestSetup.loadDataSet("testdata.osm");
+        Relation rel = findRelationByTestId(ds, "5");
+        assertNotNull(rel);
+
+        rel.put("name", "Named Park");
+
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = plans.stream()
+            .filter(p -> p.getRelation() == rel)
+            .findFirst().orElse(null);
+
+        // Should not be fixable (extraction is blocked, nothing else to do)
+        assertNull(plan,
+            "Relation with name tag should not extract outers");
+    }
+
+    @Test
+    void testCase4_withNameTag_singleRing_stillDissolved() {
+        // Test case 4 has 4 open outers forming 1 ring → CONSOLIDATE + DISSOLVE.
+        // With name tag: should still dissolve because after consolidation there's only 1 outer.
+        DataSet ds = JosmTestSetup.loadDataSet("testdata.osm");
+        Relation rel = findRelationByTestId(ds, "4");
+        assertNotNull(rel);
+
+        rel.put("name", "Named Grassland");
+
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = plans.stream()
+            .filter(p -> p.getRelation() == rel)
+            .findFirst().orElse(null);
+
+        // Should still be fixable — 4 open ways chain into 1 ring, then dissolve
+        assertNotNull(plan,
+            "Relation with name tag but single-ring outers should still be fixable");
+        assertTrue(plan.dissolvesRelation());
+    }
+
+    @Test
+    void megaheath_withNameTag_notSplittable() {
+        // Megaheath has 7 closed outers + 20 inners (multiple disjoint components).
+        // Without identity tags, it gets SPLIT_RELATION.
+        // With identity tags, it should NOT be fixable (multi-component split blocked).
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-megaheath.osm");
+        Relation rel = ds.getRelations().stream()
+            .filter(r -> !r.isDeleted() && "multipolygon".equals(r.get("type")))
+            .findFirst().orElse(null);
+        assertNotNull(rel);
+
+        // Confirm it's fixable without identity tags
+        List<FixPlan> plansBefore = MultipolygonAnalyzer.findFixableRelations(ds);
+        assertEquals(1, plansBefore.size(), "Should be fixable without identity tags");
+
+        // Add identity tag
+        rel.put("name", "Big Named Heath");
+
+        List<FixPlan> plansAfter = MultipolygonAnalyzer.findFixableRelations(ds);
+        assertEquals(0, plansAfter.size(),
+            "Should NOT be fixable with identity tags (multi-component split blocked)");
+    }
+
+    @Test
+    void testCase8_withNameTag_stillMergesTouchingInner() {
+        // Test case 8 has 1 outer + 1 inner sharing 2 nodes → TOUCHING_INNER_MERGE.
+        // With name tag: should still merge (single outer, not a multi-outer dissolution).
+        DataSet ds = JosmTestSetup.loadDataSet("testdata.osm");
+        Relation rel = findRelationByTestId(ds, "8");
+        assertNotNull(rel);
+
+        rel.put("name", "Named Water");
+
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = plans.stream()
+            .filter(p -> p.getRelation() == rel)
+            .findFirst().orElse(null);
+
+        assertNotNull(plan,
+            "TOUCHING_INNER_MERGE should still work with identity tags");
+        assertTrue(plan.dissolvesRelation());
+    }
+
+    @Test
+    void withoutNameTag_originalBehaviorUnchanged() {
+        // Verify that all original test cases without identity tags still produce the same results
+        DataSet ds = JosmTestSetup.loadDataSet("testdata.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        assertTrue(plans.size() >= 13,
+            "Without identity tags, should still find at least 13 fixable relations, got " + plans.size());
+    }
+
+    private static Relation findRelationByTestId(DataSet ds, String testId) {
+        return ds.getRelations().stream()
+            .filter(r -> testId.equals(r.get("_test_id")))
+            .findFirst().orElse(null);
+    }
 }
