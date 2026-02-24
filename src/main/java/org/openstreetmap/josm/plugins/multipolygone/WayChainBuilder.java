@@ -1,6 +1,7 @@
 package org.openstreetmap.josm.plugins.multipolygone;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -67,6 +68,9 @@ public class WayChainBuilder {
             return Optional.of(rings);
         }
 
+        // Sort open ways by ID for deterministic traversal order at junctions
+        openWays.sort(Comparator.comparingLong(Way::getUniqueId));
+
         // Group open ways by connectivity into separate chains
         // Build endpoint graph
         Map<Node, List<WayEndpoint>> endpointMap = new HashMap<>();
@@ -75,6 +79,11 @@ public class WayChainBuilder {
             Node last = way.lastNode();
             endpointMap.computeIfAbsent(first, k -> new ArrayList<>()).add(new WayEndpoint(way, false));
             endpointMap.computeIfAbsent(last, k -> new ArrayList<>()).add(new WayEndpoint(way, true));
+        }
+
+        // Sort each node's endpoint list by way ID for deterministic junction selection
+        for (List<WayEndpoint> eps : endpointMap.values()) {
+            eps.sort(Comparator.comparingLong(ep -> ep.way.getUniqueId()));
         }
 
         // Every endpoint must have even degree for valid closed loops.
@@ -137,6 +146,11 @@ public class WayChainBuilder {
 
             // Verify closed
             if (!ringNodes.get(ringNodes.size() - 1).equals(ringNodes.get(0))) {
+                return Optional.empty();
+            }
+
+            // Reject degenerate rings (e.g., two 2-node ways sharing both endpoints: [A, B, A])
+            if (ringNodes.size() < 4) {
                 return Optional.empty();
             }
 
