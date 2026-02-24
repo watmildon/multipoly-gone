@@ -26,12 +26,15 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
 
     public static final String PREF_IDENTITY_TAGS = "multipolygone.identityTags";
 
+    public static final String PREF_PLAN_ONLY = "multipolygone.planOnly";
+
     public static final String PREF_DEBUG_MODE = "multipolygone.debugMode";
     public static final int DEFAULT_DEBUG_ITERATIONS = 10;
 
     private JTextField insignificantTagsField;
     private JCheckBox useDiscardableKeysCheckBox;
     private JTextField identityTagsField;
+    private JCheckBox planOnlyCheckBox;
     private JCheckBox debugModeCheckBox;
 
     public MultipolyGonePreferences() {
@@ -127,6 +130,14 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
 
         gbc.gridy = row++;
         gbc.gridwidth = 2;
+        planOnlyCheckBox = new JCheckBox(
+            tr("Plan only (log plans to console, don''t execute fixes)"));
+        planOnlyCheckBox.setSelected(
+            Config.getPref().getBoolean(PREF_PLAN_ONLY, false));
+        panel.add(planOnlyCheckBox, gbc);
+
+        gbc.gridy = row++;
+        gbc.gridwidth = 2;
         debugModeCheckBox = new JCheckBox(
             tr("Enable debug mode (determinism checks, verbose logging)"));
         debugModeCheckBox.setSelected(
@@ -172,6 +183,7 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
         Config.getPref().put(PREF_IDENTITY_TAGS, identityTagsField.getText().trim());
         Config.getPref().putBoolean(PREF_USE_DISCARDABLE_KEYS, useDiscardableKeysCheckBox.isSelected());
         Config.getPref().put(PREF_INSIGNIFICANT_TAGS, insignificantTagsField.getText().trim());
+        Config.getPref().putBoolean(PREF_PLAN_ONLY, planOnlyCheckBox.isSelected());
         Config.getPref().putBoolean(PREF_DEBUG_MODE, debugModeCheckBox.isSelected());
         return false;
     }

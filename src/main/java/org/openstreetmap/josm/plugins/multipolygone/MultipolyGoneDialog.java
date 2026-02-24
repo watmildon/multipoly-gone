@@ -169,6 +169,10 @@ public class MultipolyGoneDialog extends ToggleDialog
         if (selected.isEmpty()) {
             return;
         }
+        if (Config.getPref().getBoolean(MultipolyGonePreferences.PREF_PLAN_ONLY, false)) {
+            logPlans(selected);
+            return;
+        }
         MultipolygonFixer.fixRelations(selected);
         refresh();
     }
@@ -187,8 +191,22 @@ public class MultipolyGoneDialog extends ToggleDialog
             runDebugDeterminismCheck();
         }
 
+        if (Config.getPref().getBoolean(MultipolyGonePreferences.PREF_PLAN_ONLY, false)) {
+            logPlans(all);
+            return;
+        }
+
         MultipolygonFixer.fixRelationsUntilConvergence(all);
         refresh();
+    }
+
+    private void logPlans(List<FixPlan> plans) {
+        Logging.info("Multipoly-Gone PLAN ONLY: {0} plan(s)", plans.size());
+        for (FixPlan plan : plans) {
+            long id = plan.getRelation().getId();
+            String idStr = id < 0 ? "new" : String.valueOf(id);
+            Logging.info("  Relation {0}: {1} — {2}", idStr, plan.getDescription(), plan.fingerprint());
+        }
     }
 
     /**
