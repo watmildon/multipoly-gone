@@ -26,9 +26,13 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
 
     public static final String PREF_IDENTITY_TAGS = "multipolygone.identityTags";
 
+    public static final String PREF_DEBUG_MODE = "multipolygone.debugMode";
+    public static final int DEFAULT_DEBUG_ITERATIONS = 10;
+
     private JTextField insignificantTagsField;
     private JCheckBox useDiscardableKeysCheckBox;
     private JTextField identityTagsField;
+    private JCheckBox debugModeCheckBox;
 
     public MultipolyGonePreferences() {
         super("preferences/multipoly-gone", tr("Multipoly-Gone"),
@@ -111,6 +115,24 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
         gbc.gridwidth = 2;
         panel.add(new JLabel(tr("(semicolon-separated, e.g. source;created_by;note)")), gbc);
 
+        // === Debug Section ===
+        gbc.gridx = 0;
+        gbc.gridy = row++;
+        gbc.gridwidth = 2;
+        gbc.insets = new Insets(15, 5, 5, 5);
+        JLabel debugLabel = new JLabel(tr("Developer:"));
+        debugLabel.setBorder(BorderFactory.createEmptyBorder(0, 0, 5, 0));
+        panel.add(debugLabel, gbc);
+        gbc.insets = new Insets(5, 5, 5, 5);
+
+        gbc.gridy = row++;
+        gbc.gridwidth = 2;
+        debugModeCheckBox = new JCheckBox(
+            tr("Enable debug mode (determinism checks, verbose logging)"));
+        debugModeCheckBox.setSelected(
+            Config.getPref().getBoolean(PREF_DEBUG_MODE, false));
+        panel.add(debugModeCheckBox, gbc);
+
         // Explanatory text
         gbc.gridy = row++;
         gbc.gridwidth = 2;
@@ -150,6 +172,7 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
         Config.getPref().put(PREF_IDENTITY_TAGS, identityTagsField.getText().trim());
         Config.getPref().putBoolean(PREF_USE_DISCARDABLE_KEYS, useDiscardableKeysCheckBox.isSelected());
         Config.getPref().put(PREF_INSIGNIFICANT_TAGS, insignificantTagsField.getText().trim());
+        Config.getPref().putBoolean(PREF_DEBUG_MODE, debugModeCheckBox.isSelected());
         return false;
     }
 }

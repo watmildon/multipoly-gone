@@ -1,13 +1,16 @@
 package org.openstreetmap.josm.plugins.multipolygone;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Random;
 import java.util.Set;
+import java.util.TreeSet;
 
 import org.openstreetmap.josm.data.coor.EastNorth;
 import org.openstreetmap.josm.data.coor.LatLon;
@@ -19,6 +22,7 @@ import org.openstreetmap.josm.data.osm.Way;
 import org.openstreetmap.josm.data.projection.ProjectionRegistry;
 import org.openstreetmap.josm.spi.preferences.Config;
 import org.openstreetmap.josm.tools.Geometry;
+import org.openstreetmap.josm.tools.Logging;
 
 public class MultipolygonAnalyzer {
 
@@ -131,6 +135,27 @@ public class MultipolygonAnalyzer {
                     default -> { }
                 }
             }
+        }
+
+        /**
+         * Returns a canonical fingerprint for this component for cross-run comparison.
+         */
+        String fingerprint() {
+            TreeSet<Long> outerIds = new TreeSet<>();
+            for (Way w : outerWays) outerIds.add(w.getUniqueId());
+            TreeSet<Long> innerIds = new TreeSet<>();
+            for (Way w : innerWays) innerIds.add(w.getUniqueId());
+            StringBuilder sb = new StringBuilder();
+            sb.append("{outers=").append(outerIds);
+            sb.append(" inners=").append(innerIds);
+            sb.append(" dissolves=").append(dissolvesCompletely);
+            sb.append(" ops=[");
+            for (int i = 0; i < operations.size(); i++) {
+                if (i > 0) sb.append(", ");
+                sb.append(FixPlan.fingerprintOp(operations.get(i)));
+            }
+            sb.append("]}");
+            return sb.toString();
         }
     }
 
@@ -352,9 +377,127 @@ public class MultipolygonAnalyzer {
                 }
             }
         }
+
+        /**
+         * Returns a canonical fingerprint string for this plan that can be compared
+         * across multiple analysis runs to detect non-determinism. The fingerprint
+         * captures the structural content (op types, way IDs, node IDs) in a sorted,
+         * order-independent form so that semantically identical plans with different
+         * internal ordering produce the same fingerprint.
+         */
+        public String fingerprint() {
+            StringBuilder sb = new StringBuilder();
+            sb.append("rel=").append(relation.getUniqueId());
+            sb.append(" dissolves=").append(dissolvesRelation());
+            sb.append(" ops=[");
+            for (int i = 0; i < operations.size(); i++) {
+                if (i > 0) sb.append(", ");
+                sb.append(fingerprintOp(operations.get(i)));
+            }
+            sb.append("]");
+            return sb.toString();
+        }
+
+        private static String fingerprintOp(FixOp op) {
+            StringBuilder sb = new StringBuilder();
+            sb.append(op.getType());
+            switch (op.getType()) {
+                case CONSOLIDATE_RINGS -> {
+                    if (op.getRings() != null) {
+                        sb.append(" rings=").append(fingerprintRings(op.getRings()));
+                    }
+                }
+                case DECOMPOSE_SELF_INTERSECTIONS -> {
+                    if (op.getDecomposedRings() != null) {
+                        // Sort decomposed rings by original ring's sorted source way IDs
+                        List<String> decomps = new ArrayList<>();
+                        for (DecomposedRing d : op.getDecomposedRings()) {
+                            StringBuilder ds = new StringBuilder();
+                            ds.append("orig=").append(fingerprintRing(d.getOriginalRing()));
+                            ds.append(" subs=").append(fingerprintRings(d.getSubRings()));
+                            ds.append(" newNodes=").append(d.getNewIntersectionNodes().size());
+                            decomps.add(ds.toString());
+                        }
+                        decomps.sort(String::compareTo);
+                        sb.append(" ").append(decomps);
+                    }
+                }
+                case EXTRACT_OUTERS, DISSOLVE -> {
+                    if (op.getRings() != null) {
+                        sb.append(" rings=").append(fingerprintRings(op.getRings()));
+                    }
+                }
+                case TOUCHING_INNER_MERGE -> {
+                    if (op.getMergedWays() != null) {
+                        // Fingerprint each merged way by its sorted node IDs
+                        List<String> ways = new ArrayList<>();
+                        for (List<Node> wayNodes : op.getMergedWays()) {
+                            ways.add(fingerprintNodeList(wayNodes));
+                        }
+                        ways.sort(String::compareTo);
+                        sb.append(" mergedWays=").append(ways);
+                    }
+                }
+                case SPLIT_RELATION -> {
+                    if (op.getComponents() != null) {
+                        List<String> comps = new ArrayList<>();
+                        for (ComponentResult c : op.getComponents()) {
+                            comps.add(c != null ? c.fingerprint() : "null");
+                        }
+                        comps.sort(String::compareTo);
+                        sb.append(" components=").append(comps);
+                    }
+                }
+            }
+            return sb.toString();
+        }
+
+        /**
+         * Fingerprint a list of rings. Each ring is fingerprinted individually,
+         * then the list is sorted for order-independence.
+         */
+        private static String fingerprintRings(List<WayChainBuilder.Ring> rings) {
+            List<String> fps = new ArrayList<>();
+            for (WayChainBuilder.Ring ring : rings) {
+                fps.add(fingerprintRing(ring));
+            }
+            fps.sort(String::compareTo);
+            return fps.toString();
+        }
+
+        /**
+         * Fingerprint a single ring by its sorted source way IDs and node count.
+         */
+        private static String fingerprintRing(WayChainBuilder.Ring ring) {
+            TreeSet<Long> wayIds = new TreeSet<>();
+            for (Way w : ring.getSourceWays()) {
+                wayIds.add(w.getUniqueId());
+            }
+            return "{ways=" + wayIds + " nodes=" + ring.getNodes().size() + "}";
+        }
+
+        /**
+         * Fingerprint a node list by its ordered node IDs (order matters for geometry).
+         */
+        private static String fingerprintNodeList(List<Node> nodes) {
+            StringBuilder sb = new StringBuilder("[");
+            for (int i = 0; i < nodes.size(); i++) {
+                if (i > 0) sb.append(",");
+                sb.append(nodes.get(i).getUniqueId());
+            }
+            sb.append("]");
+            return sb.toString();
+        }
     }
 
     private static final int MAX_WAY_NODES = 2000;
+
+    /**
+     * Returns true if the debug mode preference is enabled.
+     */
+    static boolean isDebugMode() {
+        return Config.getPref().getBoolean(MultipolyGonePreferences.PREF_DEBUG_MODE, false);
+    }
 
     /**
      * Default tag key prefixes/patterns that indicate a relation has a unified
@@ -418,12 +561,28 @@ public class MultipolygonAnalyzer {
     }
 
     public static List<FixPlan> findFixableRelations(DataSet dataSet) {
+        return findFixableRelations(dataSet, null);
+    }
+
+    /**
+     * Finds fixable relations in the dataset, optionally shuffling member order
+     * to perturb HashMap/HashSet iteration order for non-determinism detection.
+     * @param dataSet the dataset to analyze
+     * @param rng if non-null, shuffles way lists before analysis to expose order-dependent bugs
+     */
+    public static List<FixPlan> findFixableRelations(DataSet dataSet, Random rng) {
+        boolean debug = isDebugMode();
         List<FixPlan> results = new ArrayList<>();
         if (dataSet == null) {
             return results;
         }
 
-        for (Relation relation : dataSet.getRelations()) {
+        List<Relation> relations = new ArrayList<>(dataSet.getRelations());
+        if (rng != null) {
+            Collections.shuffle(relations, rng);
+        }
+
+        for (Relation relation : relations) {
             if (relation.isDeleted() || relation.isIncomplete()) {
                 continue;
             }
@@ -431,15 +590,22 @@ public class MultipolygonAnalyzer {
                 continue;
             }
 
-            FixPlan plan = analyze(relation);
+            FixPlan plan = analyze(relation, rng);
             if (plan != null) {
+                if (debug) {
+                    Logging.info("Multipoly-Gone DEBUG: plan for relation {0}: {1}",
+                        relation.getUniqueId(), plan.fingerprint());
+                }
                 results.add(plan);
             }
+        }
+        if (debug) {
+            Logging.info("Multipoly-Gone DEBUG: found {0} fixable relations", results.size());
         }
         return results;
     }
 
-    private static FixPlan analyze(Relation relation) {
+    private static FixPlan analyze(Relation relation, Random rng) {
         // Skip relations with incomplete members — we can't see all geometry
         if (relation.hasIncompleteMembers()) {
             return null;
@@ -474,6 +640,12 @@ public class MultipolygonAnalyzer {
             return null;
         }
 
+        // Shuffle way lists to perturb downstream HashMap/HashSet iteration order
+        if (rng != null) {
+            Collections.shuffle(outerWays, rng);
+            Collections.shuffle(innerWays, rng);
+        }
+
         boolean identityProtected = hasIdentityTags(relation);
 
         // Try the single-relation path first — it handles all original test cases
@@ -493,11 +665,19 @@ public class MultipolygonAnalyzer {
 
         List<Way> allWays = new ArrayList<>(outerWays);
         allWays.addAll(innerWays);
+        if (rng != null) {
+            Collections.shuffle(allWays, rng);
+        }
         List<Set<Way>> components = findConnectedComponents(allWays);
 
         if (components.size() <= 1) {
             // Only one component and single-relation already failed — not fixable
             return null;
+        }
+
+        // Shuffle the component order to perturb multi-component analysis
+        if (rng != null) {
+            Collections.shuffle(components, rng);
         }
 
         // Multiple components: analyze each independently
@@ -530,6 +710,7 @@ public class MultipolygonAnalyzer {
      * that spatially contains them.
      */
     private static FixPlan analyzeMultiComponent(Relation relation, List<Set<Way>> components, Set<Way> innerWaySet) {
+        boolean debug = isDebugMode();
         // Separate components into outer-bearing and inner-only
         List<List<Way>> outerComponents = new ArrayList<>();
         List<List<Way>> outerCompInners = new ArrayList<>();
@@ -550,6 +731,18 @@ public class MultipolygonAnalyzer {
             } else {
                 outerComponents.add(compOuters);
                 outerCompInners.add(compInners);
+            }
+        }
+
+        if (debug) {
+            Logging.info("Multipoly-Gone DEBUG: relation {0} split into {1} outer components, {2} inner-only components",
+                relation.getUniqueId(), outerComponents.size(), innerOnlyComponents.size());
+            for (int c = 0; c < outerComponents.size(); c++) {
+                TreeSet<Long> outerIds = new TreeSet<>();
+                for (Way w : outerComponents.get(c)) outerIds.add(w.getUniqueId());
+                TreeSet<Long> innerIds = new TreeSet<>();
+                for (Way w : outerCompInners.get(c)) innerIds.add(w.getUniqueId());
+                Logging.info("  component {0}: outers={1} inners={2}", c, outerIds, innerIds);
             }
         }
 
@@ -617,6 +810,16 @@ public class MultipolygonAnalyzer {
 
             if (bestComp >= 0) {
                 outerCompInners.get(bestComp).addAll(innerComp);
+                if (debug) {
+                    TreeSet<Long> innerIds = new TreeSet<>();
+                    for (Way w : innerComp) innerIds.add(w.getUniqueId());
+                    Logging.info("  inner-only component {0} assigned to outer component {1}",
+                        innerIds, bestComp);
+                }
+            } else if (debug) {
+                TreeSet<Long> innerIds = new TreeSet<>();
+                for (Way w : innerComp) innerIds.add(w.getUniqueId());
+                Logging.info("  inner-only component {0} orphaned (no containing outer found)", innerIds);
             }
             // If no containing outer found, the inner-only component is orphaned — skip it
         }
@@ -643,11 +846,17 @@ public class MultipolygonAnalyzer {
             }
             results.add(cr);
             if (cr != null) {
+                if (debug) {
+                    Logging.info("  component {0} result: {1} — {2}",
+                        c, cr.dissolvesCompletely() ? "dissolves" : "retained", cr.getDescription());
+                }
                 if (cr.dissolvesCompletely()) {
                     dissolvedCount++;
                 } else {
                     retainedCount++;
                 }
+            } else if (debug) {
+                Logging.info("  component {0} result: null (not fixable)", c);
             }
         }
 

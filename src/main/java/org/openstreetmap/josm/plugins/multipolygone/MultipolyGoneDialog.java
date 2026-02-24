@@ -11,7 +11,10 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -38,7 +41,9 @@ import org.openstreetmap.josm.gui.layer.MainLayerManager.ActiveLayerChangeEvent;
 import org.openstreetmap.josm.gui.layer.MainLayerManager.ActiveLayerChangeListener;
 import org.openstreetmap.josm.gui.layer.OsmDataLayer;
 import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixPlan;
+import org.openstreetmap.josm.spi.preferences.Config;
 import org.openstreetmap.josm.tools.ImageProvider;
+import org.openstreetmap.josm.tools.Logging;
 import org.openstreetmap.josm.tools.Shortcut;
 
 public class MultipolyGoneDialog extends ToggleDialog
@@ -176,8 +181,82 @@ public class MultipolyGoneDialog extends ToggleDialog
         if (all.isEmpty()) {
             return;
         }
+
+        boolean debug = Config.getPref().getBoolean(MultipolyGonePreferences.PREF_DEBUG_MODE, false);
+        if (debug) {
+            runDebugDeterminismCheck();
+        }
+
         MultipolygonFixer.fixRelationsUntilConvergence(all);
         refresh();
+    }
+
+    /**
+     * In debug mode, re-analyzes the DataSet N times and compares plan fingerprints
+     * across runs to detect non-determinism. Logs discrepancies to the JOSM console.
+     * The DataSet is not modified — this only runs the analysis (planning) phase.
+     */
+    private void runDebugDeterminismCheck() {
+        DataSet ds = getDataSet();
+        if (ds == null) return;
+
+        int iterations = MultipolyGonePreferences.DEFAULT_DEBUG_ITERATIONS;
+        Logging.info("Multipoly-Gone DEBUG: running {0} analysis iterations with shuffled ordering to check determinism",
+            iterations);
+
+        // Collect fingerprints per relation across all iterations
+        // Key: relation ID, Value: map of fingerprint -> list of iteration indices that produced it
+        Map<Long, Map<String, List<Integer>>> allFingerprints = new HashMap<>();
+        // Also track validation failures per iteration
+        List<String> validationFailures = new ArrayList<>();
+
+        for (int iter = 0; iter < iterations; iter++) {
+            try {
+                // Each iteration uses a different seed to shuffle member/component ordering,
+                // exposing any order-dependent behavior within a single JVM session
+                Random rng = new Random(iter);
+                List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds, rng);
+                for (FixPlan plan : plans) {
+                    long relId = plan.getRelation().getUniqueId();
+                    String fp = plan.fingerprint();
+                    allFingerprints
+                        .computeIfAbsent(relId, k -> new HashMap<>())
+                        .computeIfAbsent(fp, k -> new ArrayList<>())
+                        .add(iter);
+                }
+            } catch (IllegalStateException e) {
+                validationFailures.add("iteration " + iter + ": " + e.getMessage());
+            }
+        }
+
+        // Report results
+        boolean anyDiscrepancy = false;
+        for (Map.Entry<Long, Map<String, List<Integer>>> entry : allFingerprints.entrySet()) {
+            long relId = entry.getKey();
+            Map<String, List<Integer>> fpMap = entry.getValue();
+            if (fpMap.size() > 1) {
+                anyDiscrepancy = true;
+                Logging.warn("Multipoly-Gone DEBUG: NON-DETERMINISM for relation {0} — {1} distinct plans:",
+                    relId, fpMap.size());
+                for (Map.Entry<String, List<Integer>> fpEntry : fpMap.entrySet()) {
+                    Logging.warn("  iterations {0}: {1}", fpEntry.getValue(), fpEntry.getKey());
+                }
+            }
+        }
+
+        if (!validationFailures.isEmpty()) {
+            anyDiscrepancy = true;
+            Logging.warn("Multipoly-Gone DEBUG: {0} validation failures across {1} iterations:",
+                validationFailures.size(), iterations);
+            for (String failure : validationFailures) {
+                Logging.warn("  {0}", failure);
+            }
+        }
+
+        if (!anyDiscrepancy) {
+            Logging.info("Multipoly-Gone DEBUG: all {0} iterations produced identical plans — deterministic",
+                iterations);
+        }
     }
 
     private void updateButtonState() {
