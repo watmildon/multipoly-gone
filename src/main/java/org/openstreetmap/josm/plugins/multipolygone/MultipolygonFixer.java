@@ -3,6 +3,7 @@ package org.openstreetmap.josm.plugins.multipolygone;
 import static org.openstreetmap.josm.tools.I18n.tr;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -26,7 +27,6 @@ import org.openstreetmap.josm.data.osm.RelationMember;
 import org.openstreetmap.josm.data.osm.Way;
 import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.ComponentResult;
 import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixOp;
-import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixOpType;
 import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixPlan;
 import org.openstreetmap.josm.spi.preferences.Config;
 import org.openstreetmap.josm.tools.Logging;
@@ -43,15 +43,14 @@ public class MultipolygonFixer {
         }
 
         List<Command> allCommands = buildAllCommands(plans);
-
-        if (!allCommands.isEmpty()) {
-            Logging.info("Multipoly-Gone: executing {0} commands for {1} plan(s)", allCommands.size(), plans.size());
-            Command cmd = SequenceCommand.wrapIfNeeded(
-                tr("Dissolve unnecessary multipolygon(s)"), allCommands);
-            UndoRedoHandler.getInstance().add(cmd);
-        } else {
-            Logging.warn("Multipoly-Gone: no commands generated for {0} plan(s)", plans.size());
+        if (allCommands.isEmpty()) {
+            return;
         }
+
+        Logging.info("Multipoly-Gone: executing {0} commands for {1} plan(s)", allCommands.size(), plans.size());
+        Command cmd = SequenceCommand.wrapIfNeeded(
+            tr("Dissolve unnecessary multipolygon(s)"), allCommands);
+        UndoRedoHandler.getInstance().add(cmd);
     }
 
     /**
@@ -108,9 +107,13 @@ public class MultipolygonFixer {
     private static List<Command> buildAllCommands(List<FixPlan> plans) {
         Set<String> insignificantTags = getInsignificantTags();
 
+        // Sort plans by relation ID for deterministic processing order
+        List<FixPlan> sortedPlans = new ArrayList<>(plans);
+        sortedPlans.sort(Comparator.comparingLong(p -> p.getRelation().getUniqueId()));
+
         // All processed relations should be ignored for cleanup referrer checks,
         // whether they are deleted or just modified
-        Set<Relation> processedRelations = plans.stream()
+        Set<Relation> processedRelations = sortedPlans.stream()
             .map(FixPlan::getRelation)
             .collect(Collectors.toSet());
 
@@ -121,11 +124,12 @@ public class MultipolygonFixer {
         // multiple relations reference the exact same set of ways, consolidation is shared
         Map<Set<Way>, Way> globalConsolidations = new HashMap<>();
 
-        for (FixPlan plan : plans) {
+        for (FixPlan plan : sortedPlans) {
             Relation relation = plan.getRelation();
             if (relation.isDeleted()) {
                 continue;
             }
+
             allCommands.addAll(buildCommandsForPlan(plan, waysToCleanup, nodesToCleanup,
                 globalConsolidations, insignificantTags));
         }
@@ -161,7 +165,8 @@ public class MultipolygonFixer {
     }
 
     private static List<Command> buildCommandsForPlan(FixPlan plan, Set<Way> waysToCleanup,
-            Set<Node> nodesToCleanup, Map<Set<Way>, Way> globalConsolidations, Set<String> insignificantTags) {
+            Set<Node> nodesToCleanup, Map<Set<Way>, Way> globalConsolidations,
+            Set<String> insignificantTags) {
         List<Command> commands = new ArrayList<>();
         Relation relation = plan.getRelation();
         DataSet ds = relation.getDataSet();

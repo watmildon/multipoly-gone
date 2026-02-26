@@ -279,6 +279,17 @@ public class MultipolygonAnalyzer {
             });
         }
 
+        /** Returns the set of all member ways referenced by this plan's relation. */
+        public Set<Way> getMemberWays() {
+            Set<Way> ways = new HashSet<>();
+            for (RelationMember member : relation.getMembers()) {
+                if (member.isWay()) {
+                    ways.add(member.getWay());
+                }
+            }
+            return ways;
+        }
+
         /**
          * Validates that this plan will not produce invalid multipolygon states.
          * Throws IllegalStateException if any invariant is violated.
