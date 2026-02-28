@@ -27,6 +27,9 @@ import javax.swing.JScrollPane;
 import javax.swing.ListSelectionModel;
 
 import org.openstreetmap.josm.actions.AutoScaleAction;
+import org.openstreetmap.josm.actions.DownloadReferrersAction;
+import org.openstreetmap.josm.data.UndoRedoHandler;
+import org.openstreetmap.josm.data.UndoRedoHandler.CommandQueuePreciseListener;
 import org.openstreetmap.josm.data.osm.DataSelectionListener;
 import org.openstreetmap.josm.data.osm.DataSet;
 import org.openstreetmap.josm.data.osm.OsmPrimitive;
@@ -40,6 +43,8 @@ import org.openstreetmap.josm.gui.dialogs.ToggleDialog;
 import org.openstreetmap.josm.gui.layer.MainLayerManager.ActiveLayerChangeEvent;
 import org.openstreetmap.josm.gui.layer.MainLayerManager.ActiveLayerChangeListener;
 import org.openstreetmap.josm.gui.layer.OsmDataLayer;
+import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixOp;
+import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixOpType;
 import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixPlan;
 import org.openstreetmap.josm.spi.preferences.Config;
 import org.openstreetmap.josm.tools.ImageProvider;
@@ -55,6 +60,7 @@ public class MultipolyGoneDialog extends ToggleDialog
     private final AbstractAction refreshAction;
     private final AbstractAction goneAction;
     private final AbstractAction allGoneAction;
+    private final AbstractAction downloadRefsAction;
 
     /** Guard to prevent selection feedback loop (list click -> map select -> list select -> ...) */
     private boolean updatingSelection;
@@ -132,10 +138,20 @@ public class MultipolyGoneDialog extends ToggleDialog
         };
         new ImageProvider("dialogs", "fix").getResource().attachImageIcon(allGoneAction, true);
 
+        downloadRefsAction = new AbstractAction("") {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                downloadReferrersForSelected();
+            }
+        };
+        downloadRefsAction.putValue(AbstractAction.SHORT_DESCRIPTION, tr("Download Refs"));
+        new ImageProvider("download").getResource().attachImageIcon(downloadRefsAction, true);
+
         createLayout(new JScrollPane(list), false, Arrays.asList(
             new SideButton(refreshAction),
             new SideButton(goneAction),
-            new SideButton(allGoneAction)
+            new SideButton(allGoneAction),
+            new SideButton(downloadRefsAction)
         ));
     }
 
@@ -198,6 +214,64 @@ public class MultipolyGoneDialog extends ToggleDialog
 
         MultipolygonFixer.fixRelationsUntilConvergence(all);
         refresh();
+    }
+
+    private void downloadReferrersForSelected() {
+        OsmDataLayer editLayer = MainApplication.getLayerManager().getEditLayer();
+        if (editLayer == null) {
+            return;
+        }
+
+        // Use selected plans, or all if none selected
+        List<FixPlan> plans = list.getSelectedValuesList();
+        if (plans.isEmpty()) {
+            plans = new ArrayList<>();
+            for (int i = 0; i < listModel.size(); i++) {
+                plans.add(listModel.get(i));
+            }
+        }
+        if (plans.isEmpty()) {
+            return;
+        }
+
+        Set<String> insignificantTags = MultipolygonFixer.getInsignificantTags();
+
+        // Collect source ways from CONSOLIDATE_RINGS and DECOMPOSE ops —
+        // these are the ways that would be candidates for deletion during cleanup.
+        // Only ways without significant tags need referrer data (tagged ways are kept regardless).
+        Set<Way> waysNeedingReferrers = new java.util.LinkedHashSet<>();
+        for (FixPlan plan : plans) {
+            for (FixOp op : plan.getOperations()) {
+                if (op.getType() == FixOpType.CONSOLIDATE_RINGS && op.getRings() != null) {
+                    for (WayChainBuilder.Ring ring : op.getRings()) {
+                        for (Way way : ring.getSourceWays()) {
+                            if (!way.isReferrersDownloaded()
+                                    && !MultipolygonFixer.hasSignificantTags(way, insignificantTags)) {
+                                waysNeedingReferrers.add(way);
+                            }
+                        }
+                    }
+                }
+                if (op.getType() == FixOpType.DECOMPOSE_SELF_INTERSECTIONS && op.getDecomposedRings() != null) {
+                    for (var decomp : op.getDecomposedRings()) {
+                        for (Way way : decomp.getOriginalRing().getSourceWays()) {
+                            if (!way.isReferrersDownloaded()
+                                    && !MultipolygonFixer.hasSignificantTags(way, insignificantTags)) {
+                                waysNeedingReferrers.add(way);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (waysNeedingReferrers.isEmpty()) {
+            Logging.info("Multipoly-Gone: all cleanup-candidate ways already have referrers downloaded");
+            return;
+        }
+
+        Logging.info("Multipoly-Gone: downloading referrers for {0} way(s)", waysNeedingReferrers.size());
+        DownloadReferrersAction.downloadReferrers(editLayer, new ArrayList<>(waysNeedingReferrers));
     }
 
     private void logPlans(List<FixPlan> plans) {
@@ -281,6 +355,7 @@ public class MultipolyGoneDialog extends ToggleDialog
         boolean hasItems = !listModel.isEmpty();
         goneAction.setEnabled(hasItems);
         allGoneAction.setEnabled(hasItems);
+        downloadRefsAction.setEnabled(hasItems);
     }
 
     @Override

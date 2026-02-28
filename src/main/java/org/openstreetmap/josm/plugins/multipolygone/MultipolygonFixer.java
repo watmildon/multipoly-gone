@@ -49,7 +49,7 @@ public class MultipolygonFixer {
 
         Logging.info("Multipoly-Gone: executing {0} commands for {1} plan(s)", allCommands.size(), plans.size());
         Command cmd = SequenceCommand.wrapIfNeeded(
-            tr("Dissolve unnecessary multipolygon(s)"), allCommands);
+            tr("Fix multipolygon/boundary relation(s)"), allCommands);
         UndoRedoHandler.getInstance().add(cmd);
     }
 
@@ -100,7 +100,7 @@ public class MultipolygonFixer {
 
         // Wrap everything and add to UndoRedoHandler (which replays as a single undoable unit)
         Command cmd = SequenceCommand.wrapIfNeeded(
-            tr("Dissolve unnecessary multipolygon(s)"), allCommands);
+            tr("Fix multipolygon/boundary relation(s)"), allCommands);
         UndoRedoHandler.getInstance().add(cmd);
     }
 
@@ -170,7 +170,9 @@ public class MultipolygonFixer {
         List<Command> commands = new ArrayList<>();
         Relation relation = plan.getRelation();
         DataSet ds = relation.getDataSet();
-        Map<String, String> tags = getTransferrableTags(relation);
+        Map<String, String> tags = plan.isBoundary()
+            ? java.util.Collections.emptyMap()
+            : getTransferrableTags(relation);
 
         // Track Ring -> Way mapping for cross-stage references
         Map<WayChainBuilder.Ring, Way> ringToWay = new HashMap<>();
@@ -178,6 +180,8 @@ public class MultipolygonFixer {
         // Track relation member modifications
         Set<Way> membersToRemove = new HashSet<>();
         Map<Way, Way> memberReplacements = new HashMap<>();
+        // Extra members to add (e.g., additional decomposed sub-ring ways for boundaries)
+        List<RelationMember> extraMembers = new ArrayList<>();
         boolean relationDeleted = false;
 
         for (FixOp op : plan.getOperations()) {
@@ -264,6 +268,15 @@ public class MultipolygonFixer {
                         Way firstSubWay = ringToWay.get(decomp.getSubRings().get(0));
                         for (Way src : decomp.getOriginalRing().getSourceWays()) {
                             memberReplacements.put(src, firstSubWay);
+                        }
+                        // For boundary plans (relation survives), add extra sub-ring ways as members
+                        if (plan.isBoundary() && decomp.getSubRings().size() > 1) {
+                            for (int i = 1; i < decomp.getSubRings().size(); i++) {
+                                Way subWay = ringToWay.get(decomp.getSubRings().get(i));
+                                if (subWay != null) {
+                                    extraMembers.add(new RelationMember("outer", subWay));
+                                }
+                            }
                         }
                     }
                 }
@@ -635,7 +648,7 @@ public class MultipolygonFixer {
         }
 
         // If the relation survives (partial ops), apply accumulated member changes
-        if (!relationDeleted && (!membersToRemove.isEmpty() || !memberReplacements.isEmpty())) {
+        if (!relationDeleted && (!membersToRemove.isEmpty() || !memberReplacements.isEmpty() || !extraMembers.isEmpty())) {
             Relation modified = new Relation(relation);
             List<RelationMember> newMembers = new ArrayList<>();
             Set<Way> alreadyReplaced = new HashSet<>();
@@ -666,6 +679,8 @@ public class MultipolygonFixer {
 
                 newMembers.add(member);
             }
+            // Add any extra members (e.g., additional decomposed sub-ring ways)
+            newMembers.addAll(extraMembers);
             modified.setMembers(newMembers);
             commands.add(new ChangeCommand(relation, modified));
         }
@@ -697,7 +712,7 @@ public class MultipolygonFixer {
         return true;
     }
 
-    private static boolean hasSignificantTags(Way way, Set<String> insignificantTags) {
+    static boolean hasSignificantTags(Way way, Set<String> insignificantTags) {
         for (String key : way.getKeys().keySet()) {
             if (!insignificantTags.contains(key)) {
                 return true;
@@ -706,7 +721,7 @@ public class MultipolygonFixer {
         return false;
     }
 
-    private static Set<String> getInsignificantTags() {
+    static Set<String> getInsignificantTags() {
         Set<String> tags = new HashSet<>();
 
         String pref = Config.getPref().get(PREF_INSIGNIFICANT_TAGS, DEFAULT_INSIGNIFICANT_TAGS);

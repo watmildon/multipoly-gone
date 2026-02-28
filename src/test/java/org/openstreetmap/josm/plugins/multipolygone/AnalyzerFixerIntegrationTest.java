@@ -57,6 +57,33 @@ class AnalyzerFixerIntegrationTest {
             "After undo, should find same number of fixable relations");
     }
 
+    // ---- Boundary tests ----
+
+    @Test
+    void boundary_fixAll_thenReanalyze_shouldFindNoFixableRelations() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-boundary.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        assertFalse(plans.isEmpty(), "Should find fixable boundary relations");
+        // All boundary plans should be marked as boundary
+        for (FixPlan plan : plans) {
+            assertTrue(plan.isBoundary(), "Plans from boundary test data should be boundary");
+            assertFalse(plan.dissolvesRelation(), "Boundary plans should never dissolve");
+        }
+
+        MultipolygonFixer.fixRelations(plans);
+
+        List<FixPlan> remaining = MultipolygonAnalyzer.findFixableRelations(ds);
+        assertEquals(0, remaining.size(),
+            "After fixing all boundaries, no relations should be fixable");
+
+        // All boundary relations should still exist
+        long boundaryRelations = ds.getRelations().stream()
+            .filter(r -> !r.isDeleted() && "boundary".equals(r.get("type")))
+            .count();
+        assertTrue(boundaryRelations >= 4,
+            "All boundary relations should survive (B1, B2, B3, B4, B5, B6 all have type=boundary)");
+    }
+
     // ---- Megafarmland tests ----
     // Input: 1 relation (20032389), 124 outers + 21 inners, all open fragments
     // Expected: relation survives with 1 outer + 10 inners, 2 standalone landuse=farmland ways
