@@ -775,6 +775,150 @@ class MultipolygonFixerTest {
             "Outer way should have natural=tree_group after dissolve");
     }
 
+    // --- Test case 120 (from testdata-proposed.osm): DISSOLVE with tagged outer (coastline bug) ---
+
+    @Test
+    void testCase120_dissolve_deletesRelation() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "120");
+        assertNotNull(plan, "Test case 120 should be fixable");
+
+        var relation = plan.getRelation();
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        assertTrue(relation.isDeleted(), "Relation should be deleted after dissolve");
+    }
+
+    @Test
+    void testCase120_dissolve_preservesCoastlineWay() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "120");
+
+        Way coastlineWay = plan.getRelation().getMembers().get(0).getWay();
+        assertEquals("coastline", coastlineWay.get("natural"),
+            "Precondition: outer way should have natural=coastline");
+
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        assertFalse(coastlineWay.isDeleted(), "Coastline way should not be deleted");
+        assertEquals("coastline", coastlineWay.get("natural"),
+            "Coastline way should still have natural=coastline after dissolve");
+        assertNull(coastlineWay.get("surface"),
+            "Coastline way should not have acquired surface=sand from the relation");
+    }
+
+    @Test
+    void testCase120_dissolve_createsNewBeachWay() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "120");
+
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        List<Way> beachWays = ds.getWays().stream()
+            .filter(w -> !w.isDeleted() && "beach".equals(w.get("natural")))
+            .collect(Collectors.toList());
+        assertEquals(1, beachWays.size(),
+            "Should have exactly one way with natural=beach after dissolve");
+        assertEquals("sand", beachWays.get(0).get("surface"),
+            "New beach way should have surface=sand");
+        assertTrue(beachWays.get(0).isClosed(),
+            "New beach way should be closed");
+    }
+
+    // --- Test case 121 (from testdata-proposed.osm): DISSOLVE with mixed tagged/untagged outers ---
+
+    @Test
+    void testCase121_dissolve_preservesTaggedWayAndReusesUntagged() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "121");
+        assertNotNull(plan, "Test case 121 should be fixable");
+
+        Relation relation = plan.getRelation();
+        // Find ways by tag rather than assuming member order
+        Way taggedWay = relation.getMembers().stream()
+            .filter(m -> m.isWay() && "coastline".equals(m.getWay().get("natural")))
+            .findFirst().get().getWay();
+        Way untaggedWay = relation.getMembers().stream()
+            .filter(m -> m.isWay() && !m.getWay().hasKeys())
+            .findFirst().get().getWay();
+
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        assertTrue(relation.isDeleted(), "Relation should be deleted");
+        // Tagged way preserved
+        assertFalse(taggedWay.isDeleted(), "Coastline way should not be deleted");
+        assertEquals("coastline", taggedWay.get("natural"),
+            "Coastline way should still have natural=coastline");
+        // Untagged way reused with relation tags
+        assertFalse(untaggedWay.isDeleted(), "Untagged way should not be deleted");
+        assertEquals("beach", untaggedWay.get("natural"),
+            "Untagged way should have been tagged with natural=beach");
+    }
+
+    @Test
+    void testCase121_dissolve_createsNewWayForTaggedOuter() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "121");
+
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        List<Way> beachWays = ds.getWays().stream()
+            .filter(w -> !w.isDeleted() && "beach".equals(w.get("natural")))
+            .collect(Collectors.toList());
+        assertEquals(2, beachWays.size(),
+            "Should have 2 ways with natural=beach (one new, one reused)");
+    }
+
+    // --- Test case 122 (from testdata-proposed.osm): EXTRACT with tagged outer ---
+
+    @Test
+    void testCase122_extract_preservesFootwayTag() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "122");
+        assertNotNull(plan, "Test case 122 should be fixable");
+
+        Relation relation = plan.getRelation();
+        Way footwayWay = relation.getMembers().stream()
+            .filter(m -> m.isWay() && "footway".equals(m.getWay().get("highway")))
+            .findFirst().get().getWay();
+
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        assertFalse(footwayWay.isDeleted(), "Footway way should not be deleted");
+        assertEquals("footway", footwayWay.get("highway"),
+            "Footway way should still have highway=footway after extract");
+        assertNull(footwayWay.get("landuse"),
+            "Footway way should not have acquired landuse=grass from the relation");
+    }
+
+    @Test
+    void testCase122_extract_createsNewWayWithRelationTags() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "122");
+
+        Relation relation = plan.getRelation();
+        Way footwayWay = relation.getMembers().stream()
+            .filter(m -> m.isWay() && "footway".equals(m.getWay().get("highway")))
+            .findFirst().get().getWay();
+
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        // A new way should exist with the same nodes as the footway, tagged with landuse=grass
+        List<Way> grassWaysWithFootwayNodes = ds.getWays().stream()
+            .filter(w -> !w.isDeleted() && "grass".equals(w.get("landuse"))
+                && w.getNodes().containsAll(footwayWay.getNodes()))
+            .collect(Collectors.toList());
+        assertEquals(1, grassWaysWithFootwayNodes.size(),
+            "Should have a new way with landuse=grass sharing the footway geometry");
+    }
+
     // --- Undo ---
 
     @Test

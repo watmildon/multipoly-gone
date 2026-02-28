@@ -4746,4 +4746,110 @@
     <tag k='_test_notes' v='3 closed outers + 1 inner touching outer1 at 2 nodes' />
     <tag k='_test_expected' v='EXTRACT outer2+outer3 + TOUCHING_INNER_MERGE outer1+inner' />
   </relation>
+  <!-- Test case 16: DISSOLVE with tagged outer way (coastline bug) -->
+  <!-- The outer way has natural=coastline. Dissolving should create a new way  -->
+  <!-- with the relation tags (natural=beach), leaving the coastline untouched. -->
+  <node id='-202000' action='modify' visible='true' lat='47.60000' lon='-122.49000' />
+  <node id='-202001' action='modify' visible='true' lat='47.60100' lon='-122.49000' />
+  <node id='-202002' action='modify' visible='true' lat='47.60100' lon='-122.48900' />
+  <node id='-202003' action='modify' visible='true' lat='47.60000' lon='-122.48900' />
+  <way id='-202010' action='modify' visible='true'>
+    <nd ref='-202000' />
+    <nd ref='-202001' />
+    <nd ref='-202002' />
+    <nd ref='-202003' />
+    <nd ref='-202000' />
+    <tag k='natural' v='coastline' />
+  </way>
+  <relation id='-202020' action='modify' visible='true'>
+    <member type='way' ref='-202010' role='outer' />
+    <tag k='type' v='multipolygon' />
+    <tag k='natural' v='beach' />
+    <tag k='surface' v='sand' />
+    <tag k='_test_id' v='120' />
+    <tag k='_test_notes' v='1 closed outer with natural=coastline, relation has natural=beach' />
+    <tag k='_test_expected' v='DISSOLVE: create new way with natural=beach, leave coastline untouched' />
+  </relation>
+  <!-- Test case 17: DISSOLVE with two outers, one tagged one untagged -->
+  <!-- Outer A has natural=coastline, Outer B has no significant tags. -->
+  <!-- Dissolving should create a new way for A but reuse B. -->
+  <node id='-202100' action='modify' visible='true' lat='47.61000' lon='-122.49000' />
+  <node id='-202101' action='modify' visible='true' lat='47.61100' lon='-122.49000' />
+  <node id='-202102' action='modify' visible='true' lat='47.61100' lon='-122.48900' />
+  <node id='-202103' action='modify' visible='true' lat='47.61000' lon='-122.48900' />
+  <way id='-202110' action='modify' visible='true'>
+    <nd ref='-202100' />
+    <nd ref='-202101' />
+    <nd ref='-202102' />
+    <nd ref='-202103' />
+    <nd ref='-202100' />
+    <tag k='natural' v='coastline' />
+  </way>
+  <node id='-202200' action='modify' visible='true' lat='47.61000' lon='-122.48800' />
+  <node id='-202201' action='modify' visible='true' lat='47.61100' lon='-122.48800' />
+  <node id='-202202' action='modify' visible='true' lat='47.61100' lon='-122.48700' />
+  <node id='-202203' action='modify' visible='true' lat='47.61000' lon='-122.48700' />
+  <way id='-202120' action='modify' visible='true'>
+    <nd ref='-202200' />
+    <nd ref='-202201' />
+    <nd ref='-202202' />
+    <nd ref='-202203' />
+    <nd ref='-202200' />
+  </way>
+  <relation id='-202130' action='modify' visible='true'>
+    <member type='way' ref='-202110' role='outer' />
+    <member type='way' ref='-202120' role='outer' />
+    <tag k='type' v='multipolygon' />
+    <tag k='natural' v='beach' />
+    <tag k='_test_id' v='121' />
+    <tag k='_test_notes' v='2 closed outers: one with natural=coastline, one untagged' />
+    <tag k='_test_expected' v='DISSOLVE: new way for tagged outer, reuse untagged outer' />
+  </relation>
+  <!-- Test case 18: EXTRACT with tagged outer way -->
+  <!-- 2 outers + 1 inner. Outer A (tagged with highway=footway) has no inners, -->
+  <!-- Outer B has an inner. Extracting A should create a new way, not clobber footway. -->
+  <node id='-202300' action='modify' visible='true' lat='47.62000' lon='-122.49000' />
+  <node id='-202301' action='modify' visible='true' lat='47.62100' lon='-122.49000' />
+  <node id='-202302' action='modify' visible='true' lat='47.62100' lon='-122.48900' />
+  <node id='-202303' action='modify' visible='true' lat='47.62000' lon='-122.48900' />
+  <way id='-202310' action='modify' visible='true'>
+    <nd ref='-202300' />
+    <nd ref='-202301' />
+    <nd ref='-202302' />
+    <nd ref='-202303' />
+    <nd ref='-202300' />
+    <tag k='highway' v='footway' />
+  </way>
+  <node id='-202400' action='modify' visible='true' lat='47.62200' lon='-122.49000' />
+  <node id='-202401' action='modify' visible='true' lat='47.62400' lon='-122.49000' />
+  <node id='-202402' action='modify' visible='true' lat='47.62400' lon='-122.48800' />
+  <node id='-202403' action='modify' visible='true' lat='47.62200' lon='-122.48800' />
+  <way id='-202320' action='modify' visible='true'>
+    <nd ref='-202400' />
+    <nd ref='-202401' />
+    <nd ref='-202402' />
+    <nd ref='-202403' />
+    <nd ref='-202400' />
+  </way>
+  <node id='-202500' action='modify' visible='true' lat='47.62250' lon='-122.48950' />
+  <node id='-202501' action='modify' visible='true' lat='47.62350' lon='-122.48950' />
+  <node id='-202502' action='modify' visible='true' lat='47.62350' lon='-122.48850' />
+  <node id='-202503' action='modify' visible='true' lat='47.62250' lon='-122.48850' />
+  <way id='-202330' action='modify' visible='true'>
+    <nd ref='-202500' />
+    <nd ref='-202501' />
+    <nd ref='-202502' />
+    <nd ref='-202503' />
+    <nd ref='-202500' />
+  </way>
+  <relation id='-202340' action='modify' visible='true'>
+    <member type='way' ref='-202310' role='outer' />
+    <member type='way' ref='-202320' role='outer' />
+    <member type='way' ref='-202330' role='inner' />
+    <tag k='type' v='multipolygon' />
+    <tag k='landuse' v='grass' />
+    <tag k='_test_id' v='122' />
+    <tag k='_test_notes' v='2 closed outers + 1 inner: outer A has highway=footway (no inners), outer B has inner' />
+    <tag k='_test_expected' v='EXTRACT outer A (new way, footway preserved) + DISSOLVE remainder' />
+  </relation>
 </osm>

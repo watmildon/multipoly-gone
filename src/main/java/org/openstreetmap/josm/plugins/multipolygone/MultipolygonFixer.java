@@ -298,10 +298,18 @@ public class MultipolygonFixer {
                             // since source ways were already replaced by it
                             membersToRemove.add(targetWay);
                         } else if (ring.isAlreadyClosed()) {
-                            // Tag existing way in place
-                            targetWay = ring.getSourceWays().get(0);
-                            for (Map.Entry<String, String> tag : tags.entrySet()) {
-                                commands.add(new ChangePropertyCommand(targetWay, tag.getKey(), tag.getValue()));
+                            Way sourceWay = ring.getSourceWays().get(0);
+                            if (hasSignificantTags(sourceWay, insignificantTags)) {
+                                // Source way has its own tags — create a new way instead
+                                Way newWay = new Way();
+                                newWay.setNodes(ring.getNodes());
+                                newWay.setKeys(tags);
+                                commands.add(new AddCommand(ds, newWay));
+                            } else {
+                                // Tag existing way in place
+                                for (Map.Entry<String, String> tag : tags.entrySet()) {
+                                    commands.add(new ChangePropertyCommand(sourceWay, tag.getKey(), tag.getValue()));
+                                }
                             }
                         } else {
                             // Create new way from ring nodes
@@ -330,9 +338,18 @@ public class MultipolygonFixer {
                                 targetWay.setKeys(tags);
                             }
                         } else if (ring.isAlreadyClosed()) {
-                            targetWay = ring.getSourceWays().get(0);
-                            for (Map.Entry<String, String> tag : tags.entrySet()) {
-                                commands.add(new ChangePropertyCommand(targetWay, tag.getKey(), tag.getValue()));
+                            Way sourceWay = ring.getSourceWays().get(0);
+                            if (hasSignificantTags(sourceWay, insignificantTags)) {
+                                // Source way has its own tags (e.g., natural=coastline) —
+                                // create a new way with the same geometry instead of clobbering.
+                                Way newWay = new Way();
+                                newWay.setNodes(ring.getNodes());
+                                newWay.setKeys(tags);
+                                commands.add(new AddCommand(ds, newWay));
+                            } else {
+                                for (Map.Entry<String, String> tag : tags.entrySet()) {
+                                    commands.add(new ChangePropertyCommand(sourceWay, tag.getKey(), tag.getValue()));
+                                }
                             }
                         }
                     }
@@ -468,9 +485,16 @@ public class MultipolygonFixer {
                                                 targetWay.setKeys(tags);
                                             }
                                         } else if (ring.isAlreadyClosed()) {
-                                            targetWay = ring.getSourceWays().get(0);
-                                            for (Map.Entry<String, String> tag : tags.entrySet()) {
-                                                commands.add(new ChangePropertyCommand(targetWay, tag.getKey(), tag.getValue()));
+                                            Way sourceWay = ring.getSourceWays().get(0);
+                                            if (hasSignificantTags(sourceWay, insignificantTags)) {
+                                                Way newWay = new Way();
+                                                newWay.setNodes(ring.getNodes());
+                                                newWay.setKeys(tags);
+                                                commands.add(new AddCommand(ds, newWay));
+                                            } else {
+                                                for (Map.Entry<String, String> tag : tags.entrySet()) {
+                                                    commands.add(new ChangePropertyCommand(sourceWay, tag.getKey(), tag.getValue()));
+                                                }
                                             }
                                         }
                                         waysToRemoveFromRelation.addAll(ring.getSourceWays());
@@ -488,9 +512,16 @@ public class MultipolygonFixer {
                                                 targetWay.setKeys(tags);
                                             }
                                         } else if (ring.isAlreadyClosed()) {
-                                            targetWay = ring.getSourceWays().get(0);
-                                            for (Map.Entry<String, String> tag : tags.entrySet()) {
-                                                commands.add(new ChangePropertyCommand(targetWay, tag.getKey(), tag.getValue()));
+                                            Way sourceWay = ring.getSourceWays().get(0);
+                                            if (hasSignificantTags(sourceWay, insignificantTags)) {
+                                                Way newWay = new Way();
+                                                newWay.setNodes(ring.getNodes());
+                                                newWay.setKeys(tags);
+                                                commands.add(new AddCommand(ds, newWay));
+                                            } else {
+                                                for (Map.Entry<String, String> tag : tags.entrySet()) {
+                                                    commands.add(new ChangePropertyCommand(sourceWay, tag.getKey(), tag.getValue()));
+                                                }
                                             }
                                         }
                                     }
