@@ -52,7 +52,7 @@ import org.openstreetmap.josm.tools.Logging;
 import org.openstreetmap.josm.tools.Shortcut;
 
 public class MultipolyGoneDialog extends ToggleDialog
-        implements ActiveLayerChangeListener, DataSelectionListener {
+        implements ActiveLayerChangeListener, DataSelectionListener, CommandQueuePreciseListener {
 
     private final DefaultListModel<FixPlan> listModel;
     private final JList<FixPlan> list;
@@ -362,6 +362,7 @@ public class MultipolyGoneDialog extends ToggleDialog
     public void showNotify() {
         MainApplication.getLayerManager().addActiveLayerChangeListener(this);
         SelectionEventManager.getInstance().addSelectionListenerForEdt(this);
+        UndoRedoHandler.getInstance().addCommandQueuePreciseListener(this);
         refresh();
     }
 
@@ -369,6 +370,27 @@ public class MultipolyGoneDialog extends ToggleDialog
     public void hideNotify() {
         MainApplication.getLayerManager().removeActiveLayerChangeListener(this);
         SelectionEventManager.getInstance().removeSelectionListener(this);
+        UndoRedoHandler.getInstance().removeCommandQueuePreciseListener(this);
+    }
+
+    @Override
+    public void commandAdded(UndoRedoHandler.CommandAddedEvent e) {
+        // no-op: fixSelected/fixAll already call refresh() after executing commands
+    }
+
+    @Override
+    public void commandUndone(UndoRedoHandler.CommandUndoneEvent e) {
+        refresh();
+    }
+
+    @Override
+    public void commandRedone(UndoRedoHandler.CommandRedoneEvent e) {
+        refresh();
+    }
+
+    @Override
+    public void cleaned(UndoRedoHandler.CommandQueueCleanedEvent e) {
+        refresh();
     }
 
     @Override
@@ -428,6 +450,50 @@ public class MultipolyGoneDialog extends ToggleDialog
         }
     }
 
+    /**
+     * Extracts the operation description from a FixPlan, stripping the trailing
+     * "(primaryTag)" suffix that is baked into the description string.
+     */
+    private static String getOperationDescription(FixPlan plan) {
+        String desc = plan.getDescription();
+        String primaryTag = MultipolygonAnalyzer.getPrimaryTag(plan.getRelation());
+        String suffix = " (" + primaryTag + ")";
+        if (desc.endsWith(suffix)) {
+            return desc.substring(0, desc.length() - suffix.length());
+        }
+        return desc;
+    }
+
+    /**
+     * Builds a display-friendly identity string for a relation's primary tags,
+     * suitable for showing in brackets after the name.
+     * For boundary relations: "boundary=administrative, AL8"
+     * For others: "natural=water", "landuse=grass", etc.
+     */
+    /** Tags that describe identity/metadata rather than the feature's topical classification. */
+    private static final Set<String> NON_TOPICAL_TAGS = Set.of(
+        "type", "name", "note", "description", "source", "created_by", "ref"
+    );
+
+    private static String formatIdentityTag(Relation r) {
+        String boundary = r.get("boundary");
+        String adminLevel = r.get("admin_level");
+        if (boundary != null) {
+            StringBuilder sb = new StringBuilder("boundary=").append(boundary);
+            if (adminLevel != null) {
+                sb.append(", AL").append(adminLevel);
+            }
+            return sb.toString();
+        }
+        // Prefer topical tags (natural, landuse, leisure, etc.) over name/metadata
+        for (String key : r.getKeys().keySet()) {
+            if (!NON_TOPICAL_TAGS.contains(key) && !key.startsWith("_")) {
+                return key + "=" + r.get(key);
+            }
+        }
+        return MultipolygonAnalyzer.getPrimaryTag(r);
+    }
+
     private static class FixPlanRenderer extends DefaultListCellRenderer {
         @Override
         public Component getListCellRendererComponent(JList<?> jlist, Object value,
@@ -435,9 +501,26 @@ public class MultipolyGoneDialog extends ToggleDialog
             JLabel label = (JLabel) super.getListCellRendererComponent(
                 jlist, value, index, isSelected, cellHasFocus);
             if (value instanceof FixPlan fr) {
-                long id = fr.getRelation().getId();
+                Relation r = fr.getRelation();
+                long id = r.getId();
                 String idStr = id < 0 ? "new" : String.valueOf(id);
-                label.setText(String.format("Relation %s: %s", idStr, fr.getDescription()));
+                String name = r.get("name");
+                String opDesc = getOperationDescription(fr);
+                String identity = formatIdentityTag(r);
+
+                StringBuilder sb = new StringBuilder();
+                sb.append("Id ").append(idStr).append(": ");
+                if (name != null && !name.isEmpty()) {
+                    sb.append(name);
+                    // Only show bracketed tag if it adds info beyond the name
+                    if (!name.equals(identity) && !identity.equals("name=" + name)) {
+                        sb.append(" [").append(identity).append("]");
+                    }
+                } else {
+                    sb.append(identity);
+                }
+                sb.append(" \u2192 ").append(opDesc);
+                label.setText(sb.toString());
             }
             return label;
         }
