@@ -33,8 +33,6 @@ import org.openstreetmap.josm.tools.Logging;
 
 public class MultipolygonFixer {
 
-    private static final String PREF_INSIGNIFICANT_TAGS = "multipolygone.insignificantTags";
-    private static final String DEFAULT_INSIGNIFICANT_TAGS = "source;created_by";
     private static final int MAX_ITERATIONS = 10;
 
     public static void fixRelations(List<FixPlan> plans) {
@@ -105,7 +103,8 @@ public class MultipolygonFixer {
     }
 
     private static List<Command> buildAllCommands(List<FixPlan> plans) {
-        Set<String> insignificantTags = getInsignificantTags();
+        Set<String> mpInsignificantTags = getInsignificantTagsForMultipolygon();
+        Set<String> boundaryInsignificantTags = getInsignificantTagsForBoundary();
 
         // Sort plans by relation ID for deterministic processing order
         List<FixPlan> sortedPlans = new ArrayList<>(plans);
@@ -130,6 +129,8 @@ public class MultipolygonFixer {
                 continue;
             }
 
+            Set<String> insignificantTags = plan.isBoundary()
+                ? boundaryInsignificantTags : mpInsignificantTags;
             allCommands.addAll(buildCommandsForPlan(plan, waysToCleanup, nodesToCleanup,
                 globalConsolidations, insignificantTags));
         }
@@ -137,10 +138,16 @@ public class MultipolygonFixer {
         // Cleanup pass: delete unused source ways first, then unused nodes.
         // Order matters for undo: on undo (reverse), nodes are restored before ways,
         // so ways can safely reference those nodes during Way.load().
+        // Use the union of both tag sets — ways only enter waysToCleanup if the plan
+        // that added them already deemed them cleanup-worthy using the correct per-type set.
+        Set<String> unionInsignificantTags = new HashSet<>();
+        unionInsignificantTags.addAll(mpInsignificantTags);
+        unionInsignificantTags.addAll(boundaryInsignificantTags);
+
         Set<Way> waysAlreadyDeleted = new HashSet<>();
         for (Way way : waysToCleanup) {
             if (!waysAlreadyDeleted.contains(way)
-                    && isUnusedAfterBatch(way, processedRelations, insignificantTags)) {
+                    && isUnusedAfterBatch(way, processedRelations, unionInsignificantTags)) {
                 allCommands.add(new DeleteCommand(way));
                 waysAlreadyDeleted.add(way);
             }
@@ -769,10 +776,19 @@ public class MultipolygonFixer {
         return false;
     }
 
-    static Set<String> getInsignificantTags() {
+    static Set<String> getInsignificantTagsForMultipolygon() {
+        return loadInsignificantTags(MultipolyGonePreferences.PREF_INSIGNIFICANT_TAGS_MP);
+    }
+
+    static Set<String> getInsignificantTagsForBoundary() {
+        return loadInsignificantTags(MultipolyGonePreferences.PREF_INSIGNIFICANT_TAGS_BOUNDARY);
+    }
+
+    private static Set<String> loadInsignificantTags(String prefKey) {
         Set<String> tags = new HashSet<>();
 
-        String pref = Config.getPref().get(PREF_INSIGNIFICANT_TAGS, DEFAULT_INSIGNIFICANT_TAGS);
+        String pref = Config.getPref().get(prefKey,
+            MultipolyGonePreferences.DEFAULT_INSIGNIFICANT_TAGS);
         for (String tag : pref.split(";")) {
             String trimmed = tag.trim();
             if (!trimmed.isEmpty()) {

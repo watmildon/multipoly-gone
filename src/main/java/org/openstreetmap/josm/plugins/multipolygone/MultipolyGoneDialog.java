@@ -344,13 +344,16 @@ public class MultipolyGoneDialog extends ToggleDialog
             return;
         }
 
-        Set<String> insignificantTags = MultipolygonFixer.getInsignificantTags();
+        Set<String> mpInsignificantTags = MultipolygonFixer.getInsignificantTagsForMultipolygon();
+        Set<String> boundaryInsignificantTags = MultipolygonFixer.getInsignificantTagsForBoundary();
 
         // Collect source ways from CONSOLIDATE_RINGS and DECOMPOSE ops —
         // these are the ways that would be candidates for deletion during cleanup.
         // Only ways without significant tags need referrer data (tagged ways are kept regardless).
         Set<Way> waysNeedingReferrers = new java.util.LinkedHashSet<>();
         for (FixPlan plan : plans) {
+            Set<String> insignificantTags = plan.isBoundary()
+                ? boundaryInsignificantTags : mpInsignificantTags;
             for (FixOp op : plan.getOperations()) {
                 if (op.getType() == FixOpType.CONSOLIDATE_RINGS && op.getRings() != null) {
                     for (WayChainBuilder.Ring ring : op.getRings()) {
@@ -576,6 +579,14 @@ public class MultipolyGoneDialog extends ToggleDialog
     @Override
     public void activeOrEditLayerChanged(ActiveLayerChangeEvent e) {
         refresh();
+    }
+
+    @Override
+    public void preferenceChanged(org.openstreetmap.josm.spi.preferences.PreferenceChangeEvent e) {
+        super.preferenceChanged(e);
+        if (e.getKey().startsWith("multipolygone.") && !listModel.isEmpty()) {
+            refresh();
+        }
     }
 
     @Override
