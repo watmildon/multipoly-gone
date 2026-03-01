@@ -41,6 +41,84 @@ public class MultipolygonAnalyzer {
         SPLIT_RELATION
     }
 
+    /** Reason why a multipolygon/boundary relation was not fixable. */
+    public enum SkipReason {
+        INCOMPLETE_MEMBERS("Has incomplete members",
+            "Download the full relation to see all geometry"),
+        NON_WAY_MEMBER("Contains non-Way members",
+            "Remove node/relation members or reclassify them"),
+        DELETED_OR_INCOMPLETE_WAY("Contains deleted, incomplete, or degenerate ways",
+            "Fix or remove the problematic way"),
+        NO_OUTER_WAYS("No outer ways",
+            "Add outer members to the relation"),
+        IDENTITY_PROTECTED_MULTI_COMPONENT("Identity-protected relation with disconnected components",
+            "This named/ref'd feature cannot be auto-split into separate relations"),
+        SINGLE_COMPONENT_NOT_FIXABLE("Single component, no simplification possible",
+            "Outer ways do not form valid closed rings"),
+        OUTERS_CANT_FORM_RINGS("Outer ways cannot form closed rings",
+            "Check way connectivity \u2014 endpoints may not match"),
+        CONSOLIDATED_RING_TOO_LARGE("Consolidated ring would exceed 2000 nodes",
+            "The merged way would be too large for OSM"),
+        NESTED_OUTER_RINGS("Nested outer rings detected (mapping error)",
+            "One outer ring is entirely inside another \u2014 fix the role assignments"),
+        BOUNDARY_NO_OPS("Boundary relation with nothing to consolidate",
+            "All ways are already closed \u2014 no action needed"),
+        IDENTITY_PROTECTED_NO_OPS("Identity-protected relation with no consolidation ops",
+            "Relation has multiple disjoint outers but identity tags prevent splitting"),
+        INNER_WAYS_CANT_FORM_RINGS("Inner ways cannot form closed rings",
+            "Check inner way connectivity"),
+        INNER_RING_TOO_LARGE("Inner ring would exceed 2000 nodes",
+            "The consolidated inner way would be too large for OSM"),
+        INNER_NOT_CONTAINED_IN_OUTER("Inner ring not spatially contained in any outer",
+            "An inner ring lies outside all outer rings \u2014 fix the geometry"),
+        NO_OPERATIONS_APPLICABLE("No simplification operations apply",
+            "The relation structure is too complex for automatic simplification"),
+        MULTI_COMPONENT_SPLIT_NOT_WORTHWHILE("Multi-component split has no fixable components",
+            "Components could be split but none simplify individually");
+
+        private final String message;
+        private final String hint;
+
+        SkipReason(String message, String hint) {
+            this.message = message;
+            this.hint = hint;
+        }
+
+        public String getMessage() { return message; }
+        public String getHint() { return hint; }
+    }
+
+    /** A relation that was analyzed but not fixable, with the reason why. */
+    public static class SkipResult {
+        private final Relation relation;
+        private final SkipReason reason;
+        private final String detail;
+
+        SkipResult(Relation relation, SkipReason reason, String detail) {
+            this.relation = relation;
+            this.reason = reason;
+            this.detail = detail;
+        }
+
+        public Relation getRelation() { return relation; }
+        public SkipReason getReason() { return reason; }
+        public String getDetail() { return detail; }
+    }
+
+    /** Combined result of analyzing all relations: both fixable plans and skip reasons. */
+    public static class AnalysisResult {
+        private final List<FixPlan> fixPlans;
+        private final List<SkipResult> skipResults;
+
+        AnalysisResult(List<FixPlan> fixPlans, List<SkipResult> skipResults) {
+            this.fixPlans = fixPlans;
+            this.skipResults = skipResults;
+        }
+
+        public List<FixPlan> getFixPlans() { return fixPlans; }
+        public List<SkipResult> getSkipResults() { return skipResults; }
+    }
+
     /**
      * Result of analyzing one connected component of a split relation.
      */
@@ -583,7 +661,7 @@ public class MultipolygonAnalyzer {
     }
 
     public static List<FixPlan> findFixableRelations(DataSet dataSet) {
-        return findFixableRelations(dataSet, null);
+        return analyzeAll(dataSet, null).getFixPlans();
     }
 
     /**
@@ -593,10 +671,19 @@ public class MultipolygonAnalyzer {
      * @param rng if non-null, shuffles way lists before analysis to expose order-dependent bugs
      */
     public static List<FixPlan> findFixableRelations(DataSet dataSet, Random rng) {
+        return analyzeAll(dataSet, rng).getFixPlans();
+    }
+
+    /**
+     * Analyzes all multipolygon/boundary relations in the dataset, returning both
+     * fixable plans and skip reasons for relations that cannot be fixed.
+     */
+    public static AnalysisResult analyzeAll(DataSet dataSet, Random rng) {
         boolean debug = isDebugMode();
-        List<FixPlan> results = new ArrayList<>();
+        List<FixPlan> fixPlans = new ArrayList<>();
+        List<SkipResult> skipResults = new ArrayList<>();
         if (dataSet == null) {
-            return results;
+            return new AnalysisResult(fixPlans, skipResults);
         }
 
         List<Relation> relations = new ArrayList<>(dataSet.getRelations());
@@ -613,29 +700,49 @@ public class MultipolygonAnalyzer {
                 continue;
             }
 
-            FixPlan plan = analyze(relation, rng);
-            if (plan != null) {
+            AnalyzeOutcome outcome = analyze(relation, rng);
+            if (outcome.plan != null) {
                 if (debug) {
                     Logging.info("Multipoly-Gone DEBUG: plan for relation {0}: {1}",
-                        relation.getUniqueId(), plan.fingerprint());
+                        relation.getUniqueId(), outcome.plan.fingerprint());
                 }
-                results.add(plan);
+                fixPlans.add(outcome.plan);
+            } else if (outcome.skip != null) {
+                skipResults.add(outcome.skip);
             }
         }
         if (debug) {
-            Logging.info("Multipoly-Gone DEBUG: found {0} fixable relations", results.size());
+            Logging.info("Multipoly-Gone DEBUG: found {0} fixable relations, {1} skipped",
+                fixPlans.size(), skipResults.size());
         }
-        return results;
+        return new AnalysisResult(fixPlans, skipResults);
     }
 
-    private static FixPlan analyze(Relation relation, Random rng) {
+    /** Internal union type: either a FixPlan (fixable) or a SkipResult (not fixable). */
+    private static class AnalyzeOutcome {
+        final FixPlan plan;
+        final SkipResult skip;
+
+        private AnalyzeOutcome(FixPlan plan, SkipResult skip) {
+            this.plan = plan;
+            this.skip = skip;
+        }
+
+        static AnalyzeOutcome fix(FixPlan plan) {
+            return new AnalyzeOutcome(plan, null);
+        }
+
+        static AnalyzeOutcome skip(Relation relation, SkipReason reason, String detail) {
+            return new AnalyzeOutcome(null, new SkipResult(relation, reason, detail));
+        }
+    }
+
+    private static AnalyzeOutcome analyze(Relation relation, Random rng) {
         boolean isBoundary = "boundary".equals(relation.get("type"));
-        boolean logThis = "Lake Morton-Berrydale".equals(relation.get("name"));
 
         // Skip relations with incomplete members — we can't see all geometry
         if (relation.hasIncompleteMembers()) {
-            if (logThis) Logging.info("Multipoly-Gone SKIP {0}: hasIncompleteMembers=true", relation.get("name"));
-            return null;
+            return AnalyzeOutcome.skip(relation, SkipReason.INCOMPLETE_MEMBERS, null);
         }
 
         List<Way> outerWays = new ArrayList<>();
@@ -645,27 +752,15 @@ public class MultipolygonAnalyzer {
         for (RelationMember member : relation.getMembers()) {
             if (!member.isWay()) {
                 if (isBoundary) {
-                    if (logThis) Logging.info("Multipoly-Gone DEBUG {0}: skipping non-Way member {1} role={2}",
-                        relation.get("name"), member.getType(), member.getRole());
                     continue; // skip non-Way members (label nodes, admin_centre, etc.)
                 }
-                if (logThis) Logging.info("Multipoly-Gone SKIP {0}: non-Way member {1} role={2}",
-                    relation.get("name"), member.getType(), member.getRole());
-                return null;
+                return AnalyzeOutcome.skip(relation, SkipReason.NON_WAY_MEMBER,
+                    "member type=" + member.getType() + " role=" + member.getRole());
             }
             Way way = member.getWay();
             if (way.isDeleted() || way.isIncomplete() || way.getNodesCount() < 2) {
-                if (logThis) Logging.info("Multipoly-Gone SKIP {0}: way {1} deleted={2} incomplete={3} nodes={4}",
-                    relation.get("name"), way.getUniqueId(), way.isDeleted(), way.isIncomplete(), way.getNodesCount());
-                return null;
-            }
-            // Skip if any member way extends beyond the download area —
-            // we may not have complete context about the surrounding data
-            if (way.isOutsideDownloadArea()) {
-                if (logThis) Logging.info("Multipoly-Gone SKIP {0}: way {1} isOutsideDownloadArea=true (nodes={2}, first={3}, last={4})",
-                    relation.get("name"), way.getUniqueId(), way.getNodesCount(),
-                    way.firstNode().getUniqueId(), way.lastNode().getUniqueId());
-                return null;
+                return AnalyzeOutcome.skip(relation, SkipReason.DELETED_OR_INCOMPLETE_WAY,
+                    "way " + way.getUniqueId());
             }
             if ("inner".equals(member.getRole())) {
                 innerWays.add(way);
@@ -676,7 +771,7 @@ public class MultipolygonAnalyzer {
         }
 
         if (outerWays.isEmpty()) {
-            return null;
+            return AnalyzeOutcome.skip(relation, SkipReason.NO_OUTER_WAYS, null);
         }
 
         // Shuffle way lists to perturb downstream HashMap/HashSet iteration order
@@ -693,9 +788,11 @@ public class MultipolygonAnalyzer {
 
         // Try the single-relation path first — it handles all original test cases
         // and relations where outers form valid rings (even with disconnected closed ways).
-        FixPlan singleResult = analyzeSingleRelation(relation, outerWays, innerWays, identityProtected, isBoundary);
+        SkipReason[] singleSkip = new SkipReason[1];
+        FixPlan singleResult = analyzeSingleRelation(relation, outerWays, innerWays,
+            identityProtected, isBoundary, singleSkip);
         if (singleResult != null) {
-            return singleResult;
+            return AnalyzeOutcome.fix(singleResult);
         }
 
         // Single-relation path failed (e.g., outers can't form rings globally).
@@ -703,7 +800,9 @@ public class MultipolygonAnalyzer {
         // But if the relation has identity tags (or is a boundary), don't split —
         // the components should stay together as one feature.
         if (identityProtected) {
-            return null;
+            SkipReason reason = singleSkip[0] != null ? singleSkip[0]
+                : SkipReason.IDENTITY_PROTECTED_MULTI_COMPONENT;
+            return AnalyzeOutcome.skip(relation, reason, null);
         }
 
         List<Way> allWays = new ArrayList<>(outerWays);
@@ -715,7 +814,9 @@ public class MultipolygonAnalyzer {
 
         if (components.size() <= 1) {
             // Only one component and single-relation already failed — not fixable
-            return null;
+            SkipReason reason = singleSkip[0] != null ? singleSkip[0]
+                : SkipReason.SINGLE_COMPONENT_NOT_FIXABLE;
+            return AnalyzeOutcome.skip(relation, reason, null);
         }
 
         // Shuffle the component order to perturb multi-component analysis
@@ -729,10 +830,12 @@ public class MultipolygonAnalyzer {
 
     /**
      * Original single-component analysis path. Unchanged from before SPLIT_RELATION.
+     * @param skipOut if non-null and the component is not fixable, skipOut[0] is set to the reason
      */
     private static FixPlan analyzeSingleRelation(Relation relation, List<Way> outerWays,
-            List<Way> innerWays, boolean identityProtected, boolean isBoundary) {
-        ComponentResult result = analyzeComponent(outerWays, innerWays, identityProtected, isBoundary);
+            List<Way> innerWays, boolean identityProtected, boolean isBoundary,
+            SkipReason[] skipOut) {
+        ComponentResult result = analyzeComponent(outerWays, innerWays, identityProtected, isBoundary, skipOut);
         if (result == null) {
             return null;
         }
@@ -752,7 +855,7 @@ public class MultipolygonAnalyzer {
      * Inner-only components (no outers) are assigned to the outer component
      * that spatially contains them.
      */
-    private static FixPlan analyzeMultiComponent(Relation relation, List<Set<Way>> components, Set<Way> innerWaySet) {
+    private static AnalyzeOutcome analyzeMultiComponent(Relation relation, List<Set<Way>> components, Set<Way> innerWaySet) {
         boolean debug = isDebugMode();
         // Separate components into outer-bearing and inner-only
         List<List<Way>> outerComponents = new ArrayList<>();
@@ -793,7 +896,11 @@ public class MultipolygonAnalyzer {
             // Degenerate: only one real component, shouldn't normally happen
             List<Way> allOuters = outerComponents.isEmpty() ? new ArrayList<>() : outerComponents.get(0);
             List<Way> allInners = outerCompInners.isEmpty() ? new ArrayList<>() : outerCompInners.get(0);
-            return analyzeSingleRelation(relation, allOuters, allInners, false, false);
+            SkipReason[] skipOut = new SkipReason[1];
+            FixPlan plan = analyzeSingleRelation(relation, allOuters, allInners, false, false, skipOut);
+            if (plan != null) return AnalyzeOutcome.fix(plan);
+            return AnalyzeOutcome.skip(relation,
+                skipOut[0] != null ? skipOut[0] : SkipReason.SINGLE_COMPONENT_NOT_FIXABLE, null);
         }
 
         // Build outer rings for each outer component so we can do spatial containment
@@ -869,7 +976,12 @@ public class MultipolygonAnalyzer {
 
         // If only 1 outer component after inner assignment, use the simple single-relation path
         if (outerComponents.size() == 1) {
-            return analyzeSingleRelation(relation, outerComponents.get(0), outerCompInners.get(0), false, false);
+            SkipReason[] skipOut = new SkipReason[1];
+            FixPlan plan = analyzeSingleRelation(relation, outerComponents.get(0), outerCompInners.get(0),
+                false, false, skipOut);
+            if (plan != null) return AnalyzeOutcome.fix(plan);
+            return AnalyzeOutcome.skip(relation,
+                skipOut[0] != null ? skipOut[0] : SkipReason.SINGLE_COMPONENT_NOT_FIXABLE, null);
         }
 
         // Now analyze each outer component with its assigned inners
@@ -880,7 +992,7 @@ public class MultipolygonAnalyzer {
         for (int c = 0; c < outerComponents.size(); c++) {
             List<Way> compOuters = outerComponents.get(c);
             List<Way> compInners = outerCompInners.get(c);
-            ComponentResult cr = analyzeComponent(compOuters, compInners, false, false);
+            ComponentResult cr = analyzeComponent(compOuters, compInners, false, false, null);
             if (cr == null && !compInners.isEmpty()) {
                 // Component can't be simplified internally, but in a multi-component split
                 // it still needs to become its own sub-relation. Create a no-op result.
@@ -906,11 +1018,11 @@ public class MultipolygonAnalyzer {
         // A split is only worthwhile if there are multiple outer components
         // and at least one component is actually fixable
         if (outerComponents.size() < 2) {
-            return null;
+            return AnalyzeOutcome.skip(relation, SkipReason.MULTI_COMPONENT_SPLIT_NOT_WORTHWHILE, null);
         }
         boolean anyNonNull = results.stream().anyMatch(r -> r != null);
         if (!anyNonNull) {
-            return null;
+            return AnalyzeOutcome.skip(relation, SkipReason.MULTI_COMPONENT_SPLIT_NOT_WORTHWHILE, null);
         }
 
         String primaryTag = getPrimaryTag(relation);
@@ -921,15 +1033,16 @@ public class MultipolygonAnalyzer {
         ops.add(new FixOp(FixOpType.SPLIT_RELATION, results));
         FixPlan plan = new FixPlan(relation, ops, desc);
         plan.validate();
-        return plan;
+        return AnalyzeOutcome.fix(plan);
     }
 
     /**
      * Analyze a single connected component of ways through the full pipeline.
      * Returns a ComponentResult, or null if the component is not fixable.
+     * @param skipOut if non-null and the component is not fixable, skipOut[0] is set to the reason
      */
     private static ComponentResult analyzeComponent(List<Way> outerWays, List<Way> innerWays,
-            boolean identityProtected, boolean boundaryMode) {
+            boolean identityProtected, boolean boundaryMode, SkipReason[] skipOut) {
         // Try building rings from outers; if that fails, try reclassifying bridging inners
         Optional<List<WayChainBuilder.Ring>> ringsOpt = WayChainBuilder.buildRings(outerWays);
 
@@ -946,6 +1059,7 @@ public class MultipolygonAnalyzer {
         }
 
         if (ringsOpt.isEmpty()) {
+            if (skipOut != null) skipOut[0] = SkipReason.OUTERS_CANT_FORM_RINGS;
             return null;
         }
 
@@ -954,12 +1068,14 @@ public class MultipolygonAnalyzer {
         // Check node limits on rings that need chaining
         for (WayChainBuilder.Ring ring : outerRings) {
             if (!ring.isAlreadyClosed() && ring.getNodes().size() - 1 > MAX_WAY_NODES) {
+                if (skipOut != null) skipOut[0] = SkipReason.CONSOLIDATED_RING_TOO_LARGE;
                 return null;
             }
         }
 
         // Skip if any outer ring is nested inside another — ambiguous mapping error
         if (hasNestedOuters(outerRings)) {
+            if (skipOut != null) skipOut[0] = SkipReason.NESTED_OUTER_RINGS;
             return null;
         }
 
@@ -1034,6 +1150,7 @@ public class MultipolygonAnalyzer {
                 }
             }
             if (ops.isEmpty()) {
+                if (skipOut != null) skipOut[0] = SkipReason.BOUNDARY_NO_OPS;
                 return null; // nothing to fix
             }
             descParts.add("boundary updated");
@@ -1047,6 +1164,7 @@ public class MultipolygonAnalyzer {
                 // Identity-protected: don't dissolve disjoint outers into separate ways.
                 // Only return if we have consolidation or decomposition ops to apply.
                 if (ops.isEmpty()) {
+                    if (skipOut != null) skipOut[0] = SkipReason.IDENTITY_PROTECTED_NO_OPS;
                     return null;
                 }
                 descParts.add("identity-protected, kept as relation");
@@ -1065,6 +1183,7 @@ public class MultipolygonAnalyzer {
         // Build rings from inner ways
         Optional<List<WayChainBuilder.Ring>> innerRingsOpt = WayChainBuilder.buildRings(innerWays);
         if (innerRingsOpt.isEmpty()) {
+            if (skipOut != null) skipOut[0] = SkipReason.INNER_WAYS_CANT_FORM_RINGS;
             return null;
         }
         List<WayChainBuilder.Ring> innerRings = innerRingsOpt.get();
@@ -1072,6 +1191,7 @@ public class MultipolygonAnalyzer {
         // Check node limits on inner rings that need chaining
         for (WayChainBuilder.Ring ring : innerRings) {
             if (!ring.isAlreadyClosed() && ring.getNodes().size() - 1 > MAX_WAY_NODES) {
+                if (skipOut != null) skipOut[0] = SkipReason.INNER_RING_TOO_LARGE;
                 return null;
             }
         }
@@ -1102,6 +1222,7 @@ public class MultipolygonAnalyzer {
         for (WayChainBuilder.Ring innerRing : innerRings) {
             WayChainBuilder.Ring containing = findContainingRing(innerRing, outerRings);
             if (containing == null) {
+                if (skipOut != null) skipOut[0] = SkipReason.INNER_NOT_CONTAINED_IN_OUTER;
                 return null;
             }
             ringToInners.get(containing).add(innerRing);
@@ -1138,7 +1259,10 @@ public class MultipolygonAnalyzer {
             if (mergeResult != null) {
                 for (List<Node> way : mergeResult.mergedWays) {
                     if (way.size() - 1 > MAX_WAY_NODES) {
-                        if (ops.isEmpty()) return null;
+                        if (ops.isEmpty()) {
+                            if (skipOut != null) skipOut[0] = SkipReason.CONSOLIDATED_RING_TOO_LARGE;
+                            return null;
+                        }
                         return new ComponentResult(outerWays, innerWays, ops, false,
                             retained, retainedInners, String.join(", ", descParts));
                     }
@@ -1158,6 +1282,7 @@ public class MultipolygonAnalyzer {
 
         // Component survives with remaining members
         if (ops.isEmpty()) {
+            if (skipOut != null) skipOut[0] = SkipReason.NO_OPERATIONS_APPLICABLE;
             return null;
         }
         return new ComponentResult(outerWays, innerWays, ops, false,

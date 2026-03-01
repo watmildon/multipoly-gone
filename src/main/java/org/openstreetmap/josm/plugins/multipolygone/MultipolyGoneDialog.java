@@ -12,6 +12,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -24,7 +25,15 @@ import javax.swing.DefaultListModel;
 import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JScrollPane;
+import javax.swing.JTabbedPane;
+import javax.swing.JTree;
 import javax.swing.ListSelectionModel;
+import javax.swing.SwingUtilities;
+import javax.swing.ToolTipManager;
+import javax.swing.tree.DefaultMutableTreeNode;
+import javax.swing.tree.DefaultTreeCellRenderer;
+import javax.swing.tree.DefaultTreeModel;
+import javax.swing.tree.TreePath;
 
 import org.openstreetmap.josm.actions.AutoScaleAction;
 import org.openstreetmap.josm.actions.DownloadReferrersAction;
@@ -33,6 +42,7 @@ import org.openstreetmap.josm.data.UndoRedoHandler.CommandQueuePreciseListener;
 import org.openstreetmap.josm.data.osm.DataSelectionListener;
 import org.openstreetmap.josm.data.osm.DataSet;
 import org.openstreetmap.josm.data.osm.OsmPrimitive;
+import org.openstreetmap.josm.data.osm.PrimitiveId;
 import org.openstreetmap.josm.data.osm.Relation;
 import org.openstreetmap.josm.data.osm.RelationMember;
 import org.openstreetmap.josm.data.osm.Way;
@@ -40,12 +50,16 @@ import org.openstreetmap.josm.data.osm.event.SelectionEventManager;
 import org.openstreetmap.josm.gui.MainApplication;
 import org.openstreetmap.josm.gui.SideButton;
 import org.openstreetmap.josm.gui.dialogs.ToggleDialog;
+import org.openstreetmap.josm.gui.io.DownloadPrimitivesTask;
 import org.openstreetmap.josm.gui.layer.MainLayerManager.ActiveLayerChangeEvent;
 import org.openstreetmap.josm.gui.layer.MainLayerManager.ActiveLayerChangeListener;
 import org.openstreetmap.josm.gui.layer.OsmDataLayer;
+import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.AnalysisResult;
 import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixOp;
 import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixOpType;
 import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixPlan;
+import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.SkipReason;
+import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.SkipResult;
 import org.openstreetmap.josm.spi.preferences.Config;
 import org.openstreetmap.josm.tools.ImageProvider;
 import org.openstreetmap.josm.tools.Logging;
@@ -56,6 +70,11 @@ public class MultipolyGoneDialog extends ToggleDialog
 
     private final DefaultListModel<FixPlan> listModel;
     private final JList<FixPlan> list;
+
+    private final JTabbedPane tabbedPane;
+    private final DefaultMutableTreeNode skippedRoot;
+    private final JTree skippedTree;
+    private List<SkipResult> currentSkipResults = new ArrayList<>();
 
     private final AbstractAction refreshAction;
     private final AbstractAction goneAction;
@@ -78,6 +97,7 @@ public class MultipolyGoneDialog extends ToggleDialog
             150
         );
 
+        // --- Fixable list (Tab 1) ---
         listModel = new DefaultListModel<>();
         list = new JList<>(listModel);
         list.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
@@ -114,6 +134,53 @@ public class MultipolyGoneDialog extends ToggleDialog
             }
         });
 
+        // --- Skipped tree (Tab 2) ---
+        skippedRoot = new DefaultMutableTreeNode("Skipped");
+        skippedTree = new JTree(skippedRoot);
+        skippedTree.setRootVisible(false);
+        skippedTree.setShowsRootHandles(true);
+        skippedTree.setCellRenderer(new SkipResultTreeRenderer());
+        ToolTipManager.sharedInstance().registerComponent(skippedTree);
+
+        skippedTree.addTreeSelectionListener(e -> {
+            if (updatingSelection) return;
+            TreePath path = e.getPath();
+            if (path == null) return;
+            Object userObj = ((DefaultMutableTreeNode) path.getLastPathComponent()).getUserObject();
+            if (userObj instanceof SkipResult sr) {
+                updatingSelection = true;
+                try {
+                    DataSet ds = getDataSet();
+                    if (ds != null) {
+                        ds.setSelected(Collections.singleton(sr.getRelation()));
+                    }
+                } finally {
+                    updatingSelection = false;
+                }
+            }
+        });
+
+        skippedTree.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                if (e.getClickCount() == 2) {
+                    TreePath path = skippedTree.getPathForLocation(e.getX(), e.getY());
+                    if (path == null) return;
+                    Object userObj = ((DefaultMutableTreeNode) path.getLastPathComponent()).getUserObject();
+                    if (userObj instanceof SkipResult sr) {
+                        AutoScaleAction.zoomTo(Collections.singleton(sr.getRelation()));
+                    }
+                }
+            }
+        });
+
+        // --- Tabbed pane ---
+        tabbedPane = new JTabbedPane();
+        tabbedPane.addTab(tr("Fixable"), new JScrollPane(list));
+        tabbedPane.addTab(tr("Skipped"), new JScrollPane(skippedTree));
+        tabbedPane.addChangeListener(e -> updateButtonState());
+
+        // --- Actions ---
         refreshAction = new AbstractAction(tr("Refresh")) {
             @Override
             public void actionPerformed(ActionEvent e) {
@@ -147,7 +214,7 @@ public class MultipolyGoneDialog extends ToggleDialog
         downloadRefsAction.putValue(AbstractAction.SHORT_DESCRIPTION, tr("Download Refs"));
         new ImageProvider("download").getResource().attachImageIcon(downloadRefsAction, true);
 
-        createLayout(new JScrollPane(list), false, Arrays.asList(
+        createLayout(tabbedPane, false, Arrays.asList(
             new SideButton(refreshAction),
             new SideButton(goneAction),
             new SideButton(allGoneAction),
@@ -162,22 +229,60 @@ public class MultipolyGoneDialog extends ToggleDialog
 
     public void refresh() {
         listModel.clear();
+        currentSkipResults.clear();
         DataSet ds = getDataSet();
         if (ds == null) {
             setTitle(tr("Multipoly-Gone"));
+            updateTabTitles(0, 0);
             updateButtonState();
+            rebuildSkippedTree();
             return;
         }
-        List<FixPlan> fixables = MultipolygonAnalyzer.findFixableRelations(ds);
-        for (FixPlan f : fixables) {
+        AnalysisResult result = MultipolygonAnalyzer.analyzeAll(ds, null);
+        for (FixPlan f : result.getFixPlans()) {
             listModel.addElement(f);
         }
-        if (fixables.isEmpty()) {
+        currentSkipResults = result.getSkipResults();
+
+        int fixCount = result.getFixPlans().size();
+        int skipCount = currentSkipResults.size();
+        if (fixCount == 0 && skipCount == 0) {
             setTitle(tr("Multipoly-Gone"));
+        } else if (skipCount == 0) {
+            setTitle(tr("Multipoly-Gone: {0}", fixCount));
         } else {
-            setTitle(tr("Multipoly-Gone: {0}", fixables.size()));
+            setTitle(tr("Multipoly-Gone: {0} fixable, {1} skipped", fixCount, skipCount));
         }
+        updateTabTitles(fixCount, skipCount);
+        rebuildSkippedTree();
         updateButtonState();
+    }
+
+    private void updateTabTitles(int fixCount, int skipCount) {
+        if (tabbedPane.getTabCount() >= 2) {
+            tabbedPane.setTitleAt(0, tr("Fixable ({0})", fixCount));
+            tabbedPane.setTitleAt(1, tr("Skipped ({0})", skipCount));
+        }
+    }
+
+    private void rebuildSkippedTree() {
+        skippedRoot.removeAllChildren();
+
+        // Group by reason, maintaining enum declaration order
+        Map<SkipReason, List<SkipResult>> grouped = new LinkedHashMap<>();
+        for (SkipResult sr : currentSkipResults) {
+            grouped.computeIfAbsent(sr.getReason(), k -> new ArrayList<>()).add(sr);
+        }
+
+        for (Map.Entry<SkipReason, List<SkipResult>> entry : grouped.entrySet()) {
+            DefaultMutableTreeNode categoryNode = new DefaultMutableTreeNode(entry.getKey());
+            for (SkipResult sr : entry.getValue()) {
+                categoryNode.add(new DefaultMutableTreeNode(sr));
+            }
+            skippedRoot.add(categoryNode);
+        }
+
+        ((DefaultTreeModel) skippedTree.getModel()).reload();
     }
 
     private void fixSelected() {
@@ -219,6 +324,11 @@ public class MultipolyGoneDialog extends ToggleDialog
     private void downloadReferrersForSelected() {
         OsmDataLayer editLayer = MainApplication.getLayerManager().getEditLayer();
         if (editLayer == null) {
+            return;
+        }
+
+        if (tabbedPane.getSelectedIndex() == 1) {
+            downloadForSkippedRelations(editLayer);
             return;
         }
 
@@ -272,6 +382,70 @@ public class MultipolyGoneDialog extends ToggleDialog
 
         Logging.info("Multipoly-Gone: downloading referrers for {0} way(s)", waysNeedingReferrers.size());
         DownloadReferrersAction.downloadReferrers(editLayer, new ArrayList<>(waysNeedingReferrers));
+    }
+
+    private void downloadForSkippedRelations(OsmDataLayer editLayer) {
+        // Get selected skipped results, or all if none selected
+        List<SkipResult> targets = getSelectedSkipResults();
+        if (targets.isEmpty()) {
+            targets = currentSkipResults;
+        }
+
+        List<PrimitiveId> toDownload = new ArrayList<>();
+
+        for (SkipResult sr : targets) {
+            switch (sr.getReason()) {
+                case INCOMPLETE_MEMBERS -> {
+                    // Download the relation with all members
+                    toDownload.add(sr.getRelation().getPrimitiveId());
+                }
+                case DELETED_OR_INCOMPLETE_WAY -> {
+                    // Download incomplete member ways
+                    for (RelationMember m : sr.getRelation().getMembers()) {
+                        if (m.isWay()) {
+                            Way w = m.getWay();
+                            if (w.isIncomplete()) {
+                                toDownload.add(w.getPrimitiveId());
+                            }
+                        }
+                    }
+                }
+                default -> { } // structural issues — downloading more data won't help
+            }
+        }
+
+        if (toDownload.isEmpty()) {
+            Logging.info("Multipoly-Gone: no downloadable data for selected skipped relations");
+            return;
+        }
+
+        Logging.info("Multipoly-Gone: downloading {0} primitive(s) for skipped relations", toDownload.size());
+        DownloadPrimitivesTask task = new DownloadPrimitivesTask(editLayer, toDownload, true);
+        MainApplication.worker.submit(task);
+        // Refresh after download completes
+        MainApplication.worker.submit(() -> SwingUtilities.invokeLater(this::refresh));
+    }
+
+    private List<SkipResult> getSelectedSkipResults() {
+        List<SkipResult> results = new ArrayList<>();
+        TreePath[] paths = skippedTree.getSelectionPaths();
+        if (paths == null) return results;
+        for (TreePath path : paths) {
+            DefaultMutableTreeNode node = (DefaultMutableTreeNode) path.getLastPathComponent();
+            Object userObj = node.getUserObject();
+            if (userObj instanceof SkipResult sr) {
+                results.add(sr);
+            } else if (userObj instanceof SkipReason) {
+                // Category node selected — include all children
+                for (int i = 0; i < node.getChildCount(); i++) {
+                    DefaultMutableTreeNode child = (DefaultMutableTreeNode) node.getChildAt(i);
+                    if (child.getUserObject() instanceof SkipResult sr) {
+                        results.add(sr);
+                    }
+                }
+            }
+        }
+        return results;
     }
 
     private void logPlans(List<FixPlan> plans) {
@@ -352,10 +526,16 @@ public class MultipolyGoneDialog extends ToggleDialog
     }
 
     private void updateButtonState() {
-        boolean hasItems = !listModel.isEmpty();
-        goneAction.setEnabled(hasItems);
-        allGoneAction.setEnabled(hasItems);
-        downloadRefsAction.setEnabled(hasItems);
+        boolean onFixableTab = tabbedPane.getSelectedIndex() == 0;
+        boolean hasFixableItems = !listModel.isEmpty();
+        goneAction.setEnabled(onFixableTab && hasFixableItems);
+        allGoneAction.setEnabled(onFixableTab && hasFixableItems);
+
+        boolean hasDownloadableSkips = currentSkipResults.stream()
+            .anyMatch(sr -> sr.getReason() == SkipReason.INCOMPLETE_MEMBERS
+                || sr.getReason() == SkipReason.DELETED_OR_INCOMPLETE_WAY);
+        downloadRefsAction.setEnabled(
+            (onFixableTab && hasFixableItems) || (!onFixableTab && hasDownloadableSkips));
     }
 
     @Override
@@ -412,7 +592,7 @@ public class MultipolyGoneDialog extends ToggleDialog
                 .collect(Collectors.toSet());
 
             // If no relations are directly selected, check if any selected way
-            // is a member of a fixable relation in our list
+            // is a member of a relation in our fixable or skipped lists
             if (selectedRelations.isEmpty()) {
                 Set<Way> selectedWays = selected.stream()
                     .filter(Way.class::isInstance)
@@ -428,16 +608,25 @@ public class MultipolyGoneDialog extends ToggleDialog
                             }
                         }
                     }
+                    for (SkipResult sr : currentSkipResults) {
+                        Relation r = sr.getRelation();
+                        for (RelationMember m : r.getMembers()) {
+                            if (m.isWay() && selectedWays.contains(m.getWay())) {
+                                selectedRelations.add(r);
+                                break;
+                            }
+                        }
+                    }
                 }
             }
 
+            // Sync fixable list selection
             List<Integer> indices = new ArrayList<>();
             for (int i = 0; i < listModel.size(); i++) {
                 if (selectedRelations.contains(listModel.get(i).getRelation())) {
                     indices.add(i);
                 }
             }
-
             if (indices.isEmpty()) {
                 list.clearSelection();
             } else {
@@ -445,8 +634,32 @@ public class MultipolyGoneDialog extends ToggleDialog
                 list.setSelectedIndices(arr);
                 list.ensureIndexIsVisible(arr[0]);
             }
+
+            // Sync skipped tree selection (no tab switching)
+            syncSkippedTreeSelection(selectedRelations);
         } finally {
             updatingSelection = false;
+        }
+    }
+
+    /**
+     * Highlights matching leaf nodes in the skipped tree without switching tabs.
+     */
+    private void syncSkippedTreeSelection(Set<Relation> selectedRelations) {
+        skippedTree.clearSelection();
+        if (selectedRelations.isEmpty()) return;
+
+        for (int catIdx = 0; catIdx < skippedRoot.getChildCount(); catIdx++) {
+            DefaultMutableTreeNode catNode = (DefaultMutableTreeNode) skippedRoot.getChildAt(catIdx);
+            for (int leafIdx = 0; leafIdx < catNode.getChildCount(); leafIdx++) {
+                DefaultMutableTreeNode leafNode = (DefaultMutableTreeNode) catNode.getChildAt(leafIdx);
+                if (leafNode.getUserObject() instanceof SkipResult sr) {
+                    if (selectedRelations.contains(sr.getRelation())) {
+                        TreePath path = new TreePath(leafNode.getPath());
+                        skippedTree.addSelectionPath(path);
+                    }
+                }
+            }
         }
     }
 
@@ -464,18 +677,12 @@ public class MultipolyGoneDialog extends ToggleDialog
         return desc;
     }
 
-    /**
-     * Builds a display-friendly identity string for a relation's primary tags,
-     * suitable for showing in brackets after the name.
-     * For boundary relations: "boundary=administrative, AL8"
-     * For others: "natural=water", "landuse=grass", etc.
-     */
     /** Tags that describe identity/metadata rather than the feature's topical classification. */
     private static final Set<String> NON_TOPICAL_TAGS = Set.of(
         "type", "name", "note", "description", "source", "created_by", "ref"
     );
 
-    private static String formatIdentityTag(Relation r) {
+    static String formatIdentityTag(Relation r) {
         String boundary = r.get("boundary");
         String adminLevel = r.get("admin_level");
         if (boundary != null) {
@@ -494,6 +701,29 @@ public class MultipolyGoneDialog extends ToggleDialog
         return MultipolygonAnalyzer.getPrimaryTag(r);
     }
 
+    /**
+     * Formats a relation for display in both the fixable and skipped lists.
+     * Returns "Id {id}: {name} [{identity}]" or "Id {id}: {identity}" if no name.
+     */
+    static String formatRelationLabel(Relation r) {
+        long id = r.getId();
+        String idStr = id < 0 ? "new" : String.valueOf(id);
+        String name = r.get("name");
+        String identity = formatIdentityTag(r);
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("Id ").append(idStr).append(": ");
+        if (name != null && !name.isEmpty()) {
+            sb.append(name);
+            if (!name.equals(identity) && !identity.equals("name=" + name)) {
+                sb.append(" [").append(identity).append("]");
+            }
+        } else {
+            sb.append(identity);
+        }
+        return sb.toString();
+    }
+
     private static class FixPlanRenderer extends DefaultListCellRenderer {
         @Override
         public Component getListCellRendererComponent(JList<?> jlist, Object value,
@@ -501,28 +731,37 @@ public class MultipolyGoneDialog extends ToggleDialog
             JLabel label = (JLabel) super.getListCellRendererComponent(
                 jlist, value, index, isSelected, cellHasFocus);
             if (value instanceof FixPlan fr) {
-                Relation r = fr.getRelation();
-                long id = r.getId();
-                String idStr = id < 0 ? "new" : String.valueOf(id);
-                String name = r.get("name");
+                String relLabel = formatRelationLabel(fr.getRelation());
                 String opDesc = getOperationDescription(fr);
-                String identity = formatIdentityTag(r);
-
-                StringBuilder sb = new StringBuilder();
-                sb.append("Id ").append(idStr).append(": ");
-                if (name != null && !name.isEmpty()) {
-                    sb.append(name);
-                    // Only show bracketed tag if it adds info beyond the name
-                    if (!name.equals(identity) && !identity.equals("name=" + name)) {
-                        sb.append(" [").append(identity).append("]");
-                    }
-                } else {
-                    sb.append(identity);
-                }
-                sb.append(" \u2192 ").append(opDesc);
-                label.setText(sb.toString());
+                label.setText(relLabel + " \u2192 " + opDesc);
             }
             return label;
+        }
+    }
+
+    private static class SkipResultTreeRenderer extends DefaultTreeCellRenderer {
+        @Override
+        public Component getTreeCellRendererComponent(JTree tree, Object value,
+                boolean sel, boolean expanded, boolean leaf, int row, boolean hasFocus) {
+            super.getTreeCellRendererComponent(tree, value, sel, expanded, leaf, row, hasFocus);
+            if (!(value instanceof DefaultMutableTreeNode node)) return this;
+            Object userObj = node.getUserObject();
+
+            if (userObj instanceof SkipReason reason) {
+                int count = node.getChildCount();
+                setText(reason.getMessage() + " (" + count + ")");
+                setToolTipText(reason.getHint());
+                setIcon(null);
+            } else if (userObj instanceof SkipResult sr) {
+                String relLabel = formatRelationLabel(sr.getRelation());
+                if (sr.getDetail() != null) {
+                    setText(relLabel + " \u2014 " + sr.getDetail());
+                } else {
+                    setText(relLabel);
+                }
+                setToolTipText(sr.getReason().getHint());
+            }
+            return this;
         }
     }
 }
