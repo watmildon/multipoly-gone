@@ -13,6 +13,7 @@ import org.junit.jupiter.api.extension.RegisterExtension;
 import org.openstreetmap.josm.data.UndoRedoHandler;
 import org.openstreetmap.josm.data.osm.DataSet;
 import org.openstreetmap.josm.data.osm.Relation;
+import org.openstreetmap.josm.data.osm.RelationMember;
 import org.openstreetmap.josm.data.osm.Way;
 import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixPlan;
 
@@ -917,6 +918,109 @@ class MultipolygonFixerTest {
             .collect(Collectors.toList());
         assertEquals(1, grassWaysWithFootwayNodes.size(),
             "Should have a new way with landuse=grass sharing the footway geometry");
+    }
+
+    // --- Test case 123: CONSOLIDATE_RINGS reuses existing matching way ---
+
+    @Test
+    void testCase123_reuseExistingWay_relationSurvives() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "123");
+        assertNotNull(plan, "Test case 123 should be fixable");
+
+        var relation = plan.getRelation();
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        // 1 outer + 1 non-touching inner → relation survives with consolidated inner
+        assertFalse(relation.isDeleted(),
+            "Relation should survive — 1 outer + 1 non-touching inner is a valid MP");
+    }
+
+    @Test
+    void testCase123_reuseExistingWay_existingWayBecomesInner() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "123");
+
+        // Find way -4237 (the pre-existing natural=water way that is NOT a relation member)
+        Way existingWaterWay = ds.getWays().stream()
+            .filter(w -> "123".equals(w.get("_test_case")))
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("Pre-existing natural=water way should exist"));
+
+        var relation = plan.getRelation();
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        assertFalse(existingWaterWay.isDeleted(),
+            "Pre-existing natural=water way should NOT be deleted — it was reused");
+        assertTrue(existingWaterWay.isClosed(),
+            "Pre-existing way should still be closed after reuse");
+        assertEquals("water", existingWaterWay.get("natural"),
+            "Pre-existing way should retain its natural=water tag");
+
+        // The existing way should now be an inner member of the relation
+        boolean isInnerMember = relation.getMembers().stream()
+            .anyMatch(m -> m.isWay() && m.getWay().equals(existingWaterWay)
+                && "inner".equals(m.getRole()));
+        assertTrue(isInnerMember,
+            "Existing water way should now be an inner member of the relation");
+    }
+
+    @Test
+    void testCase123_reuseExistingWay_sourceWaysDeleted() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "123");
+
+        // Collect the 2 open inner source ways before the fix
+        List<Way> openInners = plan.getRelation().getMembers().stream()
+            .filter(m -> m.isWay() && "inner".equals(m.getRole()) && !m.getWay().isClosed())
+            .map(RelationMember::getWay)
+            .collect(Collectors.toList());
+        assertEquals(2, openInners.size(), "Should have 2 open inner ways before fix");
+
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        for (Way src : openInners) {
+            assertTrue(src.isDeleted(),
+                "Open inner source way " + src.getUniqueId() + " should be deleted after consolidation");
+        }
+    }
+
+    @Test
+    void testCase123_reuseExistingWay_noDuplicateWayCreated() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "123");
+
+        // Find the existing water way before fix
+        Way existingWaterWay = ds.getWays().stream()
+            .filter(w -> "123".equals(w.get("_test_case")))
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("Pre-existing water way should exist"));
+
+        // Collect node IDs of existing water way to check for duplicates
+        var existingNodeIds = existingWaterWay.getNodes().stream()
+            .map(n -> n.getUniqueId())
+            .collect(Collectors.toList());
+
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        // No new non-deleted way should have been created with the same nodes
+        long matchingWayCount = ds.getWays().stream()
+            .filter(w -> !w.isDeleted() && w != existingWaterWay
+                && w.getNodesCount() == existingWaterWay.getNodesCount()
+                && w.isClosed())
+            .filter(w -> {
+                var nodeIds = w.getNodes().stream()
+                    .map(n -> n.getUniqueId())
+                    .collect(Collectors.toSet());
+                return nodeIds.containsAll(existingNodeIds.subList(0, existingNodeIds.size() - 1));
+            })
+            .count();
+        assertEquals(0L, matchingWayCount,
+            "No duplicate way should be created — the existing water way should be reused");
     }
 
     // --- Undo ---

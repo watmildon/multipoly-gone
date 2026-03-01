@@ -4852,4 +4852,50 @@
     <tag k='_test_notes' v='2 closed outers + 1 inner: outer A has highway=footway (no inners), outer B has inner' />
     <tag k='_test_expected' v='EXTRACT outer A (new way, footway preserved) + DISSOLVE remainder' />
   </relation>
+  <!-- Test case 123: CONSOLIDATE_RINGS reuses existing matching way in DataSet -->
+  <node id='-25365' action='modify' visible='true' lat='46.99262826914' lon='-119.63683018187' />
+  <node id='-25366' action='modify' visible='true' lat='47.01342490122' lon='-119.63231234531' />
+  <node id='-25367' action='modify' visible='true' lat='47.00011158767' lon='-119.60472127201' />
+  <node id='-25369' action='modify' visible='true' lat='46.98541902668' lon='-119.61787132276' />
+  <node id='-25371' action='modify' visible='true' lat='46.99703029311' lon='-119.64449428822' />
+  <node id='-25372' action='modify' visible='true' lat='47.02041025756' lon='-119.64046050557' />
+  <node id='-25373' action='modify' visible='true' lat='47.01777020951' lon='-119.59923524694' />
+  <node id='-25374' action='modify' visible='true' lat='46.9900418236' lon='-119.5898768712' />
+  <node id='-25375' action='modify' visible='true' lat='46.97743825793' lon='-119.61706456623' />
+  <way id='-4154' action='modify' visible='true'>
+    <nd ref='-25365' />
+    <nd ref='-25366' />
+    <nd ref='-25367' />
+  </way>
+  <way id='-4158' action='modify' visible='true'>
+    <nd ref='-25367' />
+    <nd ref='-25369' />
+    <nd ref='-25365' />
+  </way>
+  <way id='-4160' action='modify' visible='true'>
+    <nd ref='-25371' />
+    <nd ref='-25372' />
+    <nd ref='-25373' />
+    <nd ref='-25374' />
+    <nd ref='-25375' />
+    <nd ref='-25371' />
+  </way>
+  <way id='-4237' action='modify' visible='true'>
+    <nd ref='-25365' />
+    <nd ref='-25366' />
+    <nd ref='-25367' />
+    <nd ref='-25369' />
+    <nd ref='-25365' />
+    <tag k='natural' v='water' />
+    <tag k='_test_case' v='123' />
+  </way>
+  <relation id='-89' action='modify' visible='true'>
+    <member type='way' ref='-4154' role='inner' />
+    <member type='way' ref='-4158' role='inner' />
+    <member type='way' ref='-4160' role='outer' />
+    <tag k='type' v='multipolygon' />
+    <tag k='_test_id' v='123' />
+    <tag k='_test_notes' v='2 open inners chain to same geometry as non-member way -4237 (natural=water)' />
+    <tag k='_test_expected' v='CONSOLIDATE: reuse -4237 as inner; DISSOLVE: relation deleted, outer tagged' />
+  </relation>
 </osm>

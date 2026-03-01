@@ -197,40 +197,49 @@ public class MultipolygonFixer {
                                 memberReplacements.put(src, existing);
                             }
                         } else {
-                            // Check if any source way has significant tags (e.g., highway=residential).
-                            // If so, reuse an untagged source way instead of creating a new one,
-                            // so that the tagged way remains untouched.
-                            boolean anyTagged = false;
-                            Way reusableWay = null;
-                            for (Way src : ring.getSourceWays()) {
-                                if (hasSignificantTags(src, insignificantTags)) {
-                                    anyTagged = true;
-                                } else if (reusableWay == null) {
-                                    reusableWay = src;
-                                }
-                            }
+                            // Check if an existing closed way in the DataSet already
+                            // has this ring's geometry — reuse it instead of creating a duplicate
+                            Way existingMatch = findMatchingWayInDataSet(ring.getNodes(), sourceSet);
 
                             Way targetWay;
-                            if (anyTagged && reusableWay != null) {
-                                // Reuse the untagged way by changing its nodes to form the closed ring
-                                Way modified = new Way(reusableWay);
-                                modified.setNodes(ring.getNodes());
-                                commands.add(new ChangeCommand(reusableWay, modified));
-                                targetWay = reusableWay;
-
-                                // Only add other untagged source ways to cleanup.
-                                // Tagged source ways must NOT be touched.
+                            if (existingMatch != null) {
+                                targetWay = existingMatch;
+                                waysToCleanup.addAll(ring.getSourceWays());
+                            } else {
+                                // Check if any source way has significant tags (e.g., highway=residential).
+                                // If so, reuse an untagged source way instead of creating a new one,
+                                // so that the tagged way remains untouched.
+                                boolean anyTagged = false;
+                                Way reusableWay = null;
                                 for (Way src : ring.getSourceWays()) {
-                                    if (src != reusableWay && !hasSignificantTags(src, insignificantTags)) {
-                                        waysToCleanup.add(src);
+                                    if (hasSignificantTags(src, insignificantTags)) {
+                                        anyTagged = true;
+                                    } else if (reusableWay == null) {
+                                        reusableWay = src;
                                     }
                                 }
-                            } else {
-                                // Default: create a new way (either no tagged ways, or all are tagged)
-                                targetWay = new Way();
-                                targetWay.setNodes(ring.getNodes());
-                                commands.add(new AddCommand(ds, targetWay));
-                                waysToCleanup.addAll(ring.getSourceWays());
+
+                                if (anyTagged && reusableWay != null) {
+                                    // Reuse the untagged way by changing its nodes to form the closed ring
+                                    Way modified = new Way(reusableWay);
+                                    modified.setNodes(ring.getNodes());
+                                    commands.add(new ChangeCommand(reusableWay, modified));
+                                    targetWay = reusableWay;
+
+                                    // Only add other untagged source ways to cleanup.
+                                    // Tagged source ways must NOT be touched.
+                                    for (Way src : ring.getSourceWays()) {
+                                        if (src != reusableWay && !hasSignificantTags(src, insignificantTags)) {
+                                            waysToCleanup.add(src);
+                                        }
+                                    }
+                                } else {
+                                    // Default: create a new way (either no tagged ways, or all are tagged)
+                                    targetWay = new Way();
+                                    targetWay.setNodes(ring.getNodes());
+                                    commands.add(new AddCommand(ds, targetWay));
+                                    waysToCleanup.addAll(ring.getSourceWays());
+                                }
                             }
 
                             ringToWay.put(ring, targetWay);
@@ -413,32 +422,40 @@ public class MultipolygonFixer {
                             switch (subOp.getType()) {
                                 case CONSOLIDATE_RINGS -> {
                                     for (WayChainBuilder.Ring ring : subOp.getRings()) {
-                                        boolean anyTagged = false;
-                                        Way reusableWay = null;
-                                        for (Way src : ring.getSourceWays()) {
-                                            if (hasSignificantTags(src, insignificantTags)) {
-                                                anyTagged = true;
-                                            } else if (reusableWay == null) {
-                                                reusableWay = src;
-                                            }
-                                        }
+                                        Set<Way> sourceSet = new HashSet<>(ring.getSourceWays());
+                                        Way existingMatch = findMatchingWayInDataSet(ring.getNodes(), sourceSet);
 
                                         Way targetWay;
-                                        if (anyTagged && reusableWay != null) {
-                                            Way modified = new Way(reusableWay);
-                                            modified.setNodes(ring.getNodes());
-                                            commands.add(new ChangeCommand(reusableWay, modified));
-                                            targetWay = reusableWay;
+                                        if (existingMatch != null) {
+                                            targetWay = existingMatch;
+                                            waysToCleanup.addAll(ring.getSourceWays());
+                                        } else {
+                                            boolean anyTagged = false;
+                                            Way reusableWay = null;
                                             for (Way src : ring.getSourceWays()) {
-                                                if (src != reusableWay && !hasSignificantTags(src, insignificantTags)) {
-                                                    waysToCleanup.add(src);
+                                                if (hasSignificantTags(src, insignificantTags)) {
+                                                    anyTagged = true;
+                                                } else if (reusableWay == null) {
+                                                    reusableWay = src;
                                                 }
                                             }
-                                        } else {
-                                            targetWay = new Way();
-                                            targetWay.setNodes(ring.getNodes());
-                                            commands.add(new AddCommand(ds, targetWay));
-                                            waysToCleanup.addAll(ring.getSourceWays());
+
+                                            if (anyTagged && reusableWay != null) {
+                                                Way modified = new Way(reusableWay);
+                                                modified.setNodes(ring.getNodes());
+                                                commands.add(new ChangeCommand(reusableWay, modified));
+                                                targetWay = reusableWay;
+                                                for (Way src : ring.getSourceWays()) {
+                                                    if (src != reusableWay && !hasSignificantTags(src, insignificantTags)) {
+                                                        waysToCleanup.add(src);
+                                                    }
+                                                }
+                                            } else {
+                                                targetWay = new Way();
+                                                targetWay.setNodes(ring.getNodes());
+                                                commands.add(new AddCommand(ds, targetWay));
+                                                waysToCleanup.addAll(ring.getSourceWays());
+                                            }
                                         }
 
                                         compRingToWay.put(ring, targetWay);
@@ -768,5 +785,60 @@ public class MultipolygonFixer {
         }
 
         return tags;
+    }
+
+    /**
+     * Searches the DataSet for a closed way whose node sequence represents
+     * the same cyclic ring as {@code ringNodes}, considering rotations and
+     * reversals. Candidate ways that are source ways of this ring are excluded.
+     *
+     * @param ringNodes  the closed node list [A,B,C,...,A] (first == last)
+     * @param sourceWays ways being consumed to form this ring (excluded from search)
+     * @return matching Way if found, or null
+     */
+    static Way findMatchingWayInDataSet(List<Node> ringNodes, Set<Way> sourceWays) {
+        int ringSize = ringNodes.size();
+        Node anchor = ringNodes.get(0);
+        for (OsmPrimitive referrer : anchor.getReferrers()) {
+            if (!(referrer instanceof Way candidate)) continue;
+            if (candidate.isDeleted() || candidate.isIncomplete()) continue;
+            if (sourceWays.contains(candidate)) continue;
+            if (!candidate.isClosed()) continue;
+            if (candidate.getNodesCount() != ringSize) continue;
+            if (ringsMatch(ringNodes, candidate.getNodes())) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Returns true if {@code candidateNodes} represents the same cyclic ring
+     * as {@code ringNodes} (same nodes in same cyclic order, forward or reverse).
+     * Both lists must have the same length and represent closed ways (first == last).
+     */
+    static boolean ringsMatch(List<Node> ringNodes, List<Node> candidateNodes) {
+        int n = ringNodes.size() - 1; // unique node count (exclude closing duplicate)
+        Node startNode = ringNodes.get(0);
+        for (int startIdx = 0; startIdx < n; startIdx++) {
+            if (!candidateNodes.get(startIdx).equals(startNode)) continue;
+            // Try forward direction
+            boolean forward = true;
+            for (int i = 0; i < n && forward; i++) {
+                if (!candidateNodes.get((startIdx + i) % n).equals(ringNodes.get(i))) {
+                    forward = false;
+                }
+            }
+            if (forward) return true;
+            // Try reverse direction
+            boolean reverse = true;
+            for (int i = 0; i < n && reverse; i++) {
+                if (!candidateNodes.get((startIdx - i + n) % n).equals(ringNodes.get(i))) {
+                    reverse = false;
+                }
+            }
+            if (reverse) return true;
+        }
+        return false;
     }
 }
