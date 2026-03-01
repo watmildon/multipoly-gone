@@ -49,6 +49,8 @@ public class MultipolygonAnalyzer {
             "Remove node/relation members or reclassify them"),
         DELETED_OR_INCOMPLETE_WAY("Contains deleted, incomplete, or degenerate ways",
             "Fix or remove the problematic way"),
+        UNEXPECTED_WAY_ROLE("Way member has unexpected role",
+            "Way members should have role 'outer', 'inner', or empty"),
         NO_OUTER_WAYS("No outer ways",
             "Add outer members to the relation"),
         IDENTITY_PROTECTED_MULTI_COMPONENT("Identity-protected relation with disconnected components",
@@ -762,7 +764,12 @@ public class MultipolygonAnalyzer {
                 return AnalyzeOutcome.skip(relation, SkipReason.DELETED_OR_INCOMPLETE_WAY,
                     "way " + way.getUniqueId());
             }
-            if ("inner".equals(member.getRole())) {
+            String role = member.getRole();
+            if (!"outer".equals(role) && !"inner".equals(role) && !"".equals(role)) {
+                return AnalyzeOutcome.skip(relation, SkipReason.UNEXPECTED_WAY_ROLE,
+                    "way " + way.getUniqueId() + " role=" + role);
+            }
+            if ("inner".equals(role)) {
                 innerWays.add(way);
                 innerWaySet.add(way);
             } else {
