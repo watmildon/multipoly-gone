@@ -3,6 +3,7 @@ package org.openstreetmap.josm.plugins.multipolygone;
 import static org.openstreetmap.josm.tools.I18n.tr;
 
 import java.awt.Component;
+import java.awt.Dimension;
 import java.awt.event.ActionEvent;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
@@ -820,6 +821,8 @@ public class MultipolyGoneDialog extends ToggleDialog
         return sb.toString();
     }
 
+    private static final Dimension ICON_SIZE = new Dimension(16, 16);
+
     private static class FixPlanRenderer extends DefaultListCellRenderer {
         @Override
         public Component getListCellRendererComponent(JList<?> jlist, Object value,
@@ -830,6 +833,7 @@ public class MultipolyGoneDialog extends ToggleDialog
                 String relLabel = formatRelationLabel(fr.getRelation());
                 String opDesc = getOperationDescription(fr);
                 label.setText(relLabel + " \u2192 " + opDesc);
+                label.setIcon(ImageProvider.getPadded(fr.getRelation(), ICON_SIZE));
             }
             return label;
         }
@@ -856,6 +860,7 @@ public class MultipolyGoneDialog extends ToggleDialog
                     setText(relLabel);
                 }
                 setToolTipText(sr.getReason().getHint());
+                setIcon(ImageProvider.getPadded(sr.getRelation(), ICON_SIZE));
             }
             return this;
         }
