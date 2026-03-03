@@ -15,6 +15,7 @@ import java.util.Set;
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
+import javax.swing.JComboBox;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
@@ -39,6 +40,8 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
 
     public static final String PREF_IDENTITY_TAGS = "multipolygone.identityTags";
 
+    public static final String PREF_DOWNLOAD_BEFORE_FIX = "multipolygone.downloadBeforeFix";
+
     public static final String PREF_PLAN_ONLY = "multipolygone.planOnly";
 
     public static final String PREF_DEBUG_MODE = "multipolygone.debugMode";
@@ -47,6 +50,7 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
     private DefaultTableModel identityTagsTableModel;
     private DefaultTableModel insignificantTagsTableModel;
     private JCheckBox useDiscardableKeysCheckBox;
+    private JComboBox<String> downloadBeforeFixCombo;
     private JCheckBox planOnlyCheckBox;
     private JCheckBox debugModeCheckBox;
 
@@ -254,7 +258,41 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
         outerGbc.gridy = 1;
         outerPanel.add(cleanupPanel, outerGbc);
 
-        // === Section 3: Developer ===
+        // === Section 3: Data Download ===
+        JPanel downloadPanel = new JPanel(new GridBagLayout());
+        downloadPanel.setBorder(BorderFactory.createTitledBorder(tr("Data Download")));
+        gbc = new GridBagConstraints();
+        gbc.insets = new Insets(3, 5, 3, 5);
+        gbc.anchor = GridBagConstraints.WEST;
+        row = 0;
+
+        gbc.gridx = 0;
+        gbc.gridy = row;
+        gbc.gridwidth = 1;
+        gbc.weightx = 0;
+        JLabel downloadLabel = new JLabel(tr("Before fixing:"));
+        downloadLabel.setToolTipText(
+            tr("Controls whether the plugin downloads referrers for cleanup-candidate ways before simplifying. "
+               + "Downloading ensures ways shared with other relations are not accidentally deleted."));
+        downloadPanel.add(downloadLabel, gbc);
+
+        gbc.gridx = 1;
+        gbc.gridwidth = GridBagConstraints.REMAINDER;
+        gbc.weightx = 1.0;
+        gbc.fill = GridBagConstraints.NONE;
+        String[] downloadOptions = {tr("Always prompt"), tr("Always download"), tr("Never download")};
+        downloadBeforeFixCombo = new JComboBox<>(downloadOptions);
+        String currentDownloadPref = Config.getPref().get(PREF_DOWNLOAD_BEFORE_FIX, "prompt");
+        downloadBeforeFixCombo.setSelectedIndex(
+            "always".equals(currentDownloadPref) ? 1 : "never".equals(currentDownloadPref) ? 2 : 0);
+        downloadPanel.add(downloadBeforeFixCombo, gbc);
+        gbc.gridwidth = 1;
+        gbc.weightx = 0;
+
+        outerGbc.gridy = 2;
+        outerPanel.add(downloadPanel, outerGbc);
+
+        // === Section 4: Developer ===
         JPanel devPanel = new JPanel(new GridBagLayout());
         devPanel.setBorder(BorderFactory.createTitledBorder(tr("Developer")));
         gbc = new GridBagConstraints();
@@ -276,7 +314,7 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
             Config.getPref().getBoolean(PREF_DEBUG_MODE, false));
         addCheckBox(devPanel, gbc, row++, debugModeCheckBox);
 
-        outerGbc.gridy = 2;
+        outerGbc.gridy = 3;
         outerPanel.add(devPanel, outerGbc);
 
         JPanel wrapper = new JPanel(new BorderLayout());
@@ -333,6 +371,9 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
         }
         Config.getPref().put(PREF_INSIGNIFICANT_TAGS_MP, mpTags.toString());
         Config.getPref().put(PREF_INSIGNIFICANT_TAGS_BOUNDARY, boundTags.toString());
+
+        String[] downloadValues = {"prompt", "always", "never"};
+        Config.getPref().put(PREF_DOWNLOAD_BEFORE_FIX, downloadValues[downloadBeforeFixCombo.getSelectedIndex()]);
 
         Config.getPref().putBoolean(PREF_PLAN_ONLY, planOnlyCheckBox.isSelected());
         Config.getPref().putBoolean(PREF_DEBUG_MODE, debugModeCheckBox.isSelected());

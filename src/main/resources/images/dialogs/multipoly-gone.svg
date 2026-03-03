@@ -1,8 +1,24 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
-  <!-- Green polygon icon for multipoly-gone -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="24" height="24">
+  <!-- Multipoly-gone dialog icon — scaled from root design -->
   <!-- Colors inlined for JOSM svgSalamander compatibility -->
-  <!-- Filled polygon shape -->
-  <polygon fill="#4CAF50" stroke="#2E7D32" stroke-width="1.5" stroke-linejoin="round"
-    points="12,2 21,8 18,19 6,19 3,8"/>
+  <!-- Line widths and colors boosted for visibility at 24x24 -->
+  <path d="m48 16 176 48 16 96-32 80-144-16-48-48z" fill="#d9d9d9"/>
+  <g fill="none" stroke-linecap="round" stroke-width="14">
+    <path d="m48 16-32 160 48 48" stroke="#aa44dd"/>
+    <path d="m64 224 144 16 32-80" stroke="#4444ff"/>
+    <path d="m224 64 16 96" stroke="#cc3333"/>
+  </g>
+  <path d="m48 16 176 48" fill="none" stroke="#33cc33" stroke-linecap="round" stroke-width="14"/>
+  <path d="m16 240 224-224" fill="none" stroke="#ff0000" stroke-width="28"/>
+  <g>
+    <circle cx="16" cy="176" r="12" fill="#333"/>
+    <circle cx="64" cy="224" r="12" fill="#333"/>
+    <circle cx="208" cy="240" r="12" fill="#333"/>
+  </g>
+  <g fill="#333">
+    <circle cx="240" cy="160" r="12"/>
+    <circle cx="224.06" cy="63.938" r="12"/>
+    <circle cx="48.062" cy="15.937" r="12"/>
+  </g>
 </svg>

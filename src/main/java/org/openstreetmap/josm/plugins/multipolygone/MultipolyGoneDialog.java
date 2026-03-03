@@ -24,6 +24,7 @@ import javax.swing.DefaultListCellRenderer;
 import javax.swing.DefaultListModel;
 import javax.swing.JLabel;
 import javax.swing.JList;
+import javax.swing.JOptionPane;
 import javax.swing.JScrollPane;
 import javax.swing.JTabbedPane;
 import javax.swing.JTree;
@@ -294,6 +295,12 @@ public class MultipolyGoneDialog extends ToggleDialog
             logPlans(selected);
             return;
         }
+        if (shouldDownloadBeforeFix(selected, () -> {
+            MultipolygonFixer.fixRelations(selected);
+            refresh();
+        })) {
+            return;
+        }
         MultipolygonFixer.fixRelations(selected);
         refresh();
     }
@@ -317,8 +324,54 @@ public class MultipolyGoneDialog extends ToggleDialog
             return;
         }
 
+        if (shouldDownloadBeforeFix(all, () -> {
+            MultipolygonFixer.fixRelationsUntilConvergence(all);
+            refresh();
+        })) {
+            return;
+        }
+
         MultipolygonFixer.fixRelationsUntilConvergence(all);
         refresh();
+    }
+
+    /**
+     * Finds source ways from CONSOLIDATE_RINGS and DECOMPOSE ops that are candidates
+     * for deletion during cleanup but don't have referrers downloaded yet.
+     * Only ways without significant tags need referrer data (tagged ways are kept regardless).
+     */
+    private Set<Way> findWaysNeedingReferrers(List<FixPlan> plans) {
+        Set<String> mpInsignificantTags = MultipolygonFixer.getInsignificantTagsForMultipolygon();
+        Set<String> boundaryInsignificantTags = MultipolygonFixer.getInsignificantTagsForBoundary();
+
+        Set<Way> result = new java.util.LinkedHashSet<>();
+        for (FixPlan plan : plans) {
+            Set<String> insignificantTags = plan.isBoundary()
+                ? boundaryInsignificantTags : mpInsignificantTags;
+            for (FixOp op : plan.getOperations()) {
+                if (op.getType() == FixOpType.CONSOLIDATE_RINGS && op.getRings() != null) {
+                    for (WayChainBuilder.Ring ring : op.getRings()) {
+                        for (Way way : ring.getSourceWays()) {
+                            if (!way.isReferrersDownloaded()
+                                    && !MultipolygonFixer.hasSignificantTags(way, insignificantTags)) {
+                                result.add(way);
+                            }
+                        }
+                    }
+                }
+                if (op.getType() == FixOpType.DECOMPOSE_SELF_INTERSECTIONS && op.getDecomposedRings() != null) {
+                    for (var decomp : op.getDecomposedRings()) {
+                        for (Way way : decomp.getOriginalRing().getSourceWays()) {
+                            if (!way.isReferrersDownloaded()
+                                    && !MultipolygonFixer.hasSignificantTags(way, insignificantTags)) {
+                                result.add(way);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return result;
     }
 
     private void downloadReferrersForSelected() {
@@ -344,39 +397,7 @@ public class MultipolyGoneDialog extends ToggleDialog
             return;
         }
 
-        Set<String> mpInsignificantTags = MultipolygonFixer.getInsignificantTagsForMultipolygon();
-        Set<String> boundaryInsignificantTags = MultipolygonFixer.getInsignificantTagsForBoundary();
-
-        // Collect source ways from CONSOLIDATE_RINGS and DECOMPOSE ops —
-        // these are the ways that would be candidates for deletion during cleanup.
-        // Only ways without significant tags need referrer data (tagged ways are kept regardless).
-        Set<Way> waysNeedingReferrers = new java.util.LinkedHashSet<>();
-        for (FixPlan plan : plans) {
-            Set<String> insignificantTags = plan.isBoundary()
-                ? boundaryInsignificantTags : mpInsignificantTags;
-            for (FixOp op : plan.getOperations()) {
-                if (op.getType() == FixOpType.CONSOLIDATE_RINGS && op.getRings() != null) {
-                    for (WayChainBuilder.Ring ring : op.getRings()) {
-                        for (Way way : ring.getSourceWays()) {
-                            if (!way.isReferrersDownloaded()
-                                    && !MultipolygonFixer.hasSignificantTags(way, insignificantTags)) {
-                                waysNeedingReferrers.add(way);
-                            }
-                        }
-                    }
-                }
-                if (op.getType() == FixOpType.DECOMPOSE_SELF_INTERSECTIONS && op.getDecomposedRings() != null) {
-                    for (var decomp : op.getDecomposedRings()) {
-                        for (Way way : decomp.getOriginalRing().getSourceWays()) {
-                            if (!way.isReferrersDownloaded()
-                                    && !MultipolygonFixer.hasSignificantTags(way, insignificantTags)) {
-                                waysNeedingReferrers.add(way);
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        Set<Way> waysNeedingReferrers = findWaysNeedingReferrers(plans);
 
         if (waysNeedingReferrers.isEmpty()) {
             Logging.info("Multipoly-Gone: all cleanup-candidate ways already have referrers downloaded");
@@ -385,6 +406,70 @@ public class MultipolyGoneDialog extends ToggleDialog
 
         Logging.info("Multipoly-Gone: downloading referrers for {0} way(s)", waysNeedingReferrers.size());
         DownloadReferrersAction.downloadReferrers(editLayer, new ArrayList<>(waysNeedingReferrers));
+    }
+
+    /**
+     * Checks the download-before-fix preference and prompts or downloads as needed.
+     * Returns true if the caller should NOT proceed with the fix (download was initiated
+     * asynchronously, or user cancelled). Returns false if the caller should proceed
+     * immediately (no download needed, user chose to skip, or preference is "never").
+     */
+    private boolean shouldDownloadBeforeFix(List<FixPlan> plans, Runnable fixAction) {
+        Set<Way> waysNeeding = findWaysNeedingReferrers(plans);
+        if (waysNeeding.isEmpty()) {
+            return false;
+        }
+
+        String pref = Config.getPref().get(
+            MultipolyGonePreferences.PREF_DOWNLOAD_BEFORE_FIX, "prompt");
+
+        if ("never".equals(pref)) {
+            return false;
+        }
+
+        if ("always".equals(pref)) {
+            downloadThenFix(waysNeeding, fixAction);
+            return true;
+        }
+
+        // "prompt" — show dialog
+        int choice = showDownloadPrompt(waysNeeding.size());
+        if (choice == 0) { // Download and Fix
+            downloadThenFix(waysNeeding, fixAction);
+            return true;
+        }
+        if (choice == 1) { // Fix Without Download
+            return false;
+        }
+        return true; // Cancel or closed — don't proceed
+    }
+
+    private int showDownloadPrompt(int wayCount) {
+        String message = tr("{0} way(s) do not have referrers downloaded.\n"
+            + "Downloading referrers ensures that ways shared with other\n"
+            + "relations are not accidentally deleted.", wayCount);
+        String[] options = {
+            tr("Download and Fix"),
+            tr("Fix Without Download"),
+            tr("Cancel")
+        };
+        return JOptionPane.showOptionDialog(
+            MainApplication.getMainFrame(),
+            message,
+            tr("Multipoly-Gone"),
+            JOptionPane.DEFAULT_OPTION,
+            JOptionPane.WARNING_MESSAGE,
+            null, options, options[0]);
+    }
+
+    private void downloadThenFix(Set<Way> ways, Runnable fixAction) {
+        OsmDataLayer editLayer = MainApplication.getLayerManager().getEditLayer();
+        if (editLayer == null) {
+            return;
+        }
+        DownloadReferrersAction.downloadReferrers(editLayer, new ArrayList<>(ways));
+        // Chain the fix after download completes, then run on EDT
+        MainApplication.worker.submit(() -> SwingUtilities.invokeLater(fixAction));
     }
 
     private void downloadForSkippedRelations(OsmDataLayer editLayer) {
