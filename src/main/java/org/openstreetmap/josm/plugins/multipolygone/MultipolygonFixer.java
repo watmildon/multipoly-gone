@@ -118,6 +118,7 @@ public class MultipolygonFixer {
 
         List<Command> allCommands = new ArrayList<>();
         Set<Way> waysToCleanup = new HashSet<>();
+        Set<Way> waysRetainedByPlans = new HashSet<>();
         Set<Node> nodesToCleanup = new HashSet<>();
         // Track {source-way-set} → consolidated-way across all plans so that when
         // multiple relations reference the exact same set of ways, consolidation is shared
@@ -131,8 +132,8 @@ public class MultipolygonFixer {
 
             Set<String> insignificantTags = plan.isBoundary()
                 ? boundaryInsignificantTags : mpInsignificantTags;
-            allCommands.addAll(buildCommandsForPlan(plan, waysToCleanup, nodesToCleanup,
-                globalConsolidations, insignificantTags));
+            allCommands.addAll(buildCommandsForPlan(plan, waysToCleanup, waysRetainedByPlans,
+                nodesToCleanup, globalConsolidations, insignificantTags));
         }
 
         // Cleanup pass: delete unused source ways first, then unused nodes.
@@ -147,6 +148,7 @@ public class MultipolygonFixer {
         Set<Way> waysAlreadyDeleted = new HashSet<>();
         for (Way way : waysToCleanup) {
             if (!waysAlreadyDeleted.contains(way)
+                    && !waysRetainedByPlans.contains(way)
                     && isUnusedAfterBatch(way, processedRelations, unionInsignificantTags)) {
                 allCommands.add(new DeleteCommand(way));
                 waysAlreadyDeleted.add(way);
@@ -172,8 +174,8 @@ public class MultipolygonFixer {
     }
 
     private static List<Command> buildCommandsForPlan(FixPlan plan, Set<Way> waysToCleanup,
-            Set<Node> nodesToCleanup, Map<Set<Way>, Way> globalConsolidations,
-            Set<String> insignificantTags) {
+            Set<Way> waysRetainedByPlans, Set<Node> nodesToCleanup,
+            Map<Set<Way>, Way> globalConsolidations, Set<String> insignificantTags) {
         List<Command> commands = new ArrayList<>();
         Relation relation = plan.getRelation();
         DataSet ds = relation.getDataSet();
@@ -190,6 +192,7 @@ public class MultipolygonFixer {
         // Extra members to add (e.g., additional decomposed sub-ring ways for boundaries)
         List<RelationMember> extraMembers = new ArrayList<>();
         boolean relationDeleted = false;
+        boolean splitHandled = false;
 
         for (FixOp op : plan.getOperations()) {
             switch (op.getType()) {
@@ -216,12 +219,14 @@ public class MultipolygonFixer {
                                 // Check if any source way has significant tags (e.g., highway=residential).
                                 // If so, reuse an untagged source way instead of creating a new one,
                                 // so that the tagged way remains untouched.
+                                // The reusable way must NOT be shared with another relation,
+                                // because ChangeCommand would alter its geometry and break the other relation.
                                 boolean anyTagged = false;
                                 Way reusableWay = null;
                                 for (Way src : ring.getSourceWays()) {
                                     if (hasSignificantTags(src, insignificantTags)) {
                                         anyTagged = true;
-                                    } else if (reusableWay == null) {
+                                    } else if (reusableWay == null && !isSharedWithOtherRelation(src, relation)) {
                                         reusableWay = src;
                                     }
                                 }
@@ -442,7 +447,7 @@ public class MultipolygonFixer {
                                             for (Way src : ring.getSourceWays()) {
                                                 if (hasSignificantTags(src, insignificantTags)) {
                                                     anyTagged = true;
-                                                } else if (reusableWay == null) {
+                                                } else if (reusableWay == null && !isSharedWithOtherRelation(src, relation)) {
                                                     reusableWay = src;
                                                 }
                                             }
@@ -595,6 +600,7 @@ public class MultipolygonFixer {
                             compWaySet.addAll(comp.getInnerWays());
                             List<RelationMember> subMembers = new ArrayList<>();
                             Set<Way> alreadyReplacedInComp = new HashSet<>();
+                            Set<Way> alreadyAddedInComp = new HashSet<>();
 
                             for (RelationMember member : relation.getMembers()) {
                                 if (!member.isWay()) continue;
@@ -607,7 +613,7 @@ public class MultipolygonFixer {
                                         subMembers.add(new RelationMember(member.getRole(), replacement));
                                         alreadyReplacedInComp.add(replacement);
                                     }
-                                } else {
+                                } else if (alreadyAddedInComp.add(way)) {
                                     subMembers.add(member);
                                 }
                             }
@@ -639,6 +645,12 @@ public class MultipolygonFixer {
                             subRel.setKeys(relTags);
                             subRel.setMembers(subRelationMemberLists.get(i));
                             commands.add(new AddCommand(ds, subRel));
+                            // Record retained ways in sub-relations
+                            for (RelationMember m : subRelationMemberLists.get(i)) {
+                                if (m.isWay()) {
+                                    waysRetainedByPlans.add(m.getWay());
+                                }
+                            }
                         }
 
                         // Un-mark the largest component's ways from removal —
@@ -667,6 +679,7 @@ public class MultipolygonFixer {
                     Relation modified = new Relation(relation);
                     List<RelationMember> splitMembers = new ArrayList<>();
                     Set<Way> alreadyReplacedInSplit = new HashSet<>();
+                    Set<Way> alreadyAddedInSplit = new HashSet<>();
 
                     for (RelationMember member : relation.getMembers()) {
                         if (!member.isWay()) {
@@ -688,6 +701,9 @@ public class MultipolygonFixer {
                             continue;
                         }
 
+                        if (!alreadyAddedInSplit.add(way)) {
+                            continue;
+                        }
                         splitMembers.add(member);
                     }
 
@@ -697,7 +713,14 @@ public class MultipolygonFixer {
                     } else {
                         modified.setMembers(splitMembers);
                         commands.add(new ChangeCommand(relation, modified));
+                        // Record retained ways in the surviving original relation
+                        for (RelationMember m : splitMembers) {
+                            if (m.isWay()) {
+                                waysRetainedByPlans.add(m.getWay());
+                            }
+                        }
                     }
+                    splitHandled = true;
                 }
             }
         }
@@ -707,6 +730,7 @@ public class MultipolygonFixer {
             Relation modified = new Relation(relation);
             List<RelationMember> newMembers = new ArrayList<>();
             Set<Way> alreadyReplaced = new HashSet<>();
+            Set<Way> alreadyAdded = new HashSet<>();
 
             for (RelationMember member : relation.getMembers()) {
                 if (!member.isWay()) {
@@ -732,12 +756,33 @@ public class MultipolygonFixer {
                     continue;
                 }
 
+                // Deduplicate: skip if this way was already added (handles input relations
+                // with the same way listed as a member multiple times)
+                if (!alreadyAdded.add(way)) {
+                    continue;
+                }
+
                 newMembers.add(member);
             }
             // Add any extra members (e.g., additional decomposed sub-ring ways)
             newMembers.addAll(extraMembers);
             modified.setMembers(newMembers);
             commands.add(new ChangeCommand(relation, modified));
+
+            // Record retained way members so the cross-plan cleanup pass
+            // does not delete ways still needed by this surviving relation
+            for (RelationMember m : newMembers) {
+                if (m.isWay()) {
+                    waysRetainedByPlans.add(m.getWay());
+                }
+            }
+        } else if (!relationDeleted && !splitHandled) {
+            // Relation survives without member changes — all current members are retained
+            for (RelationMember m : relation.getMembers()) {
+                if (m.isWay()) {
+                    waysRetainedByPlans.add(m.getWay());
+                }
+            }
         }
 
         return commands;
@@ -765,6 +810,19 @@ public class MultipolygonFixer {
         }
 
         return true;
+    }
+
+    /**
+     * Returns true if the given way is referenced by any relation other than {@code currentRelation}.
+     * A shared way must not be reused (geometry-changed) because other relations depend on its nodes.
+     */
+    private static boolean isSharedWithOtherRelation(Way way, Relation currentRelation) {
+        for (OsmPrimitive referrer : way.getReferrers()) {
+            if (referrer instanceof Relation r && r != currentRelation) {
+                return true;
+            }
+        }
+        return false;
     }
 
     static boolean hasSignificantTags(Way way, Set<String> insignificantTags) {

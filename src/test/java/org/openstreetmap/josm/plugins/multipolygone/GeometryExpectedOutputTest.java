@@ -2,7 +2,6 @@ package org.openstreetmap.josm.plugins.multipolygone;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
@@ -15,8 +14,8 @@ import org.junit.jupiter.api.extension.RegisterExtension;
 import org.openstreetmap.josm.data.UndoRedoHandler;
 import org.openstreetmap.josm.data.osm.DataSet;
 import org.openstreetmap.josm.data.osm.Node;
-import org.openstreetmap.josm.data.osm.Relation;
 import org.openstreetmap.josm.data.osm.Way;
+import org.openstreetmap.josm.plugins.multipolygone.GeometryCanonicalizer.Coord;
 import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixPlan;
 
 /**
@@ -33,9 +32,6 @@ class GeometryExpectedOutputTest {
 
     @RegisterExtension
     static JosmTestSetup josm = new JosmTestSetup();
-
-    /** Tolerance for coordinate comparison (~1 meter at mid-latitudes). */
-    private static final double COORD_TOL = 1e-5;
 
     /** Expected output loaded from testdata-geometry-actual.osm */
     private DataSet expected;
@@ -58,68 +54,25 @@ class GeometryExpectedOutputTest {
     }
 
     // ===================================================================
-    // Geometry matching helpers
+    // Geometry matching helpers (delegating to GeometryCanonicalizer)
     // ===================================================================
 
-    /**
-     * A coordinate pair with tolerance-based equality.
-     */
-    private static class Coord {
-        final double lat;
-        final double lon;
-
-        Coord(double lat, double lon) {
-            this.lat = lat;
-            this.lon = lon;
-        }
-
-        boolean matches(Coord other) {
-            return Math.abs(lat - other.lat) < COORD_TOL
-                && Math.abs(lon - other.lon) < COORD_TOL;
-        }
-
-        @Override
-        public String toString() {
-            return String.format("(%.7f, %.7f)", lat, lon);
-        }
-    }
-
-    /**
-     * Returns expected ways for a given test ID from the expected output dataset.
-     */
     private List<Way> findExpectedWays(String testId) {
         return expected.getWays().stream()
             .filter(w -> testId.equals(w.get("_test_id")))
             .collect(Collectors.toList());
     }
 
-    /**
-     * Extracts all unique (lat, lon) coordinate pairs from the given ways.
-     */
     private Set<String> getExpectedNodeCoordKeys(List<Way> expectedWays) {
         Set<String> keys = new HashSet<>();
         for (Way w : expectedWays) {
             for (Node n : w.getNodes()) {
-                keys.add(coordKey(n.lat(), n.lon()));
+                keys.add(String.format("%.6f,%.6f", n.lat(), n.lon()));
             }
         }
         return keys;
     }
 
-    private String coordKey(double lat, double lon) {
-        // Round to ~1cm precision for set-based lookup
-        return String.format("%.6f,%.6f", lat, lon);
-    }
-
-    /**
-     * Finds actual output ways after running the fixer, by matching their
-     * node coordinates against expected node coordinates.
-     *
-     * A way qualifies if:
-     * - It is not deleted
-     * - It has natural=water
-     * - At least one of its nodes has coordinates matching an expected node
-     */
     private List<Way> findActualWays(DataSet ds, Set<Way> waysBefore, List<Way> expectedWays) {
         Set<String> expectedCoordKeys = getExpectedNodeCoordKeys(expectedWays);
 
@@ -127,147 +80,32 @@ class GeometryExpectedOutputTest {
             .filter(w -> !w.isDeleted())
             .filter(w -> "water".equals(w.get("natural")))
             .filter(w -> w.getNodes().stream().anyMatch(n ->
-                expectedCoordKeys.contains(coordKey(n.lat(), n.lon()))))
+                expectedCoordKeys.contains(String.format("%.6f,%.6f", n.lat(), n.lon()))))
             .collect(Collectors.toList());
     }
 
-    /**
-     * Extracts the coordinate sequence from a closed way, excluding the
-     * closing duplicate node.
-     */
-    private List<Coord> extractCoords(Way way) {
-        List<Node> nodes = way.getNodes();
-        if (nodes.isEmpty()) return List.of();
-
-        int size = nodes.size();
-        // Remove closing duplicate
-        if (size > 1 && nodes.get(0).getId() == nodes.get(size - 1).getId()) {
-            size--;
-        } else if (size > 1) {
-            // Check by coordinate proximity (for new nodes with different IDs)
-            Node first = nodes.get(0);
-            Node last = nodes.get(size - 1);
-            if (Math.abs(first.lat() - last.lat()) < COORD_TOL
-                && Math.abs(first.lon() - last.lon()) < COORD_TOL) {
-                size--;
-            }
-        }
-
-        List<Coord> coords = new ArrayList<>();
-        for (int i = 0; i < size; i++) {
-            coords.add(new Coord(nodes.get(i).lat(), nodes.get(i).lon()));
-        }
-        return coords;
-    }
-
-    /**
-     * Normalizes a coordinate sequence to canonical form:
-     * 1. Find the index of the coordinate with the smallest lat (then lon as tiebreaker)
-     * 2. Try both directions (forward and reverse from that index)
-     * 3. Pick the lexicographically smaller direction
-     *
-     * Returns the normalized coordinate list.
-     */
-    private List<Coord> canonicalize(List<Coord> coords) {
-        if (coords.isEmpty()) return coords;
-        int size = coords.size();
-
-        // Find the start index: smallest lat, then smallest lon as tiebreaker
-        int minIdx = 0;
-        for (int i = 1; i < size; i++) {
-            Coord c = coords.get(i);
-            Coord m = coords.get(minIdx);
-            if (c.lat < m.lat - COORD_TOL
-                || (Math.abs(c.lat - m.lat) < COORD_TOL && c.lon < m.lon - COORD_TOL)) {
-                minIdx = i;
-            }
-        }
-
-        // Build forward and reverse from minIdx
-        List<Coord> forward = new ArrayList<>();
-        List<Coord> reverse = new ArrayList<>();
-        for (int i = 0; i < size; i++) {
-            forward.add(coords.get((minIdx + i) % size));
-            reverse.add(coords.get((minIdx - i + size) % size));
-        }
-
-        // Pick canonical direction by lexicographic comparison
-        int cmp = compareCoordLists(forward, reverse);
-        return cmp <= 0 ? forward : reverse;
-    }
-
-    /**
-     * Lexicographically compares two coordinate lists.
-     * Compares lat first, then lon, with tolerance.
-     */
-    private int compareCoordLists(List<Coord> a, List<Coord> b) {
-        int size = Math.min(a.size(), b.size());
-        for (int i = 0; i < size; i++) {
-            Coord ca = a.get(i);
-            Coord cb = b.get(i);
-            if (Math.abs(ca.lat - cb.lat) >= COORD_TOL) {
-                return Double.compare(ca.lat, cb.lat);
-            }
-            if (Math.abs(ca.lon - cb.lon) >= COORD_TOL) {
-                return Double.compare(ca.lon, cb.lon);
-            }
-        }
-        return Integer.compare(a.size(), b.size());
-    }
-
-    /**
-     * Converts a canonical coordinate list to a string for comparison and sorting.
-     */
-    private String coordListKey(List<Coord> coords) {
-        StringBuilder sb = new StringBuilder();
-        for (Coord c : coords) {
-            if (sb.length() > 0) sb.append("|");
-            sb.append(String.format("%.6f,%.6f", c.lat, c.lon));
-        }
-        return sb.toString();
-    }
-
-    /**
-     * Checks if two canonical coordinate lists match within tolerance.
-     */
-    private boolean coordListsMatch(List<Coord> a, List<Coord> b) {
-        if (a.size() != b.size()) return false;
-        for (int i = 0; i < a.size(); i++) {
-            if (!a.get(i).matches(b.get(i))) return false;
-        }
-        return true;
-    }
-
-    /**
-     * Asserts that the actual ways match the expected ways by geometry.
-     * Each actual way's canonical coordinate sequence must match exactly one
-     * expected way's canonical coordinate sequence (1:1 bijection).
-     */
     private void assertGeometryMatch(String testId, List<Way> actualWays, List<Way> expectedWays) {
         assertEquals(expectedWays.size(), actualWays.size(),
             "Test " + testId + ": expected " + expectedWays.size()
             + " ways but got " + actualWays.size());
 
-        // Canonicalize all expected ways
         List<List<Coord>> expectedCanonical = expectedWays.stream()
-            .map(w -> canonicalize(extractCoords(w)))
-            .sorted(Comparator.comparing(this::coordListKey))
+            .map(w -> GeometryCanonicalizer.canonicalize(GeometryCanonicalizer.extractCoords(w)))
+            .sorted(Comparator.comparing(GeometryCanonicalizer::coordListKey))
             .collect(Collectors.toList());
 
-        // Canonicalize all actual ways
         List<List<Coord>> actualCanonical = actualWays.stream()
-            .map(w -> canonicalize(extractCoords(w)))
-            .sorted(Comparator.comparing(this::coordListKey))
+            .map(w -> GeometryCanonicalizer.canonicalize(GeometryCanonicalizer.extractCoords(w)))
+            .sorted(Comparator.comparing(GeometryCanonicalizer::coordListKey))
             .collect(Collectors.toList());
 
-        // Match each pair
         for (int i = 0; i < expectedCanonical.size(); i++) {
             List<Coord> exp = expectedCanonical.get(i);
             List<Coord> act = actualCanonical.get(i);
-            assertTrue(coordListsMatch(act, exp),
+            assertTrue(GeometryCanonicalizer.coordListsMatch(act, exp),
                 "Test " + testId + ": way " + i + " geometry mismatch.\n"
-                + "  Expected: " + coordListKey(exp) + "\n"
-                + "  Actual:   " + coordListKey(act));
+                + "  Expected: " + GeometryCanonicalizer.coordListKey(exp) + "\n"
+                + "  Actual:   " + GeometryCanonicalizer.coordListKey(act));
         }
     }
 

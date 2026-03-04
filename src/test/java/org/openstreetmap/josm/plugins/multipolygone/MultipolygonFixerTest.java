@@ -1044,4 +1044,82 @@ class MultipolygonFixerTest {
         assertEquals(relationsBefore, relationsAfter,
             "Undo should restore all relations");
     }
+
+    // --- Cross-plan shared way protection ---
+
+    @Test
+    void sharedWay_shouldNotBeDeletedWhenStillNeededByOtherRelation() {
+        DataSet ds = freshDataSet();
+
+        // Find test case 2 (CONSOLIDATE + DISSOLVE) which consolidates open ways into a ring.
+        // One of its source ways will be shared with a second relation.
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan2 = findPlanByTestId(plans, "2");
+        assertNotNull(plan2);
+
+        // Get one of the source outer ways from test case 2's relation
+        Way sharedWay = null;
+        for (RelationMember m : plan2.getRelation().getMembers()) {
+            if (m.isWay() && "outer".equals(m.getRole())) {
+                sharedWay = m.getWay();
+                break;
+            }
+        }
+        assertNotNull(sharedWay, "Should find an outer way in test case 2");
+
+        // Create a second relation that uses the shared way as an outer member
+        // (a simple closed-way outer that happens to be the shared way — unrealistic
+        // geometry but sufficient to test the cleanup logic)
+        Relation otherRelation = new Relation();
+        otherRelation.put("type", "multipolygon");
+        otherRelation.put("landuse", "forest");
+        otherRelation.addMember(new RelationMember("outer", sharedWay));
+        ds.addPrimitive(otherRelation);
+
+        // Fix all — both relations should be processed
+        plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        MultipolygonFixer.fixRelations(plans);
+
+        // The shared way must NOT be deleted — it's still a member of otherRelation
+        assertFalse(sharedWay.isDeleted(),
+            "Shared way should not be deleted when still referenced by another relation");
+    }
+
+    // --- Duplicate member deduplication ---
+
+    @Test
+    void testCase14_duplicateInner_shouldBeDeduplicatedAfterFix() {
+        DataSet ds = freshDataSet();
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "14");
+        assertNotNull(plan);
+
+        // Inject a duplicate inner member into the relation
+        Relation relation = plan.getRelation();
+        List<RelationMember> members = new java.util.ArrayList<>(relation.getMembers());
+        RelationMember innerMember = members.stream()
+            .filter(m -> "inner".equals(m.getRole()))
+            .findFirst().orElseThrow();
+        members.add(innerMember);
+        relation.setMembers(members);
+
+        // Re-analyze with the duplicate member
+        plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        plan = findPlanByTestId(plans, "14");
+        assertNotNull(plan, "Should still be fixable with duplicate inner");
+
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        // Verify no surviving relation has duplicate way members
+        for (Relation r : ds.getRelations()) {
+            if (r.isDeleted()) continue;
+            Set<Way> seenWays = new HashSet<>();
+            for (RelationMember m : r.getMembers()) {
+                if (m.isWay()) {
+                    assertTrue(seenWays.add(m.getWay()),
+                        "Relation " + r.getUniqueId() + " has duplicate way member " + m.getWay().getUniqueId());
+                }
+            }
+        }
+    }
 }

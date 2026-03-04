@@ -710,4 +710,123 @@ class AnalyzerFixerIntegrationTest {
         assertTrue(orphans.isEmpty(),
             "No ways should be orphaned (standalone + untagged), found " + orphans.size());
     }
+
+    // ---- Big-Meadow real-data tests ----
+
+    @Test
+    void bigMeadow_fixAll_relation19084391_outersShouldFormClosedRings() {
+        DataSet ds = JosmTestSetup.loadDataSet("regression/real-data-big-meadow.osm");
+        Relation rel = (Relation) ds.getPrimitiveById(19084391, org.openstreetmap.josm.data.osm.OsmPrimitiveType.RELATION);
+        assertNotNull(rel, "Relation 19084391 should exist");
+
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        MultipolygonFixer.fixRelations(plans);
+
+        // Relation should survive (it's the big wetland with a too-large-to-consolidate component)
+        assertFalse(rel.isDeleted(), "Relation 19084391 should survive");
+
+        // Remaining outer ways must still chain into valid closed rings.
+        // Before the shared-way-reuse fix, consolidation of other relations would
+        // ChangeCommand shared ways, breaking this relation's outer ring connectivity.
+        List<Way> outerWays = rel.getMembers().stream()
+            .filter(m -> m.isWay() && "outer".equals(m.getRole()))
+            .map(m -> m.getWay())
+            .collect(Collectors.toList());
+        assertFalse(outerWays.isEmpty(), "Should still have outer ways");
+
+        var chainResult = WayChainBuilder.buildRings(outerWays);
+        assertTrue(chainResult.isPresent(),
+            "Outer ways should still chain into closed rings after batch fix");
+    }
+
+    @Test
+    void bigMeadow_fixAll_survivingRelationsShouldHaveValidMembers() {
+        DataSet ds = JosmTestSetup.loadDataSet("regression/real-data-big-meadow.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        assertFalse(plans.isEmpty(), "Should find fixable relations");
+
+        MultipolygonFixer.fixRelations(plans);
+
+        // Every surviving (non-deleted) relation's way members must also be non-deleted
+        for (Relation r : ds.getRelations()) {
+            if (r.isDeleted()) continue;
+            for (org.openstreetmap.josm.data.osm.RelationMember m : r.getMembers()) {
+                if (m.isWay()) {
+                    assertFalse(m.getWay().isDeleted(),
+                        "Relation " + r.getUniqueId() + " references deleted way " + m.getWay().getUniqueId());
+                }
+            }
+        }
+    }
+
+    @Test
+    void bigMeadow_fixAll_survivingWaysShouldHaveValidNodes() {
+        DataSet ds = JosmTestSetup.loadDataSet("regression/real-data-big-meadow.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+
+        MultipolygonFixer.fixRelations(plans);
+
+        // Every surviving way's nodes must also be non-deleted
+        for (Way w : ds.getWays()) {
+            if (w.isDeleted()) continue;
+            for (org.openstreetmap.josm.data.osm.Node n : w.getNodes()) {
+                assertFalse(n.isDeleted(),
+                    "Way " + w.getUniqueId() + " references deleted node " + n.getUniqueId());
+            }
+        }
+    }
+
+    @Test
+    void bigMeadow_fixAll_noUntaggedOrphanWays() {
+        DataSet ds = JosmTestSetup.loadDataSet("regression/real-data-big-meadow.osm");
+        MultipolygonFixer.fixRelationsUntilConvergence(
+            MultipolygonAnalyzer.findFixableRelations(ds));
+
+        List<Way> orphans = ds.getWays().stream()
+            .filter(w -> !w.isDeleted()
+                && w.getReferrers().stream()
+                    .noneMatch(r -> r instanceof Relation && !r.isDeleted())
+                && w.getKeys().keySet().stream()
+                    .noneMatch(k -> !k.startsWith("_") && !"source".equals(k) && !"created_by".equals(k)))
+            .filter(w -> w.getNodesCount() > 2)
+            .collect(Collectors.toList());
+        assertTrue(orphans.isEmpty(),
+            "No ways should be orphaned (standalone + untagged), found " + orphans.size()
+            + ": " + orphans.stream().map(w -> String.valueOf(w.getUniqueId())).limit(10).collect(Collectors.joining(", ")));
+    }
+
+    @Test
+    void bigMeadow_fixAll_sharedWaysNotDeletedWhenStillNeeded() {
+        DataSet ds = JosmTestSetup.loadDataSet("regression/real-data-big-meadow.osm");
+
+        // Track all relations' way members before fixing
+        java.util.Map<Long, Set<Long>> relWaysBefore = new java.util.HashMap<>();
+        for (Relation r : ds.getRelations()) {
+            if (r.isDeleted()) continue;
+            Set<Long> wayIds = r.getMembers().stream()
+                .filter(org.openstreetmap.josm.data.osm.RelationMember::isWay)
+                .map(m -> m.getWay().getUniqueId())
+                .collect(Collectors.toSet());
+            relWaysBefore.put(r.getUniqueId(), wayIds);
+        }
+
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        Set<Long> processedRelIds = plans.stream()
+            .map(p -> p.getRelation().getUniqueId())
+            .collect(Collectors.toSet());
+
+        MultipolygonFixer.fixRelations(plans);
+
+        // For every non-processed relation, all its original way members should still exist
+        for (var entry : relWaysBefore.entrySet()) {
+            if (processedRelIds.contains(entry.getKey())) continue;
+            Relation r = (Relation) ds.getPrimitiveById(entry.getKey(), org.openstreetmap.josm.data.osm.OsmPrimitiveType.RELATION);
+            if (r == null || r.isDeleted()) continue;
+            for (long wayId : entry.getValue()) {
+                Way w = (Way) ds.getPrimitiveById(wayId, org.openstreetmap.josm.data.osm.OsmPrimitiveType.WAY);
+                assertFalse(w != null && w.isDeleted(),
+                    "Non-processed relation " + entry.getKey() + "'s way " + wayId + " was deleted");
+            }
+        }
+    }
 }
