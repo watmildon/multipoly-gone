@@ -2364,10 +2364,14 @@ public class MultipolygonAnalyzer {
         }
 
         // Then check for vertex-touching: a node that appears more than once in the ring
-        // (e.g., a bowtie that meets at a shared node rather than crossing segments)
-        DecomposedRing vertexDecomp = decomposeAtRepeatedNodes(ring);
-        if (vertexDecomp != null) {
-            return vertexDecomp;
+        // (e.g., a bowtie that meets at a shared node rather than crossing segments).
+        // Only decompose chained rings — already-closed ways with repeated nodes are
+        // pre-existing mapping errors that the plugin should not attempt to fix.
+        if (!ring.isAlreadyClosed()) {
+            DecomposedRing vertexDecomp = decomposeAtRepeatedNodes(ring);
+            if (vertexDecomp != null) {
+                return vertexDecomp;
+            }
         }
 
         return null;

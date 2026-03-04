@@ -829,4 +829,30 @@ class AnalyzerFixerIntegrationTest {
             }
         }
     }
+
+    // ---- Irrigon OR tests ----
+    // Regression: relation 19935959 has a self-intersecting (bowtie) outer way
+    // that is already closed. DECOMPOSE should not run on already-closed ways.
+
+    @Test
+    void irrigon_analyzeDoesNotCrash() {
+        DataSet ds = JosmTestSetup.loadDataSet("regression/real-data-irrigon-OR.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        assertNotNull(plans, "Analysis should complete without crashing");
+    }
+
+    @Test
+    void irrigon_selfIntersectingClosedOuterIsSkipped() {
+        DataSet ds = JosmTestSetup.loadDataSet("regression/real-data-irrigon-OR.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+
+        // Relation 19935959 has a bowtie outer + non-touching inner.
+        // Since the outer is already closed, DECOMPOSE should not fire.
+        // Without decomposition, no fix is applicable (inner doesn't touch outer),
+        // so the relation should be skipped — not present in fix plans.
+        boolean hasPlan = plans.stream()
+            .anyMatch(p -> p.getRelation().getUniqueId() == 19935959);
+        assertFalse(hasPlan,
+            "Relation 19935959 should be skipped (bowtie outer is already closed, inner doesn't touch)");
+    }
 }
