@@ -399,6 +399,14 @@ public class MultipolygonFixer {
                     }
                 }
 
+                case EXTRACT_INNERS -> {
+                    // Remove edge-sharing tagged inners from the relation.
+                    // The source ways are NOT deleted — they remain as standalone tagged ways.
+                    for (WayChainBuilder.Ring ring : op.getRings()) {
+                        membersToRemove.addAll(ring.getSourceWays());
+                    }
+                }
+
                 case DISSOLVE -> {
                     for (WayChainBuilder.Ring ring : op.getRings()) {
                         Way targetWay = ringToWay.get(ring);
@@ -606,6 +614,11 @@ public class MultipolygonFixer {
                                             splitReplacements.put(src, firstSubWay);
                                             compReplacements.put(src, firstSubWay);
                                         }
+                                    }
+                                }
+                                case EXTRACT_INNERS -> {
+                                    for (WayChainBuilder.Ring ring : subOp.getRings()) {
+                                        waysToRemoveFromRelation.addAll(ring.getSourceWays());
                                     }
                                 }
                                 case EXTRACT_OUTERS -> {

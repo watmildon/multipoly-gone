@@ -33,6 +33,8 @@ public class MultipolygonAnalyzer {
         CONSOLIDATE_INNERS,
         /** Decompose self-intersecting rings into non-self-intersecting sub-rings. */
         DECOMPOSE_SELF_INTERSECTIONS,
+        /** Extract edge-sharing tagged inner rings from the relation as standalone ways. */
+        EXTRACT_INNERS,
         /** Extract standalone outer rings (no inners) as independent tagged ways. */
         EXTRACT_OUTERS,
         /** Push relation tags to remaining outer ways, delete relation. */
@@ -206,6 +208,8 @@ public class MultipolygonAnalyzer {
                             }
                         }
                     }
+                    case EXTRACT_INNERS ->
+                        FixPlan.validateRingsClosed(op.getRings(), relId, "component EXTRACT_INNERS");
                     case TOUCHING_INNER_MERGE -> {
                         if (op.getMergedWays() != null) {
                             for (int i = 0; i < op.getMergedWays().size(); i++) {
@@ -451,6 +455,7 @@ public class MultipolygonAnalyzer {
                             }
                         }
                     }
+                    case EXTRACT_INNERS -> validateRingsClosed(op.getRings(), relId, "EXTRACT_INNERS");
                     case TOUCHING_INNER_MERGE -> {
                         if (op.getMergedWays() != null) {
                             for (int i = 0; i < op.getMergedWays().size(); i++) {
@@ -587,7 +592,7 @@ public class MultipolygonAnalyzer {
                         sb.append(" ").append(decomps);
                     }
                 }
-                case EXTRACT_OUTERS, DISSOLVE -> {
+                case EXTRACT_INNERS, EXTRACT_OUTERS, DISSOLVE -> {
                     if (op.getRings() != null) {
                         sb.append(" rings=").append(fingerprintRings(op.getRings()));
                     }
@@ -1340,6 +1345,39 @@ public class MultipolygonAnalyzer {
                 .mapToInt(g -> g.getSourceRings().size()).sum();
             int resultCount = innerConsolidations.size();
             descParts.add(totalSources + " inners merged into " + resultCount);
+        }
+
+        // Extract tagged inner rings that share a contiguous edge with any outer ring
+        List<WayChainBuilder.Ring> edgeSharingInners = findEdgeSharingInners(outerRings, innerRings);
+        if (!edgeSharingInners.isEmpty()) {
+            ops.add(new FixOp(FixOpType.EXTRACT_INNERS, edgeSharingInners, null));
+            innerRings.removeAll(edgeSharingInners);
+            for (WayChainBuilder.Ring r : edgeSharingInners) {
+                innerWays.removeAll(r.getSourceWays());
+            }
+            descParts.add(edgeSharingInners.size() == 1
+                ? "1 edge-sharing inner extracted"
+                : edgeSharingInners.size() + " edge-sharing inners extracted");
+        }
+
+        // If all inners were extracted, dissolve (same logic as no-inners case)
+        if (innerRings.isEmpty()) {
+            if (identityProtected && outerRings.size() > 1) {
+                if (ops.isEmpty()) {
+                    if (skipOut != null) skipOut[0] = SkipReason.IDENTITY_PROTECTED_NO_OPS;
+                    return null;
+                }
+                descParts.add("identity-protected, kept as relation");
+                return new ComponentResult(outerWays, innerWays, ops, false,
+                    outerRings, new ArrayList<>(), String.join(", ", descParts));
+            }
+            ops.add(new FixOp(FixOpType.DISSOLVE, outerRings, null));
+            int count = outerRings.size();
+            descParts.add(count == 1
+                ? "dissolved"
+                : count + " outers dissolved");
+            return new ComponentResult(outerWays, innerWays, ops, true,
+                null, null, String.join(", ", descParts));
         }
 
         // Map inner rings to containing outer rings
@@ -2699,6 +2737,73 @@ public class MultipolygonAnalyzer {
         // Couldn't achieve full coverage — return the default choices
         // (some outer nodes may be covered by the shared-intermediate-node logic below)
         return chosen;
+    }
+
+    /**
+     * Finds inner rings that share a contiguous edge (>= 2 consecutive nodes) with any
+     * outer ring and have their own significant tags. Such inners can be extracted from
+     * the relation as standalone ways.
+     */
+    private static List<WayChainBuilder.Ring> findEdgeSharingInners(
+            List<WayChainBuilder.Ring> outerRings, List<WayChainBuilder.Ring> innerRings) {
+        List<WayChainBuilder.Ring> result = new ArrayList<>();
+        for (WayChainBuilder.Ring inner : innerRings) {
+            if (!inner.isAlreadyClosed()) continue;
+            Way sourceWay = inner.getSourceWays().get(0);
+            if (!wayHasOwnTags(sourceWay)) continue;
+            for (WayChainBuilder.Ring outer : outerRings) {
+                if (sharesContiguousEdge(inner, outer)) {
+                    result.add(inner);
+                    break;
+                }
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Returns true if the way has any tags other than test annotations (keys starting with '_').
+     */
+    private static boolean wayHasOwnTags(Way way) {
+        for (String key : way.keySet()) {
+            if (!key.startsWith("_")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Returns true if the inner ring shares a contiguous run of >= 2 consecutive nodes
+     * with the outer ring. Handles wrap-around at ring closure.
+     */
+    private static boolean sharesContiguousEdge(WayChainBuilder.Ring inner, WayChainBuilder.Ring outer) {
+        List<Node> outerNodes = outer.getNodes();
+        int outerSize = outerNodes.size() - 1; // exclude closing duplicate
+
+        Set<Node> innerNodeSet = new HashSet<>();
+        List<Node> innerNodes = inner.getNodes();
+        int innerSize = innerNodes.size() - 1;
+        for (int i = 0; i < innerSize; i++) {
+            innerNodeSet.add(innerNodes.get(i));
+        }
+
+        // Walk the outer ring counting the longest contiguous run of shared nodes.
+        // To handle wrap-around, walk 2*outerSize positions but cap maxRun at outerSize.
+        int maxRun = 0;
+        int currentRun = 0;
+        for (int i = 0; i < 2 * outerSize; i++) {
+            if (innerNodeSet.contains(outerNodes.get(i % outerSize))) {
+                currentRun++;
+                if (currentRun > maxRun) {
+                    maxRun = currentRun;
+                }
+            } else {
+                currentRun = 0;
+            }
+            if (maxRun >= 2) return true;
+        }
+        return false;
     }
 
     private static WayChainBuilder.Ring findContainingRing(WayChainBuilder.Ring inner, List<WayChainBuilder.Ring> outerRings) {

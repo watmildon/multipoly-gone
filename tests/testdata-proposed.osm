@@ -5189,4 +5189,133 @@
     <tag k='_test_notes' v='open inner endpoints on different closed inners' />
     <tag k='_test_expected' v='No absorption: endpoints on different rings, INNER_WAYS_CANT_FORM_RINGS' />
   </relation>
+  <!-- Test case 130: EXTRACT_INNERS — tagged inner sharing edge with outer -->
+  <!-- Outer ring: 3 open ways forming 1 octagon. Inner1 (place=island) shares 3 nodes -->
+  <!-- with one outer way. Inner2 is a normal closed inner fully inside the outer. -->
+  <node id='-500100' action='modify' visible='true' lat='47.80000' lon='-122.40000' />
+  <node id='-500101' action='modify' visible='true' lat='47.80141' lon='-122.39900' />
+  <node id='-500102' action='modify' visible='true' lat='47.80200' lon='-122.40000' />
+  <node id='-500103' action='modify' visible='true' lat='47.80141' lon='-122.40100' />
+  <node id='-500104' action='modify' visible='true' lat='47.80000' lon='-122.40200' />
+  <node id='-500105' action='modify' visible='true' lat='47.79859' lon='-122.40100' />
+  <node id='-500106' action='modify' visible='true' lat='47.79800' lon='-122.40000' />
+  <node id='-500107' action='modify' visible='true' lat='47.79859' lon='-122.39900' />
+  <!-- Inner-only nodes for inner1 (island) -->
+  <node id='-500110' action='modify' visible='true' lat='47.80100' lon='-122.40050' />
+  <node id='-500111' action='modify' visible='true' lat='47.80050' lon='-122.40100' />
+  <!-- Normal inner2 nodes (small square inside outer) -->
+  <node id='-500120' action='modify' visible='true' lat='47.79950' lon='-122.40050' />
+  <node id='-500121' action='modify' visible='true' lat='47.79950' lon='-122.40080' />
+  <node id='-500122' action='modify' visible='true' lat='47.79920' lon='-122.40080' />
+  <node id='-500123' action='modify' visible='true' lat='47.79920' lon='-122.40050' />
+  <!-- Outer way 1: nodes 0 -> 1 -> 2 -->
+  <way id='-500200' action='modify' visible='true'>
+    <nd ref='-500100' />
+    <nd ref='-500101' />
+    <nd ref='-500102' />
+  </way>
+  <!-- Outer way 2: nodes 2 -> 3 -> 4 (shared edge with inner1) -->
+  <way id='-500201' action='modify' visible='true'>
+    <nd ref='-500102' />
+    <nd ref='-500103' />
+    <nd ref='-500104' />
+  </way>
+  <!-- Outer way 3: nodes 4 -> 5 -> 6 -> 7 -> 0 -->
+  <way id='-500202' action='modify' visible='true'>
+    <nd ref='-500104' />
+    <nd ref='-500105' />
+    <nd ref='-500106' />
+    <nd ref='-500107' />
+    <nd ref='-500100' />
+  </way>
+  <!-- Inner 1: tagged island sharing nodes 2,3,4 with outer way 2 -->
+  <way id='-500210' action='modify' visible='true'>
+    <nd ref='-500102' />
+    <nd ref='-500103' />
+    <nd ref='-500104' />
+    <nd ref='-500110' />
+    <nd ref='-500111' />
+    <nd ref='-500102' />
+    <tag k='place' v='island' />
+  </way>
+  <!-- Inner 2: normal closed inner fully inside -->
+  <way id='-500220' action='modify' visible='true'>
+    <nd ref='-500120' />
+    <nd ref='-500121' />
+    <nd ref='-500122' />
+    <nd ref='-500123' />
+    <nd ref='-500120' />
+  </way>
+  <relation id='-500300' action='modify' visible='true'>
+    <member type='way' ref='-500200' role='outer' />
+    <member type='way' ref='-500201' role='outer' />
+    <member type='way' ref='-500202' role='outer' />
+    <member type='way' ref='-500210' role='inner' />
+    <member type='way' ref='-500220' role='inner' />
+    <tag k='type' v='multipolygon' />
+    <tag k='natural' v='wetland' />
+    <tag k='_test_id' v='130' />
+    <tag k='_test_notes' v='3 open outers (1 ring) + 1 tagged inner sharing edge with outer + 1 normal inner' />
+    <tag k='_test_expected' v='CONSOLIDATE_RINGS + EXTRACT_INNERS: consolidate outers, extract edge-sharing inner' />
+  </relation>
+  <!-- Test case 131: No EXTRACT_INNERS — untagged inner sharing edge -->
+  <node id='-501100' action='modify' visible='true' lat='47.81000' lon='-122.40000' />
+  <node id='-501101' action='modify' visible='true' lat='47.81141' lon='-122.39900' />
+  <node id='-501102' action='modify' visible='true' lat='47.81200' lon='-122.40000' />
+  <node id='-501103' action='modify' visible='true' lat='47.81141' lon='-122.40100' />
+  <node id='-501104' action='modify' visible='true' lat='47.81000' lon='-122.40200' />
+  <node id='-501105' action='modify' visible='true' lat='47.80859' lon='-122.40100' />
+  <node id='-501106' action='modify' visible='true' lat='47.80800' lon='-122.40000' />
+  <node id='-501107' action='modify' visible='true' lat='47.80859' lon='-122.39900' />
+  <node id='-501110' action='modify' visible='true' lat='47.81100' lon='-122.40050' />
+  <node id='-501111' action='modify' visible='true' lat='47.81050' lon='-122.40100' />
+  <node id='-501120' action='modify' visible='true' lat='47.80950' lon='-122.40050' />
+  <node id='-501121' action='modify' visible='true' lat='47.80950' lon='-122.40080' />
+  <node id='-501122' action='modify' visible='true' lat='47.80920' lon='-122.40080' />
+  <node id='-501123' action='modify' visible='true' lat='47.80920' lon='-122.40050' />
+  <way id='-501200' action='modify' visible='true'>
+    <nd ref='-501100' />
+    <nd ref='-501101' />
+    <nd ref='-501102' />
+  </way>
+  <way id='-501201' action='modify' visible='true'>
+    <nd ref='-501102' />
+    <nd ref='-501103' />
+    <nd ref='-501104' />
+  </way>
+  <way id='-501202' action='modify' visible='true'>
+    <nd ref='-501104' />
+    <nd ref='-501105' />
+    <nd ref='-501106' />
+    <nd ref='-501107' />
+    <nd ref='-501100' />
+  </way>
+  <!-- Inner 1: NO tags — should NOT be extracted -->
+  <way id='-501210' action='modify' visible='true'>
+    <nd ref='-501102' />
+    <nd ref='-501103' />
+    <nd ref='-501104' />
+    <nd ref='-501110' />
+    <nd ref='-501111' />
+    <nd ref='-501102' />
+  </way>
+  <way id='-501220' action='modify' visible='true'>
+    <nd ref='-501120' />
+    <nd ref='-501121' />
+    <nd ref='-501122' />
+    <nd ref='-501123' />
+    <nd ref='-501120' />
+  </way>
+  <relation id='-501300' action='modify' visible='true'>
+    <member type='way' ref='-501200' role='outer' />
+    <member type='way' ref='-501201' role='outer' />
+    <member type='way' ref='-501202' role='outer' />
+    <member type='way' ref='-501210' role='inner' />
+    <member type='way' ref='-501220' role='inner' />
+    <tag k='type' v='multipolygon' />
+    <tag k='natural' v='wetland' />
+    <tag k='_test_id' v='131' />
+    <tag k='_test_notes' v='3 open outers + 1 untagged inner sharing edge — should NOT be extracted' />
+    <tag k='_test_expected' v='CONSOLIDATE_RINGS only: untagged edge-sharing inner stays in relation' />
+  </relation>
 </osm>

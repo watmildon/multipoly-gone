@@ -1917,6 +1917,70 @@ def gen_no_merge_1_shared_node():
                   ("way", inner2, "inner")], tags)
 
 
+def gen_extract_edge_sharing_inner():
+    """3 open outers forming 1 ring + 1 tagged inner sharing edge with outer + 1 normal inner."""
+    global test_num
+    test_num = 129  # explicit: next make_test will assign 130
+    tid, tags = make_test(
+        "3 open outers (1 ring) + 1 tagged inner sharing edge with outer + 1 normal inner",
+        "CONSOLIDATE_RINGS + EXTRACT_INNERS: consolidate outers, extract edge-sharing inner",
+        {"natural": "wetland"})
+    lat, lon = grid_pos(test_num)
+
+    # Build outer ring nodes (hexagon)
+    outer_nodes = closed_polygon_nodes(lat, lon, 0.002, 8)
+
+    # The outer ring will be split into 3 open ways.
+    # One of the ways (between nodes 2 and 4) will share nodes with the inner.
+    # Create two extra inner-only nodes to complete the inner ring
+    inner_extra1 = add_node(lat + 0.0005, lon - 0.0002)
+    inner_extra2 = add_node(lat + 0.0003, lon - 0.0003)
+
+    # Outer way 1: nodes 0 -> 1 -> 2
+    ow1 = add_way([outer_nodes[0], outer_nodes[1], outer_nodes[2]])
+    # Outer way 2: nodes 2 -> 3 -> 4 (this is the shared edge with inner)
+    ow2 = add_way([outer_nodes[2], outer_nodes[3], outer_nodes[4]])
+    # Outer way 3: nodes 4 -> 5 -> 6 -> 7 -> 0
+    ow3 = add_way([outer_nodes[4], outer_nodes[5], outer_nodes[6], outer_nodes[7], outer_nodes[0]])
+
+    # Inner 1: tagged, shares edge with ow2 (nodes 2 -> 3 -> 4) + inner-only nodes
+    inner1 = add_way([outer_nodes[2], outer_nodes[3], outer_nodes[4],
+                       inner_extra1, inner_extra2, outer_nodes[2]],
+                      {"place": "island"})
+
+    # Inner 2: normal closed inner fully inside, no shared nodes
+    inner2 = closed_polygon(lat - 0.0005, lon + 0.0005, 0.0003, 4)
+
+    add_relation([("way", ow1, "outer"), ("way", ow2, "outer"), ("way", ow3, "outer"),
+                  ("way", inner1, "inner"), ("way", inner2, "inner")], tags)
+
+
+def gen_no_extract_untagged_edge_sharing_inner():
+    """3 open outers + 1 untagged inner sharing edge — should NOT be extracted."""
+    tid, tags = make_test(
+        "3 open outers + 1 untagged inner sharing edge with outer + 1 normal inner",
+        "CONSOLIDATE_RINGS only: untagged edge-sharing inner stays in relation",
+        {"natural": "wetland"})
+    lat, lon = grid_pos(test_num)
+
+    outer_nodes = closed_polygon_nodes(lat, lon, 0.002, 8)
+    inner_extra1 = add_node(lat + 0.0005, lon - 0.0002)
+    inner_extra2 = add_node(lat + 0.0003, lon - 0.0003)
+
+    ow1 = add_way([outer_nodes[0], outer_nodes[1], outer_nodes[2]])
+    ow2 = add_way([outer_nodes[2], outer_nodes[3], outer_nodes[4]])
+    ow3 = add_way([outer_nodes[4], outer_nodes[5], outer_nodes[6], outer_nodes[7], outer_nodes[0]])
+
+    # Inner: NO tags (untagged) — should not be extracted
+    inner1 = add_way([outer_nodes[2], outer_nodes[3], outer_nodes[4],
+                       inner_extra1, inner_extra2, outer_nodes[2]])
+
+    inner2 = closed_polygon(lat - 0.0005, lon + 0.0005, 0.0003, 4)
+
+    add_relation([("way", ow1, "outer"), ("way", ow2, "outer"), ("way", ow3, "outer"),
+                  ("way", inner1, "inner"), ("way", inner2, "inner")], tags)
+
+
 # ============================================================
 # Generate everything
 # ============================================================
@@ -2119,6 +2183,10 @@ def generate_all():
     gen_consolidate_2_abutting_inners()
     gen_consolidate_3_chained_inners()
     gen_no_merge_1_shared_node()
+
+    # Category 43: Edge-sharing inner extraction
+    gen_extract_edge_sharing_inner()
+    gen_no_extract_untagged_edge_sharing_inner()
 
 
 def write_osm(filename):

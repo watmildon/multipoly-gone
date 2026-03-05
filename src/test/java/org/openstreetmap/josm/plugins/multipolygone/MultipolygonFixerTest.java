@@ -1313,4 +1313,69 @@ class MultipolygonFixerTest {
         // This relation should NOT be fixable — open way can't be absorbed
         assertNull(plan, "Test case 129 should not be fixable (endpoints on different rings)");
     }
+
+    // --- Test case 130 (from testdata-proposed.osm): EXTRACT_INNERS (edge-sharing tagged inner) ---
+
+    @Test
+    void testCase130_extractEdgeSharingInner() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "130");
+        assertNotNull(plan, "Test case 130 should be fixable");
+
+        // Should have EXTRACT_INNERS op
+        boolean hasExtractInners = plan.getOperations().stream()
+            .anyMatch(op -> op.getType() == FixOpType.EXTRACT_INNERS);
+        assertTrue(hasExtractInners, "Should have EXTRACT_INNERS operation");
+
+        Relation relation = plan.getRelation();
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        // Relation should survive (not deleted)
+        assertFalse(relation.isDeleted(), "Relation should survive");
+
+        // Should have 1 outer + 1 inner member after fix
+        long outerCount = relation.getMembers().stream()
+            .filter(m -> "outer".equals(m.getRole()) || "".equals(m.getRole())).count();
+        long innerCount = relation.getMembers().stream()
+            .filter(m -> "inner".equals(m.getRole())).count();
+        assertEquals(1, outerCount, "Should have 1 outer member");
+        assertEquals(1, innerCount, "Should have 1 inner member");
+
+        // The extracted inner way should NOT be deleted and should keep its tag
+        List<Way> islandWays = ds.getWays().stream()
+            .filter(w -> !w.isDeleted() && "island".equals(w.get("place")))
+            .toList();
+        assertEquals(1, islandWays.size(), "Extracted inner should survive with place=island");
+        assertTrue(islandWays.get(0).isClosed(), "Extracted inner should be closed");
+
+        // The extracted inner should NOT be in the relation
+        boolean innerInRelation = relation.getMembers().stream()
+            .anyMatch(m -> m.isWay() && m.getWay().equals(islandWays.get(0)));
+        assertFalse(innerInRelation, "Extracted inner should not be in the relation");
+    }
+
+    // --- Test case 131 (from testdata-proposed.osm): untagged edge-sharing inner NOT extracted ---
+
+    @Test
+    void testCase131_noExtractUntaggedEdgeSharingInner() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "131");
+        assertNotNull(plan, "Test case 131 should be fixable");
+
+        // Should NOT have EXTRACT_INNERS op
+        boolean hasExtractInners = plan.getOperations().stream()
+            .anyMatch(op -> op.getType() == FixOpType.EXTRACT_INNERS);
+        assertFalse(hasExtractInners, "Should NOT have EXTRACT_INNERS for untagged inner");
+
+        Relation relation = plan.getRelation();
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        // Relation should survive with 2 inners still in it
+        assertFalse(relation.isDeleted(), "Relation should survive");
+        long innerCount = relation.getMembers().stream()
+            .filter(m -> "inner".equals(m.getRole())).count();
+        assertEquals(2, innerCount, "Should still have 2 inner members");
+    }
 }
