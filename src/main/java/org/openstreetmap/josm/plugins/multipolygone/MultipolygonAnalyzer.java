@@ -793,8 +793,46 @@ public class MultipolygonAnalyzer {
             identityProtected = true;
         }
 
-        // Try the single-relation path first — it handles all original test cases
-        // and relations where outers form valid rings (even with disconnected closed ways).
+        // Check if open outer ways form multiple disconnected ring groups.
+        // If so, split into sub-relations up front so we reach the simplest
+        // form in one pass. Without this, buildRings() succeeds globally on
+        // disconnected ring groups, producing a consolidated relation that
+        // still needs splitting on a second pass.
+        // Already-closed outers are handled fine by the single-relation path
+        // (EXTRACT_OUTERS / DISSOLVE), so we only check open ways.
+        // Identity-protected relations and boundaries are never split.
+        if (!identityProtected) {
+            List<Way> openOuterWays = new ArrayList<>();
+            for (Way w : outerWays) {
+                if (!w.isClosed()) {
+                    openOuterWays.add(w);
+                }
+            }
+
+            if (!openOuterWays.isEmpty()) {
+                List<Set<Way>> openComponents = findConnectedComponents(openOuterWays);
+
+                if (openComponents.size() > 1) {
+                    // Open outers form multiple disconnected ring groups.
+                    // Rebuild full component sets including all ways.
+                    List<Way> allWays = new ArrayList<>(outerWays);
+                    allWays.addAll(innerWays);
+                    if (rng != null) {
+                        Collections.shuffle(allWays, rng);
+                    }
+                    List<Set<Way>> components = findConnectedComponents(allWays);
+
+                    if (rng != null) {
+                        Collections.shuffle(components, rng);
+                    }
+                    // Multiple components: analyze each independently
+                    return analyzeMultiComponent(relation, components, innerWaySet);
+                }
+            }
+        }
+
+        // Single connected outer group (or identity-protected/boundary):
+        // use the single-relation path.
         SkipReason[] singleSkip = new SkipReason[1];
         FixPlan singleResult = analyzeSingleRelation(relation, outerWays, innerWays,
             identityProtected, isBoundary, singleSkip);
@@ -802,37 +840,30 @@ public class MultipolygonAnalyzer {
             return AnalyzeOutcome.fix(singleResult);
         }
 
-        // Single-relation path failed (e.g., outers can't form rings globally).
-        // Try splitting into disconnected components (e.g., megafarmland).
-        // But if the relation has identity tags (or is a boundary), don't split —
-        // the components should stay together as one feature.
-        if (identityProtected) {
-            SkipReason reason = singleSkip[0] != null ? singleSkip[0]
-                : SkipReason.IDENTITY_PROTECTED_MULTI_COMPONENT;
-            return AnalyzeOutcome.skip(relation, reason, null);
+        // Single-relation path failed (e.g., multiple closed outers with inners).
+        // Try splitting into disconnected components as a fallback.
+        if (!identityProtected) {
+            List<Way> allWays = new ArrayList<>(outerWays);
+            allWays.addAll(innerWays);
+            if (rng != null) {
+                Collections.shuffle(allWays, rng);
+            }
+            List<Set<Way>> components = findConnectedComponents(allWays);
+
+            if (components.size() > 1) {
+                if (rng != null) {
+                    Collections.shuffle(components, rng);
+                }
+                return analyzeMultiComponent(relation, components, innerWaySet);
+            }
         }
 
-        List<Way> allWays = new ArrayList<>(outerWays);
-        allWays.addAll(innerWays);
-        if (rng != null) {
-            Collections.shuffle(allWays, rng);
-        }
-        List<Set<Way>> components = findConnectedComponents(allWays);
-
-        if (components.size() <= 1) {
-            // Only one component and single-relation already failed — not fixable
-            SkipReason reason = singleSkip[0] != null ? singleSkip[0]
-                : SkipReason.SINGLE_COMPONENT_NOT_FIXABLE;
-            return AnalyzeOutcome.skip(relation, reason, null);
-        }
-
-        // Shuffle the component order to perturb multi-component analysis
-        if (rng != null) {
-            Collections.shuffle(components, rng);
-        }
-
-        // Multiple components: analyze each independently
-        return analyzeMultiComponent(relation, components, innerWaySet);
+        // Not splittable — report the skip reason
+        SkipReason reason = singleSkip[0] != null ? singleSkip[0]
+            : (identityProtected
+                ? SkipReason.IDENTITY_PROTECTED_MULTI_COMPONENT
+                : SkipReason.SINGLE_COMPONENT_NOT_FIXABLE);
+        return AnalyzeOutcome.skip(relation, reason, null);
     }
 
     /**

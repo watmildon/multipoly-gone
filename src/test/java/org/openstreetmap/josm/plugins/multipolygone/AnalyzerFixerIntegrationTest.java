@@ -855,4 +855,41 @@ class AnalyzerFixerIntegrationTest {
         assertFalse(hasPlan,
             "Relation 19935959 should be skipped (bowtie outer is already closed, inner doesn't touch)");
     }
+
+    // ---- Separable rings tests ----
+    // Regression: relation 14731748 has 32 outer ways forming 8 disconnected rings
+    // plus 5 closed inner ways. The planner should split into components in one pass,
+    // not consolidate everything into a single relation that still needs splitting.
+
+    @Test
+    void separableRings_relation14731748_shouldUseSplitRelation() {
+        DataSet ds = JosmTestSetup.loadDataSet("regression/real-data-plan-leaves-separable-rings.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+
+        FixPlan plan = plans.stream()
+            .filter(p -> p.getRelation().getUniqueId() == 14731748)
+            .findFirst().orElse(null);
+        assertNotNull(plan, "Relation 14731748 should be fixable");
+
+        // The plan should use SPLIT_RELATION since the outers form 8 disconnected components
+        boolean hasSplit = plan.getOperations().stream()
+            .anyMatch(op -> op.getType() == MultipolygonAnalyzer.FixOpType.SPLIT_RELATION);
+        assertTrue(hasSplit,
+            "Plan should include SPLIT_RELATION for disconnected outer rings");
+    }
+
+    @Test
+    void separableRings_fixAll_thenReanalyze_shouldFindNoFixableRelations() {
+        DataSet ds = JosmTestSetup.loadDataSet("regression/real-data-plan-leaves-separable-rings.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+
+        MultipolygonFixer.fixRelations(plans);
+
+        List<FixPlan> remaining = MultipolygonAnalyzer.findFixableRelations(ds);
+        assertEquals(0, remaining.size(),
+            "After fixing all, no relations should be fixable (one-pass convergence). Remaining: " +
+            remaining.stream()
+                .map(p -> String.valueOf(p.getRelation().getUniqueId()))
+                .toList());
+    }
 }
