@@ -4766,7 +4766,7 @@
     <tag k='type' v='multipolygon' />
     <tag k='natural' v='beach' />
     <tag k='surface' v='sand' />
-    <tag k='_test_id' v='120' />
+    <tag k='_test_id' v='114' />
     <tag k='_test_notes' v='1 closed outer with natural=coastline, relation has natural=beach' />
     <tag k='_test_expected' v='DISSOLVE: create new way with natural=beach, leave coastline untouched' />
   </relation>
@@ -4801,7 +4801,7 @@
     <member type='way' ref='-202120' role='outer' />
     <tag k='type' v='multipolygon' />
     <tag k='natural' v='beach' />
-    <tag k='_test_id' v='121' />
+    <tag k='_test_id' v='115' />
     <tag k='_test_notes' v='2 closed outers: one with natural=coastline, one untagged' />
     <tag k='_test_expected' v='DISSOLVE: new way for tagged outer, reuse untagged outer' />
   </relation>
@@ -4848,7 +4848,7 @@
     <member type='way' ref='-202330' role='inner' />
     <tag k='type' v='multipolygon' />
     <tag k='landuse' v='grass' />
-    <tag k='_test_id' v='122' />
+    <tag k='_test_id' v='116' />
     <tag k='_test_notes' v='2 closed outers + 1 inner: outer A has highway=footway (no inners), outer B has inner' />
     <tag k='_test_expected' v='EXTRACT outer A (new way, footway preserved) + DISSOLVE remainder' />
   </relation>
@@ -4887,14 +4887,14 @@
     <nd ref='-25369' />
     <nd ref='-25365' />
     <tag k='natural' v='water' />
-    <tag k='_test_case' v='123' />
+    <tag k='_test_case' v='117' />
   </way>
   <relation id='-89' action='modify' visible='true'>
     <member type='way' ref='-4154' role='inner' />
     <member type='way' ref='-4158' role='inner' />
     <member type='way' ref='-4160' role='outer' />
     <tag k='type' v='multipolygon' />
-    <tag k='_test_id' v='123' />
+    <tag k='_test_id' v='117' />
     <tag k='_test_notes' v='2 open inners chain to same geometry as non-member way -4237 (natural=water)' />
     <tag k='_test_expected' v='CONSOLIDATE: reuse -4237 as inner; DISSOLVE: relation deleted, outer tagged' />
   </relation>
@@ -4938,7 +4938,7 @@
     <member type='way' ref='-300103' role='inner' />
     <tag k='type' v='multipolygon' />
     <tag k='natural' v='water' />
-    <tag k='_test_id' v='124' />
+    <tag k='_test_id' v='118' />
     <tag k='_test_notes' v='1 outer + 2 closed inners sharing 1 edge (2 shared nodes)' />
     <tag k='_test_expected' v='CONSOLIDATE_INNERS: merge 2 inners into 1' />
   </relation>
@@ -4992,7 +4992,7 @@
     <member type='way' ref='-300107' role='inner' />
     <tag k='type' v='multipolygon' />
     <tag k='natural' v='water' />
-    <tag k='_test_id' v='125' />
+    <tag k='_test_id' v='119' />
     <tag k='_test_notes' v='1 outer + 3 closed inners chained: A-B, B-C share edges' />
     <tag k='_test_expected' v='CONSOLIDATE_INNERS: iterative merge 3 inners into 1' />
   </relation>
@@ -5033,7 +5033,7 @@
     <member type='way' ref='-300110' role='inner' />
     <tag k='type' v='multipolygon' />
     <tag k='natural' v='water' />
-    <tag k='_test_id' v='126' />
+    <tag k='_test_id' v='120' />
     <tag k='_test_notes' v='1 outer + 2 closed inners sharing only 1 node (no edge)' />
     <tag k='_test_expected' v='No CONSOLIDATE_INNERS: need at least 2 shared nodes for an edge' />
   </relation>
@@ -5088,7 +5088,7 @@
     <member type='way' ref='-400104' role='inner' />
     <tag k='type' v='multipolygon' />
     <tag k='natural' v='water' />
-    <tag k='_test_id' v='127' />
+    <tag k='_test_id' v='121' />
     <tag k='_test_notes' v='2 closed abutting inners + 1 open inner absorbed' />
     <tag k='_test_expected' v='CONSOLIDATE_RINGS + CONSOLIDATE_INNERS: 4 inner ways to 1' />
   </relation>
@@ -5131,7 +5131,7 @@
     <member type='way' ref='-400113' role='inner' />
     <tag k='type' v='multipolygon' />
     <tag k='natural' v='water' />
-    <tag k='_test_id' v='128' />
+    <tag k='_test_id' v='122' />
     <tag k='_test_notes' v='1 closed inner + 1 open inner absorbed (standalone)' />
     <tag k='_test_expected' v='CONSOLIDATE_RINGS: open way absorbed into closed inner' />
   </relation>
@@ -5185,7 +5185,7 @@
     <member type='way' ref='-400124' role='inner' />
     <tag k='type' v='multipolygon' />
     <tag k='natural' v='water' />
-    <tag k='_test_id' v='129' />
+    <tag k='_test_id' v='123' />
     <tag k='_test_notes' v='open inner endpoints on different closed inners' />
     <tag k='_test_expected' v='No absorption: endpoints on different rings, INNER_WAYS_CANT_FORM_RINGS' />
   </relation>
@@ -5254,7 +5254,7 @@
     <member type='way' ref='-500220' role='inner' />
     <tag k='type' v='multipolygon' />
     <tag k='natural' v='wetland' />
-    <tag k='_test_id' v='130' />
+    <tag k='_test_id' v='124' />
     <tag k='_test_notes' v='3 open outers (1 ring) + 1 tagged inner sharing edge with outer + 1 normal inner' />
     <tag k='_test_expected' v='CONSOLIDATE_RINGS + EXTRACT_INNERS: consolidate outers, extract edge-sharing inner' />
   </relation>
@@ -5314,7 +5314,7 @@
     <member type='way' ref='-501220' role='inner' />
     <tag k='type' v='multipolygon' />
     <tag k='natural' v='wetland' />
-    <tag k='_test_id' v='131' />
+    <tag k='_test_id' v='125' />
     <tag k='_test_notes' v='3 open outers + 1 untagged inner sharing edge — should NOT be extracted' />
     <tag k='_test_expected' v='CONSOLIDATE_RINGS only: untagged edge-sharing inner stays in relation' />
   </relation>

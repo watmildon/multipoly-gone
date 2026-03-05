@@ -777,14 +777,14 @@ class MultipolygonFixerTest {
             "Outer way should have natural=tree_group after dissolve");
     }
 
-    // --- Test case 120 (from testdata-proposed.osm): DISSOLVE with tagged outer (coastline bug) ---
+    // --- Test case 114 (from testdata-proposed.osm): DISSOLVE with tagged outer (coastline bug) ---
 
     @Test
-    void testCase120_dissolve_deletesRelation() {
+    void testCase114_dissolve_deletesRelation() {
         DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
         List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
-        FixPlan plan = findPlanByTestId(plans, "120");
-        assertNotNull(plan, "Test case 120 should be fixable");
+        FixPlan plan = findPlanByTestId(plans, "114");
+        assertNotNull(plan, "Test case 114 should be fixable");
 
         var relation = plan.getRelation();
         MultipolygonFixer.fixRelations(List.of(plan));
@@ -793,10 +793,10 @@ class MultipolygonFixerTest {
     }
 
     @Test
-    void testCase120_dissolve_preservesCoastlineWay() {
+    void testCase114_dissolve_preservesCoastlineWay() {
         DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
         List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
-        FixPlan plan = findPlanByTestId(plans, "120");
+        FixPlan plan = findPlanByTestId(plans, "114");
 
         Way coastlineWay = plan.getRelation().getMembers().get(0).getWay();
         assertEquals("coastline", coastlineWay.get("natural"),
@@ -812,10 +812,10 @@ class MultipolygonFixerTest {
     }
 
     @Test
-    void testCase120_dissolve_createsNewBeachWay() {
+    void testCase114_dissolve_createsNewBeachWay() {
         DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
         List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
-        FixPlan plan = findPlanByTestId(plans, "120");
+        FixPlan plan = findPlanByTestId(plans, "114");
 
         MultipolygonFixer.fixRelations(List.of(plan));
 
@@ -830,14 +830,14 @@ class MultipolygonFixerTest {
             "New beach way should be closed");
     }
 
-    // --- Test case 121 (from testdata-proposed.osm): DISSOLVE with mixed tagged/untagged outers ---
+    // --- Test case 115 (from testdata-proposed.osm): DISSOLVE with mixed tagged/untagged outers ---
 
     @Test
-    void testCase121_dissolve_preservesTaggedWayAndReusesUntagged() {
+    void testCase115_dissolve_preservesTaggedWayAndReusesUntagged() {
         DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
         List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
-        FixPlan plan = findPlanByTestId(plans, "121");
-        assertNotNull(plan, "Test case 121 should be fixable");
+        FixPlan plan = findPlanByTestId(plans, "115");
+        assertNotNull(plan, "Test case 115 should be fixable");
 
         Relation relation = plan.getRelation();
         // Find ways by tag rather than assuming member order
@@ -862,10 +862,10 @@ class MultipolygonFixerTest {
     }
 
     @Test
-    void testCase121_dissolve_createsNewWayForTaggedOuter() {
+    void testCase115_dissolve_createsNewWayForTaggedOuter() {
         DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
         List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
-        FixPlan plan = findPlanByTestId(plans, "121");
+        FixPlan plan = findPlanByTestId(plans, "115");
 
         MultipolygonFixer.fixRelations(List.of(plan));
 
@@ -876,14 +876,14 @@ class MultipolygonFixerTest {
             "Should have 2 ways with natural=beach (one new, one reused)");
     }
 
-    // --- Test case 122 (from testdata-proposed.osm): EXTRACT with tagged outer ---
+    // --- Test case 116 (from testdata-proposed.osm): EXTRACT with tagged outer ---
 
     @Test
-    void testCase122_extract_preservesFootwayTag() {
+    void testCase116_extract_preservesFootwayTag() {
         DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
         List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
-        FixPlan plan = findPlanByTestId(plans, "122");
-        assertNotNull(plan, "Test case 122 should be fixable");
+        FixPlan plan = findPlanByTestId(plans, "116");
+        assertNotNull(plan, "Test case 116 should be fixable");
 
         Relation relation = plan.getRelation();
         Way footwayWay = relation.getMembers().stream()
@@ -900,10 +900,10 @@ class MultipolygonFixerTest {
     }
 
     @Test
-    void testCase122_extract_createsNewWayWithRelationTags() {
+    void testCase116_extract_createsNewWayWithRelationTags() {
         DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
         List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
-        FixPlan plan = findPlanByTestId(plans, "122");
+        FixPlan plan = findPlanByTestId(plans, "116");
 
         Relation relation = plan.getRelation();
         Way footwayWay = relation.getMembers().stream()
@@ -921,14 +921,14 @@ class MultipolygonFixerTest {
             "Should have a new way with landuse=grass sharing the footway geometry");
     }
 
-    // --- Test case 123: CONSOLIDATE_RINGS reuses existing matching way ---
+    // --- Test case 117: CONSOLIDATE_RINGS reuses existing matching way ---
 
     @Test
-    void testCase123_reuseExistingWay_relationSurvives() {
+    void testCase117_reuseExistingWay_relationSurvives() {
         DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
         List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
-        FixPlan plan = findPlanByTestId(plans, "123");
-        assertNotNull(plan, "Test case 123 should be fixable");
+        FixPlan plan = findPlanByTestId(plans, "117");
+        assertNotNull(plan, "Test case 117 should be fixable");
 
         var relation = plan.getRelation();
         MultipolygonFixer.fixRelations(List.of(plan));
@@ -939,14 +939,14 @@ class MultipolygonFixerTest {
     }
 
     @Test
-    void testCase123_reuseExistingWay_existingWayBecomesInner() {
+    void testCase117_reuseExistingWay_existingWayBecomesInner() {
         DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
         List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
-        FixPlan plan = findPlanByTestId(plans, "123");
+        FixPlan plan = findPlanByTestId(plans, "117");
 
         // Find way -4237 (the pre-existing natural=water way that is NOT a relation member)
         Way existingWaterWay = ds.getWays().stream()
-            .filter(w -> "123".equals(w.get("_test_case")))
+            .filter(w -> "117".equals(w.get("_test_case")))
             .findFirst()
             .orElseThrow(() -> new AssertionError("Pre-existing natural=water way should exist"));
 
@@ -969,10 +969,10 @@ class MultipolygonFixerTest {
     }
 
     @Test
-    void testCase123_reuseExistingWay_sourceWaysDeleted() {
+    void testCase117_reuseExistingWay_sourceWaysDeleted() {
         DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
         List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
-        FixPlan plan = findPlanByTestId(plans, "123");
+        FixPlan plan = findPlanByTestId(plans, "117");
 
         // Collect the 2 open inner source ways before the fix
         List<Way> openInners = plan.getRelation().getMembers().stream()
@@ -990,14 +990,14 @@ class MultipolygonFixerTest {
     }
 
     @Test
-    void testCase123_reuseExistingWay_noDuplicateWayCreated() {
+    void testCase117_reuseExistingWay_noDuplicateWayCreated() {
         DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
         List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
-        FixPlan plan = findPlanByTestId(plans, "123");
+        FixPlan plan = findPlanByTestId(plans, "117");
 
         // Find the existing water way before fix
         Way existingWaterWay = ds.getWays().stream()
-            .filter(w -> "123".equals(w.get("_test_case")))
+            .filter(w -> "117".equals(w.get("_test_case")))
             .findFirst()
             .orElseThrow(() -> new AssertionError("Pre-existing water way should exist"));
 
@@ -1124,14 +1124,14 @@ class MultipolygonFixerTest {
         }
     }
 
-    // --- Test case 124 (from testdata-proposed.osm): CONSOLIDATE_INNERS (2 abutting inners) ---
+    // --- Test case 118 (from testdata-proposed.osm): CONSOLIDATE_INNERS (2 abutting inners) ---
 
     @Test
-    void testCase124_analyzerDetectsConsolidateInners() {
+    void testCase118_analyzerDetectsConsolidateInners() {
         DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
         List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
-        FixPlan plan = findPlanByTestId(plans, "124");
-        assertNotNull(plan, "Test case 124 should be fixable");
+        FixPlan plan = findPlanByTestId(plans, "118");
+        assertNotNull(plan, "Test case 118 should be fixable");
 
         boolean hasConsolidateInners = plan.getOperations().stream()
             .anyMatch(op -> op.getType() == FixOpType.CONSOLIDATE_INNERS);
@@ -1139,10 +1139,10 @@ class MultipolygonFixerTest {
     }
 
     @Test
-    void testCase124_merges2InnersInto1() {
+    void testCase118_merges2InnersInto1() {
         DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
         List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
-        FixPlan plan = findPlanByTestId(plans, "124");
+        FixPlan plan = findPlanByTestId(plans, "118");
         assertNotNull(plan);
 
         Relation relation = plan.getRelation();
@@ -1166,10 +1166,10 @@ class MultipolygonFixerTest {
     }
 
     @Test
-    void testCase124_undoRestoresOriginal() {
+    void testCase118_undoRestoresOriginal() {
         DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
         List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
-        FixPlan plan = findPlanByTestId(plans, "124");
+        FixPlan plan = findPlanByTestId(plans, "118");
         assertNotNull(plan);
 
         Relation relation = plan.getRelation();
@@ -1181,14 +1181,14 @@ class MultipolygonFixerTest {
         assertEquals(2, innersAfterUndo, "After undo, should have 2 inner members again");
     }
 
-    // --- Test case 125 (from testdata-proposed.osm): CONSOLIDATE_INNERS (3 chained inners) ---
+    // --- Test case 119 (from testdata-proposed.osm): CONSOLIDATE_INNERS (3 chained inners) ---
 
     @Test
-    void testCase125_merges3InnersInto1() {
+    void testCase119_merges3InnersInto1() {
         DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
         List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
-        FixPlan plan = findPlanByTestId(plans, "125");
-        assertNotNull(plan, "Test case 125 should be fixable");
+        FixPlan plan = findPlanByTestId(plans, "119");
+        assertNotNull(plan, "Test case 119 should be fixable");
 
         boolean hasConsolidateInners = plan.getOperations().stream()
             .anyMatch(op -> op.getType() == FixOpType.CONSOLIDATE_INNERS);
@@ -1207,13 +1207,13 @@ class MultipolygonFixerTest {
         assertEquals(1, innersAfter, "Should have 1 inner after merging 3 chained inners");
     }
 
-    // --- Test case 126 (from testdata-proposed.osm): No merge (1 shared node only) ---
+    // --- Test case 120 (from testdata-proposed.osm): No merge (1 shared node only) ---
 
     @Test
-    void testCase126_noConsolidateInnersFor1SharedNode() {
+    void testCase120_noConsolidateInnersFor1SharedNode() {
         DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
         List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
-        FixPlan plan = findPlanByTestId(plans, "126");
+        FixPlan plan = findPlanByTestId(plans, "120");
         // This relation should either not be fixable, or if fixable, should NOT have CONSOLIDATE_INNERS
         if (plan != null) {
             boolean hasConsolidateInners = plan.getOperations().stream()
@@ -1223,21 +1223,21 @@ class MultipolygonFixerTest {
         }
     }
 
-    // --- Test case 127 (from testdata-proposed.osm): open inner absorbed + abutting merge ---
+    // --- Test case 121 (from testdata-proposed.osm): open inner absorbed + abutting merge ---
 
     @Test
-    void testCase127_analyzerHandlesOpenInnerAbsorption() {
+    void testCase121_analyzerHandlesOpenInnerAbsorption() {
         DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
         List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
-        FixPlan plan = findPlanByTestId(plans, "127");
-        assertNotNull(plan, "Test case 127 should be fixable (not INNER_WAYS_CANT_FORM_RINGS)");
+        FixPlan plan = findPlanByTestId(plans, "121");
+        assertNotNull(plan, "Test case 121 should be fixable (not INNER_WAYS_CANT_FORM_RINGS)");
     }
 
     @Test
-    void testCase127_fixProducesSingleInner() {
+    void testCase121_fixProducesSingleInner() {
         DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
         List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
-        FixPlan plan = findPlanByTestId(plans, "127");
+        FixPlan plan = findPlanByTestId(plans, "121");
         assertNotNull(plan);
 
         Relation relation = plan.getRelation();
@@ -1260,10 +1260,10 @@ class MultipolygonFixerTest {
     }
 
     @Test
-    void testCase127_undoRestoresOriginal() {
+    void testCase121_undoRestoresOriginal() {
         DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
         List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
-        FixPlan plan = findPlanByTestId(plans, "127");
+        FixPlan plan = findPlanByTestId(plans, "121");
         assertNotNull(plan);
 
         Relation relation = plan.getRelation();
@@ -1275,14 +1275,14 @@ class MultipolygonFixerTest {
         assertEquals(3, innersAfterUndo, "After undo, should have 3 inner members again");
     }
 
-    // --- Test case 128 (from testdata-proposed.osm): standalone open inner absorption ---
+    // --- Test case 122 (from testdata-proposed.osm): standalone open inner absorption ---
 
     @Test
-    void testCase128_standaloneAbsorption() {
+    void testCase122_standaloneAbsorption() {
         DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
         List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
-        FixPlan plan = findPlanByTestId(plans, "128");
-        assertNotNull(plan, "Test case 128 should be fixable");
+        FixPlan plan = findPlanByTestId(plans, "122");
+        assertNotNull(plan, "Test case 122 should be fixable");
 
         Relation relation = plan.getRelation();
         long innersBefore = relation.getMembers().stream()
@@ -1303,25 +1303,25 @@ class MultipolygonFixerTest {
         assertTrue(innerWay.isClosed(), "Absorbed inner way should be closed");
     }
 
-    // --- Test case 129 (from testdata-proposed.osm): no absorption (endpoints on different rings) ---
+    // --- Test case 123 (from testdata-proposed.osm): no absorption (endpoints on different rings) ---
 
     @Test
-    void testCase129_noAbsorptionDifferentRings() {
+    void testCase123_noAbsorptionDifferentRings() {
         DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
         List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
-        FixPlan plan = findPlanByTestId(plans, "129");
+        FixPlan plan = findPlanByTestId(plans, "123");
         // This relation should NOT be fixable — open way can't be absorbed
-        assertNull(plan, "Test case 129 should not be fixable (endpoints on different rings)");
+        assertNull(plan, "Test case 123 should not be fixable (endpoints on different rings)");
     }
 
-    // --- Test case 130 (from testdata-proposed.osm): EXTRACT_INNERS (edge-sharing tagged inner) ---
+    // --- Test case 124 (from testdata-proposed.osm): EXTRACT_INNERS (edge-sharing tagged inner) ---
 
     @Test
-    void testCase130_extractEdgeSharingInner() {
+    void testCase124_extractEdgeSharingInner() {
         DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
         List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
-        FixPlan plan = findPlanByTestId(plans, "130");
-        assertNotNull(plan, "Test case 130 should be fixable");
+        FixPlan plan = findPlanByTestId(plans, "124");
+        assertNotNull(plan, "Test case 124 should be fixable");
 
         // Should have EXTRACT_INNERS op
         boolean hasExtractInners = plan.getOperations().stream()
@@ -1355,14 +1355,14 @@ class MultipolygonFixerTest {
         assertFalse(innerInRelation, "Extracted inner should not be in the relation");
     }
 
-    // --- Test case 131 (from testdata-proposed.osm): untagged edge-sharing inner NOT extracted ---
+    // --- Test case 125 (from testdata-proposed.osm): untagged edge-sharing inner NOT extracted ---
 
     @Test
-    void testCase131_noExtractUntaggedEdgeSharingInner() {
+    void testCase125_noExtractUntaggedEdgeSharingInner() {
         DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
         List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
-        FixPlan plan = findPlanByTestId(plans, "131");
-        assertNotNull(plan, "Test case 131 should be fixable");
+        FixPlan plan = findPlanByTestId(plans, "125");
+        assertNotNull(plan, "Test case 125 should be fixable");
 
         // Should NOT have EXTRACT_INNERS op
         boolean hasExtractInners = plan.getOperations().stream()
