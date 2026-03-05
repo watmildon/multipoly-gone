@@ -360,6 +360,20 @@ public class MultipolyGoneDialog extends ToggleDialog
                         }
                     }
                 }
+                if (op.getType() == FixOpType.CONSOLIDATE_INNERS
+                        && op.getConsolidatedInnerGroups() != null) {
+                    for (var group : op.getConsolidatedInnerGroups()) {
+                        for (WayChainBuilder.Ring srcRing : group.getSourceRings()) {
+                            for (Way way : srcRing.getSourceWays()) {
+                                if (!way.isReferrersDownloaded()
+                                        && !MultipolygonFixer.hasSignificantTags(
+                                            way, insignificantTags)) {
+                                    result.add(way);
+                                }
+                            }
+                        }
+                    }
+                }
                 if (op.getType() == FixOpType.DECOMPOSE_SELF_INTERSECTIONS && op.getDecomposedRings() != null) {
                     for (var decomp : op.getDecomposedRings()) {
                         for (Way way : decomp.getOriginalRing().getSourceWays()) {

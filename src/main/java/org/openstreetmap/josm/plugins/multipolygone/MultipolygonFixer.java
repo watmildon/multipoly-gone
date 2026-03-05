@@ -302,6 +302,60 @@ public class MultipolygonFixer {
                     }
                 }
 
+                case CONSOLIDATE_INNERS -> {
+                    for (MultipolygonAnalyzer.ConsolidatedInnerGroup group :
+                            op.getConsolidatedInnerGroups()) {
+                        WayChainBuilder.Ring mergedRing = group.getMergedRing();
+                        List<Way> allSourceWays = new ArrayList<>();
+                        for (WayChainBuilder.Ring srcRing : group.getSourceRings()) {
+                            allSourceWays.addAll(srcRing.getSourceWays());
+                            // If this source ring was created by a prior CONSOLIDATE_RINGS,
+                            // remove its AddCommand since it's being superseded
+                            Way priorWay = ringToWay.get(srcRing);
+                            if (priorWay != null) {
+                                commands.removeIf(cmd -> cmd instanceof AddCommand
+                                    && ((AddCommand) cmd).getParticipatingPrimitives()
+                                        .contains(priorWay));
+                            }
+                        }
+
+                        boolean anyTagged = false;
+                        Way reusableWay = null;
+                        for (Way src : allSourceWays) {
+                            if (hasSignificantTags(src, insignificantTags)) {
+                                anyTagged = true;
+                            } else if (reusableWay == null
+                                    && !isSharedWithOtherRelation(src, relation)) {
+                                reusableWay = src;
+                            }
+                        }
+
+                        Way targetWay;
+                        if (anyTagged && reusableWay != null) {
+                            Way modified = new Way(reusableWay);
+                            modified.setNodes(mergedRing.getNodes());
+                            commands.add(new ChangeCommand(reusableWay, modified));
+                            targetWay = reusableWay;
+                            for (Way src : allSourceWays) {
+                                if (src != reusableWay
+                                        && !hasSignificantTags(src, insignificantTags)) {
+                                    waysToCleanup.add(src);
+                                }
+                            }
+                        } else {
+                            targetWay = new Way();
+                            targetWay.setNodes(mergedRing.getNodes());
+                            commands.add(new AddCommand(ds, targetWay));
+                            waysToCleanup.addAll(allSourceWays);
+                        }
+
+                        ringToWay.put(mergedRing, targetWay);
+                        for (Way src : allSourceWays) {
+                            memberReplacements.put(src, targetWay);
+                        }
+                    }
+                }
+
                 case EXTRACT_OUTERS -> {
                     for (WayChainBuilder.Ring ring : op.getRings()) {
                         Way targetWay = ringToWay.get(ring);
@@ -472,6 +526,58 @@ public class MultipolygonFixer {
 
                                         compRingToWay.put(ring, targetWay);
                                         for (Way src : ring.getSourceWays()) {
+                                            splitReplacements.put(src, targetWay);
+                                            compReplacements.put(src, targetWay);
+                                        }
+                                    }
+                                }
+                                case CONSOLIDATE_INNERS -> {
+                                    for (MultipolygonAnalyzer.ConsolidatedInnerGroup group :
+                                            subOp.getConsolidatedInnerGroups()) {
+                                        WayChainBuilder.Ring mergedRing = group.getMergedRing();
+                                        List<Way> allSrcWays = new ArrayList<>();
+                                        for (WayChainBuilder.Ring srcRing : group.getSourceRings()) {
+                                            allSrcWays.addAll(srcRing.getSourceWays());
+                                            Way priorWay = compRingToWay.get(srcRing);
+                                            if (priorWay != null) {
+                                                commands.removeIf(cmd -> cmd instanceof AddCommand
+                                                    && ((AddCommand) cmd).getParticipatingPrimitives()
+                                                        .contains(priorWay));
+                                            }
+                                        }
+
+                                        boolean anyTaggedSplit = false;
+                                        Way reusableWaySplit = null;
+                                        for (Way src : allSrcWays) {
+                                            if (hasSignificantTags(src, insignificantTags)) {
+                                                anyTaggedSplit = true;
+                                            } else if (reusableWaySplit == null
+                                                    && !isSharedWithOtherRelation(src, relation)) {
+                                                reusableWaySplit = src;
+                                            }
+                                        }
+
+                                        Way targetWay;
+                                        if (anyTaggedSplit && reusableWaySplit != null) {
+                                            Way modified = new Way(reusableWaySplit);
+                                            modified.setNodes(mergedRing.getNodes());
+                                            commands.add(new ChangeCommand(reusableWaySplit, modified));
+                                            targetWay = reusableWaySplit;
+                                            for (Way src : allSrcWays) {
+                                                if (src != reusableWaySplit
+                                                        && !hasSignificantTags(src, insignificantTags)) {
+                                                    waysToCleanup.add(src);
+                                                }
+                                            }
+                                        } else {
+                                            targetWay = new Way();
+                                            targetWay.setNodes(mergedRing.getNodes());
+                                            commands.add(new AddCommand(ds, targetWay));
+                                            waysToCleanup.addAll(allSrcWays);
+                                        }
+
+                                        compRingToWay.put(mergedRing, targetWay);
+                                        for (Way src : allSrcWays) {
                                             splitReplacements.put(src, targetWay);
                                             compReplacements.put(src, targetWay);
                                         }

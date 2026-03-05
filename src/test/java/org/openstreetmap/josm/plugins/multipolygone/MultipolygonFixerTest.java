@@ -15,6 +15,7 @@ import org.openstreetmap.josm.data.osm.DataSet;
 import org.openstreetmap.josm.data.osm.Relation;
 import org.openstreetmap.josm.data.osm.RelationMember;
 import org.openstreetmap.josm.data.osm.Way;
+import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixOpType;
 import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixPlan;
 
 class MultipolygonFixerTest {
@@ -1121,5 +1122,195 @@ class MultipolygonFixerTest {
                 }
             }
         }
+    }
+
+    // --- Test case 124 (from testdata-proposed.osm): CONSOLIDATE_INNERS (2 abutting inners) ---
+
+    @Test
+    void testCase124_analyzerDetectsConsolidateInners() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "124");
+        assertNotNull(plan, "Test case 124 should be fixable");
+
+        boolean hasConsolidateInners = plan.getOperations().stream()
+            .anyMatch(op -> op.getType() == FixOpType.CONSOLIDATE_INNERS);
+        assertTrue(hasConsolidateInners, "Plan should include CONSOLIDATE_INNERS");
+    }
+
+    @Test
+    void testCase124_merges2InnersInto1() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "124");
+        assertNotNull(plan);
+
+        Relation relation = plan.getRelation();
+        long innersBefore = relation.getMembers().stream()
+            .filter(m -> "inner".equals(m.getRole())).count();
+        assertEquals(2, innersBefore, "Should start with 2 inner members");
+
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        assertFalse(relation.isDeleted(), "Relation should survive (has inners)");
+        long innersAfter = relation.getMembers().stream()
+            .filter(m -> "inner".equals(m.getRole())).count();
+        assertEquals(1, innersAfter, "Should have 1 inner after merging 2 abutting inners");
+
+        // Verify the inner way is closed
+        Way innerWay = relation.getMembers().stream()
+            .filter(m -> "inner".equals(m.getRole()))
+            .map(m -> m.getWay())
+            .findFirst().orElseThrow();
+        assertTrue(innerWay.isClosed(), "Merged inner way should be closed");
+    }
+
+    @Test
+    void testCase124_undoRestoresOriginal() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "124");
+        assertNotNull(plan);
+
+        Relation relation = plan.getRelation();
+        MultipolygonFixer.fixRelations(List.of(plan));
+        UndoRedoHandler.getInstance().undo();
+
+        long innersAfterUndo = relation.getMembers().stream()
+            .filter(m -> "inner".equals(m.getRole())).count();
+        assertEquals(2, innersAfterUndo, "After undo, should have 2 inner members again");
+    }
+
+    // --- Test case 125 (from testdata-proposed.osm): CONSOLIDATE_INNERS (3 chained inners) ---
+
+    @Test
+    void testCase125_merges3InnersInto1() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "125");
+        assertNotNull(plan, "Test case 125 should be fixable");
+
+        boolean hasConsolidateInners = plan.getOperations().stream()
+            .anyMatch(op -> op.getType() == FixOpType.CONSOLIDATE_INNERS);
+        assertTrue(hasConsolidateInners, "Plan should include CONSOLIDATE_INNERS");
+
+        Relation relation = plan.getRelation();
+        long innersBefore = relation.getMembers().stream()
+            .filter(m -> "inner".equals(m.getRole())).count();
+        assertEquals(3, innersBefore, "Should start with 3 inner members");
+
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        assertFalse(relation.isDeleted(), "Relation should survive");
+        long innersAfter = relation.getMembers().stream()
+            .filter(m -> "inner".equals(m.getRole())).count();
+        assertEquals(1, innersAfter, "Should have 1 inner after merging 3 chained inners");
+    }
+
+    // --- Test case 126 (from testdata-proposed.osm): No merge (1 shared node only) ---
+
+    @Test
+    void testCase126_noConsolidateInnersFor1SharedNode() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "126");
+        // This relation should either not be fixable, or if fixable, should NOT have CONSOLIDATE_INNERS
+        if (plan != null) {
+            boolean hasConsolidateInners = plan.getOperations().stream()
+                .anyMatch(op -> op.getType() == FixOpType.CONSOLIDATE_INNERS);
+            assertFalse(hasConsolidateInners,
+                "Should NOT include CONSOLIDATE_INNERS when inners share only 1 node");
+        }
+    }
+
+    // --- Test case 127 (from testdata-proposed.osm): open inner absorbed + abutting merge ---
+
+    @Test
+    void testCase127_analyzerHandlesOpenInnerAbsorption() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "127");
+        assertNotNull(plan, "Test case 127 should be fixable (not INNER_WAYS_CANT_FORM_RINGS)");
+    }
+
+    @Test
+    void testCase127_fixProducesSingleInner() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "127");
+        assertNotNull(plan);
+
+        Relation relation = plan.getRelation();
+        long innersBefore = relation.getMembers().stream()
+            .filter(m -> "inner".equals(m.getRole())).count();
+        assertEquals(3, innersBefore, "Should start with 3 inner members");
+
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        assertFalse(relation.isDeleted(), "Relation should survive");
+        long innersAfter = relation.getMembers().stream()
+            .filter(m -> "inner".equals(m.getRole())).count();
+        assertEquals(1, innersAfter, "Should have 1 inner after absorption + merge");
+
+        Way innerWay = relation.getMembers().stream()
+            .filter(m -> "inner".equals(m.getRole()))
+            .map(m -> m.getWay())
+            .findFirst().orElseThrow();
+        assertTrue(innerWay.isClosed(), "Final inner way should be closed");
+    }
+
+    @Test
+    void testCase127_undoRestoresOriginal() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "127");
+        assertNotNull(plan);
+
+        Relation relation = plan.getRelation();
+        MultipolygonFixer.fixRelations(List.of(plan));
+        UndoRedoHandler.getInstance().undo();
+
+        long innersAfterUndo = relation.getMembers().stream()
+            .filter(m -> "inner".equals(m.getRole())).count();
+        assertEquals(3, innersAfterUndo, "After undo, should have 3 inner members again");
+    }
+
+    // --- Test case 128 (from testdata-proposed.osm): standalone open inner absorption ---
+
+    @Test
+    void testCase128_standaloneAbsorption() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "128");
+        assertNotNull(plan, "Test case 128 should be fixable");
+
+        Relation relation = plan.getRelation();
+        long innersBefore = relation.getMembers().stream()
+            .filter(m -> "inner".equals(m.getRole())).count();
+        assertEquals(2, innersBefore, "Should start with 2 inner members");
+
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        assertFalse(relation.isDeleted(), "Relation should survive");
+        long innersAfter = relation.getMembers().stream()
+            .filter(m -> "inner".equals(m.getRole())).count();
+        assertEquals(1, innersAfter, "Should have 1 inner after absorption");
+
+        Way innerWay = relation.getMembers().stream()
+            .filter(m -> "inner".equals(m.getRole()))
+            .map(m -> m.getWay())
+            .findFirst().orElseThrow();
+        assertTrue(innerWay.isClosed(), "Absorbed inner way should be closed");
+    }
+
+    // --- Test case 129 (from testdata-proposed.osm): no absorption (endpoints on different rings) ---
+
+    @Test
+    void testCase129_noAbsorptionDifferentRings() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "129");
+        // This relation should NOT be fixable — open way can't be absorbed
+        assertNull(plan, "Test case 129 should not be fixable (endpoints on different rings)");
     }
 }

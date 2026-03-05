@@ -1824,6 +1824,100 @@ def gen_touching_inner_with_extract():
 
 
 # ============================================================
+# CATEGORY 42: Adjoining inner ring consolidation
+# ============================================================
+
+def gen_consolidate_2_abutting_inners():
+    """1 outer + 2 closed inners sharing 1 edge (2 shared nodes)."""
+    tid, tags = make_test(
+        "1 outer + 2 closed inners sharing 1 edge (2 shared nodes)",
+        "CONSOLIDATE_INNERS: merge 2 inners into 1",
+        {"natural": "water"})
+    lat, lon = grid_pos(test_num)
+
+    # Large outer
+    outer_w = closed_polygon(lat, lon, 0.002, 6)
+
+    # Two abutting inners sharing an edge
+    # Inner 1: square
+    n1 = add_node(lat + 0.0005, lon - 0.0005)
+    n2 = add_node(lat + 0.0005, lon + 0.0001)
+    n3 = add_node(lat - 0.0003, lon + 0.0001)  # shared
+    n4 = add_node(lat - 0.0003, lon - 0.0005)  # shared
+    inner1 = add_way([n1, n2, n3, n4, n1])
+
+    # Inner 2: shares edge n3-n4 (reversed direction: n4, n3)
+    n5 = add_node(lat + 0.0005, lon + 0.0007)
+    n6 = add_node(lat - 0.0003, lon + 0.0007)
+    inner2 = add_way([n4, n3, n6, n5, n4])
+
+    add_relation([("way", outer_w, "outer"),
+                  ("way", inner1, "inner"),
+                  ("way", inner2, "inner")], tags)
+
+
+def gen_consolidate_3_chained_inners():
+    """1 outer + 3 closed inners in chain (A-B share edge, B-C share edge)."""
+    tid, tags = make_test(
+        "1 outer + 3 closed inners chained: A-B, B-C share edges",
+        "CONSOLIDATE_INNERS: iterative merge 3 inners into 1",
+        {"natural": "water"})
+    lat, lon = grid_pos(test_num)
+
+    outer_w = closed_polygon(lat, lon, 0.002, 6)
+
+    # Three chained inners, each sharing one edge with the next
+    # Inner A
+    na1 = add_node(lat + 0.0005, lon - 0.0008)
+    na2 = add_node(lat + 0.0005, lon - 0.0002)  # shared A-B
+    na3 = add_node(lat - 0.0003, lon - 0.0002)  # shared A-B
+    na4 = add_node(lat - 0.0003, lon - 0.0008)
+    inner_a = add_way([na1, na2, na3, na4, na1])
+
+    # Inner B: shares na2-na3 with A, and nb2-nb3 with C
+    nb2 = add_node(lat + 0.0005, lon + 0.0004)  # shared B-C
+    nb3 = add_node(lat - 0.0003, lon + 0.0004)  # shared B-C
+    inner_b = add_way([na2, nb2, nb3, na3, na2])
+
+    # Inner C: shares nb2-nb3 with B
+    nc2 = add_node(lat + 0.0005, lon + 0.0010)
+    nc3 = add_node(lat - 0.0003, lon + 0.0010)
+    inner_c = add_way([nb2, nc2, nc3, nb3, nb2])
+
+    add_relation([("way", outer_w, "outer"),
+                  ("way", inner_a, "inner"),
+                  ("way", inner_b, "inner"),
+                  ("way", inner_c, "inner")], tags)
+
+
+def gen_no_merge_1_shared_node():
+    """1 outer + 2 closed inners sharing only 1 node (no edge)."""
+    tid, tags = make_test(
+        "1 outer + 2 closed inners sharing only 1 node (no edge)",
+        "No CONSOLIDATE_INNERS: need >= 2 shared nodes for an edge",
+        {"natural": "water"})
+    lat, lon = grid_pos(test_num)
+
+    outer_w = closed_polygon(lat, lon, 0.002, 6)
+
+    # Two inners sharing exactly 1 node
+    shared = add_node(lat, lon)
+    n1 = add_node(lat + 0.0005, lon - 0.0005)
+    n2 = add_node(lat + 0.0005, lon - 0.0001)
+    n3 = add_node(lat - 0.0003, lon - 0.0003)
+    inner1 = add_way([shared, n1, n2, shared])
+
+    n4 = add_node(lat + 0.0005, lon + 0.0001)
+    n5 = add_node(lat + 0.0005, lon + 0.0005)
+    n6 = add_node(lat - 0.0003, lon + 0.0003)
+    inner2 = add_way([shared, n4, n5, n6, shared])
+
+    add_relation([("way", outer_w, "outer"),
+                  ("way", inner1, "inner"),
+                  ("way", inner2, "inner")], tags)
+
+
+# ============================================================
 # Generate everything
 # ============================================================
 
@@ -2020,6 +2114,11 @@ def generate_all():
 
     # Category 41: Additional touching inner
     gen_touching_inner_with_extract()
+
+    # Category 42: Adjoining inner ring consolidation
+    gen_consolidate_2_abutting_inners()
+    gen_consolidate_3_chained_inners()
+    gen_no_merge_1_shared_node()
 
 
 def write_osm(filename):

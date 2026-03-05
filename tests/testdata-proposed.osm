@@ -4898,4 +4898,295 @@
     <tag k='_test_notes' v='2 open inners chain to same geometry as non-member way -4237 (natural=water)' />
     <tag k='_test_expected' v='CONSOLIDATE: reuse -4237 as inner; DISSOLVE: relation deleted, outer tagged' />
   </relation>
+  <!-- Test case 124: CONSOLIDATE_INNERS — 2 abutting closed inners sharing 1 edge (2 shared nodes) -->
+  <node id='-300001' action='modify' visible='true' lat='47.56' lon='-122.48' />
+  <node id='-300002' action='modify' visible='true' lat='47.562' lon='-122.48' />
+  <node id='-300003' action='modify' visible='true' lat='47.562' lon='-122.476' />
+  <node id='-300004' action='modify' visible='true' lat='47.56' lon='-122.476' />
+  <node id='-300005' action='modify' visible='true' lat='47.558' lon='-122.478' />
+  <way id='-300101' action='modify' visible='true'>
+    <nd ref='-300001' />
+    <nd ref='-300002' />
+    <nd ref='-300003' />
+    <nd ref='-300004' />
+    <nd ref='-300005' />
+    <nd ref='-300001' />
+  </way>
+  <node id='-300011' action='modify' visible='true' lat='47.5615' lon='-122.4795' />
+  <node id='-300012' action='modify' visible='true' lat='47.5615' lon='-122.4785' />
+  <node id='-300013' action='modify' visible='true' lat='47.5605' lon='-122.4785' />
+  <node id='-300014' action='modify' visible='true' lat='47.5605' lon='-122.4795' />
+  <way id='-300102' action='modify' visible='true'>
+    <nd ref='-300011' />
+    <nd ref='-300012' />
+    <nd ref='-300013' />
+    <nd ref='-300014' />
+    <nd ref='-300011' />
+  </way>
+  <node id='-300015' action='modify' visible='true' lat='47.5615' lon='-122.4775' />
+  <node id='-300016' action='modify' visible='true' lat='47.5605' lon='-122.4775' />
+  <way id='-300103' action='modify' visible='true'>
+    <nd ref='-300012' />
+    <nd ref='-300015' />
+    <nd ref='-300016' />
+    <nd ref='-300013' />
+    <nd ref='-300012' />
+  </way>
+  <relation id='-300201' action='modify' visible='true'>
+    <member type='way' ref='-300101' role='outer' />
+    <member type='way' ref='-300102' role='inner' />
+    <member type='way' ref='-300103' role='inner' />
+    <tag k='type' v='multipolygon' />
+    <tag k='natural' v='water' />
+    <tag k='_test_id' v='124' />
+    <tag k='_test_notes' v='1 outer + 2 closed inners sharing 1 edge (2 shared nodes)' />
+    <tag k='_test_expected' v='CONSOLIDATE_INNERS: merge 2 inners into 1' />
+  </relation>
+  <!-- Test case 125: CONSOLIDATE_INNERS — 3 chained inners (A-B, B-C share edges) -->
+  <node id='-300021' action='modify' visible='true' lat='47.56' lon='-122.474' />
+  <node id='-300022' action='modify' visible='true' lat='47.562' lon='-122.474' />
+  <node id='-300023' action='modify' visible='true' lat='47.562' lon='-122.470' />
+  <node id='-300024' action='modify' visible='true' lat='47.56' lon='-122.470' />
+  <node id='-300025' action='modify' visible='true' lat='47.558' lon='-122.472' />
+  <way id='-300104' action='modify' visible='true'>
+    <nd ref='-300021' />
+    <nd ref='-300022' />
+    <nd ref='-300023' />
+    <nd ref='-300024' />
+    <nd ref='-300025' />
+    <nd ref='-300021' />
+  </way>
+  <node id='-300031' action='modify' visible='true' lat='47.5615' lon='-122.4735' />
+  <node id='-300032' action='modify' visible='true' lat='47.5615' lon='-122.4725' />
+  <node id='-300033' action='modify' visible='true' lat='47.5605' lon='-122.4725' />
+  <node id='-300034' action='modify' visible='true' lat='47.5605' lon='-122.4735' />
+  <way id='-300105' action='modify' visible='true'>
+    <nd ref='-300031' />
+    <nd ref='-300032' />
+    <nd ref='-300033' />
+    <nd ref='-300034' />
+    <nd ref='-300031' />
+  </way>
+  <node id='-300035' action='modify' visible='true' lat='47.5615' lon='-122.4715' />
+  <node id='-300036' action='modify' visible='true' lat='47.5605' lon='-122.4715' />
+  <way id='-300106' action='modify' visible='true'>
+    <nd ref='-300032' />
+    <nd ref='-300035' />
+    <nd ref='-300036' />
+    <nd ref='-300033' />
+    <nd ref='-300032' />
+  </way>
+  <node id='-300037' action='modify' visible='true' lat='47.5615' lon='-122.4705' />
+  <node id='-300038' action='modify' visible='true' lat='47.5605' lon='-122.4705' />
+  <way id='-300107' action='modify' visible='true'>
+    <nd ref='-300035' />
+    <nd ref='-300037' />
+    <nd ref='-300038' />
+    <nd ref='-300036' />
+    <nd ref='-300035' />
+  </way>
+  <relation id='-300202' action='modify' visible='true'>
+    <member type='way' ref='-300104' role='outer' />
+    <member type='way' ref='-300105' role='inner' />
+    <member type='way' ref='-300106' role='inner' />
+    <member type='way' ref='-300107' role='inner' />
+    <tag k='type' v='multipolygon' />
+    <tag k='natural' v='water' />
+    <tag k='_test_id' v='125' />
+    <tag k='_test_notes' v='1 outer + 3 closed inners chained: A-B, B-C share edges' />
+    <tag k='_test_expected' v='CONSOLIDATE_INNERS: iterative merge 3 inners into 1' />
+  </relation>
+  <!-- Test case 126: No CONSOLIDATE_INNERS — 2 inners sharing only 1 node -->
+  <node id='-300041' action='modify' visible='true' lat='47.56' lon='-122.468' />
+  <node id='-300042' action='modify' visible='true' lat='47.562' lon='-122.468' />
+  <node id='-300043' action='modify' visible='true' lat='47.562' lon='-122.464' />
+  <node id='-300044' action='modify' visible='true' lat='47.56' lon='-122.464' />
+  <node id='-300045' action='modify' visible='true' lat='47.558' lon='-122.466' />
+  <way id='-300108' action='modify' visible='true'>
+    <nd ref='-300041' />
+    <nd ref='-300042' />
+    <nd ref='-300043' />
+    <nd ref='-300044' />
+    <nd ref='-300045' />
+    <nd ref='-300041' />
+  </way>
+  <node id='-300051' action='modify' visible='true' lat='47.561' lon='-122.4665' />
+  <node id='-300052' action='modify' visible='true' lat='47.5615' lon='-122.4675' />
+  <node id='-300053' action='modify' visible='true' lat='47.5605' lon='-122.4675' />
+  <way id='-300109' action='modify' visible='true'>
+    <nd ref='-300051' />
+    <nd ref='-300052' />
+    <nd ref='-300053' />
+    <nd ref='-300051' />
+  </way>
+  <node id='-300054' action='modify' visible='true' lat='47.5615' lon='-122.4655' />
+  <node id='-300055' action='modify' visible='true' lat='47.5605' lon='-122.4655' />
+  <way id='-300110' action='modify' visible='true'>
+    <nd ref='-300051' />
+    <nd ref='-300054' />
+    <nd ref='-300055' />
+    <nd ref='-300051' />
+  </way>
+  <relation id='-300203' action='modify' visible='true'>
+    <member type='way' ref='-300108' role='outer' />
+    <member type='way' ref='-300109' role='inner' />
+    <member type='way' ref='-300110' role='inner' />
+    <tag k='type' v='multipolygon' />
+    <tag k='natural' v='water' />
+    <tag k='_test_id' v='126' />
+    <tag k='_test_notes' v='1 outer + 2 closed inners sharing only 1 node (no edge)' />
+    <tag k='_test_expected' v='No CONSOLIDATE_INNERS: need at least 2 shared nodes for an edge' />
+  </relation>
+  <!-- Test case 127: 2 closed abutting inners + 1 open way absorbed into one of them -->
+  <!-- Outer: large rectangle -->
+  <node id='-400001' action='modify' visible='true' lat='47.60' lon='-122.50' />
+  <node id='-400002' action='modify' visible='true' lat='47.60' lon='-122.46' />
+  <node id='-400003' action='modify' visible='true' lat='47.56' lon='-122.46' />
+  <node id='-400004' action='modify' visible='true' lat='47.56' lon='-122.50' />
+  <way id='-400101' action='modify' visible='true'>
+    <nd ref='-400001' />
+    <nd ref='-400002' />
+    <nd ref='-400003' />
+    <nd ref='-400004' />
+    <nd ref='-400001' />
+  </way>
+  <!-- Inner A (closed): shares edge -400011 to -400012 with inner B -->
+  <node id='-400010' action='modify' visible='true' lat='47.592' lon='-122.490' />
+  <node id='-400011' action='modify' visible='true' lat='47.590' lon='-122.485' />
+  <node id='-400012' action='modify' visible='true' lat='47.585' lon='-122.487' />
+  <node id='-400013' action='modify' visible='true' lat='47.587' lon='-122.492' />
+  <way id='-400102' action='modify' visible='true'>
+    <nd ref='-400010' />
+    <nd ref='-400011' />
+    <nd ref='-400012' />
+    <nd ref='-400013' />
+    <nd ref='-400010' />
+  </way>
+  <!-- Inner B (closed): shares nodes -400011 and -400012 with A -->
+  <node id='-400014' action='modify' visible='true' lat='47.588' lon='-122.480' />
+  <node id='-400015' action='modify' visible='true' lat='47.583' lon='-122.482' />
+  <way id='-400103' action='modify' visible='true'>
+    <nd ref='-400011' />
+    <nd ref='-400014' />
+    <nd ref='-400015' />
+    <nd ref='-400012' />
+    <nd ref='-400011' />
+  </way>
+  <!-- Open way W: endpoints on inner B (-400011 and -400014), provides alternate path -->
+  <node id='-400016' action='modify' visible='true' lat='47.591' lon='-122.478' />
+  <node id='-400017' action='modify' visible='true' lat='47.593' lon='-122.476' />
+  <way id='-400104' action='modify' visible='true'>
+    <nd ref='-400011' />
+    <nd ref='-400016' />
+    <nd ref='-400017' />
+    <nd ref='-400014' />
+  </way>
+  <relation id='-400201' action='modify' visible='true'>
+    <member type='way' ref='-400101' role='outer' />
+    <member type='way' ref='-400102' role='inner' />
+    <member type='way' ref='-400103' role='inner' />
+    <member type='way' ref='-400104' role='inner' />
+    <tag k='type' v='multipolygon' />
+    <tag k='natural' v='water' />
+    <tag k='_test_id' v='127' />
+    <tag k='_test_notes' v='2 closed abutting inners + 1 open inner absorbed' />
+    <tag k='_test_expected' v='CONSOLIDATE_RINGS + CONSOLIDATE_INNERS: 4 inner ways to 1' />
+  </relation>
+  <!-- Test case 128: 1 closed inner + 1 open way absorbed (no abutting merge needed) -->
+  <node id='-400021' action='modify' visible='true' lat='47.57' lon='-122.50' />
+  <node id='-400022' action='modify' visible='true' lat='47.57' lon='-122.46' />
+  <node id='-400023' action='modify' visible='true' lat='47.55' lon='-122.46' />
+  <node id='-400024' action='modify' visible='true' lat='47.55' lon='-122.50' />
+  <way id='-400111' action='modify' visible='true'>
+    <nd ref='-400021' />
+    <nd ref='-400022' />
+    <nd ref='-400023' />
+    <nd ref='-400024' />
+    <nd ref='-400021' />
+  </way>
+  <!-- Closed inner: square -->
+  <node id='-400025' action='modify' visible='true' lat='47.565' lon='-122.490' />
+  <node id='-400026' action='modify' visible='true' lat='47.565' lon='-122.480' />
+  <node id='-400027' action='modify' visible='true' lat='47.555' lon='-122.480' />
+  <node id='-400028' action='modify' visible='true' lat='47.555' lon='-122.490' />
+  <way id='-400112' action='modify' visible='true'>
+    <nd ref='-400025' />
+    <nd ref='-400026' />
+    <nd ref='-400027' />
+    <nd ref='-400028' />
+    <nd ref='-400025' />
+  </way>
+  <!-- Open way: endpoints on inner (-400026 and -400027), adds a bump outward -->
+  <node id='-400029' action='modify' visible='true' lat='47.563' lon='-122.475' />
+  <node id='-400030' action='modify' visible='true' lat='47.557' lon='-122.475' />
+  <way id='-400113' action='modify' visible='true'>
+    <nd ref='-400026' />
+    <nd ref='-400029' />
+    <nd ref='-400030' />
+    <nd ref='-400027' />
+  </way>
+  <relation id='-400202' action='modify' visible='true'>
+    <member type='way' ref='-400111' role='outer' />
+    <member type='way' ref='-400112' role='inner' />
+    <member type='way' ref='-400113' role='inner' />
+    <tag k='type' v='multipolygon' />
+    <tag k='natural' v='water' />
+    <tag k='_test_id' v='128' />
+    <tag k='_test_notes' v='1 closed inner + 1 open inner absorbed (standalone)' />
+    <tag k='_test_expected' v='CONSOLIDATE_RINGS: open way absorbed into closed inner' />
+  </relation>
+  <!-- Test case 129: open way endpoints on DIFFERENT closed inners (negative test) -->
+  <node id='-400031' action='modify' visible='true' lat='47.54' lon='-122.50' />
+  <node id='-400032' action='modify' visible='true' lat='47.54' lon='-122.46' />
+  <node id='-400033' action='modify' visible='true' lat='47.52' lon='-122.46' />
+  <node id='-400034' action='modify' visible='true' lat='47.52' lon='-122.50' />
+  <way id='-400121' action='modify' visible='true'>
+    <nd ref='-400031' />
+    <nd ref='-400032' />
+    <nd ref='-400033' />
+    <nd ref='-400034' />
+    <nd ref='-400031' />
+  </way>
+  <!-- Closed inner X -->
+  <node id='-400035' action='modify' visible='true' lat='47.535' lon='-122.495' />
+  <node id='-400036' action='modify' visible='true' lat='47.535' lon='-122.490' />
+  <node id='-400037' action='modify' visible='true' lat='47.530' lon='-122.490' />
+  <node id='-400038' action='modify' visible='true' lat='47.530' lon='-122.495' />
+  <way id='-400122' action='modify' visible='true'>
+    <nd ref='-400035' />
+    <nd ref='-400036' />
+    <nd ref='-400037' />
+    <nd ref='-400038' />
+    <nd ref='-400035' />
+  </way>
+  <!-- Closed inner Y -->
+  <node id='-400039' action='modify' visible='true' lat='47.535' lon='-122.475' />
+  <node id='-400040' action='modify' visible='true' lat='47.535' lon='-122.470' />
+  <node id='-400041' action='modify' visible='true' lat='47.530' lon='-122.470' />
+  <node id='-400042' action='modify' visible='true' lat='47.530' lon='-122.475' />
+  <way id='-400123' action='modify' visible='true'>
+    <nd ref='-400039' />
+    <nd ref='-400040' />
+    <nd ref='-400041' />
+    <nd ref='-400042' />
+    <nd ref='-400039' />
+  </way>
+  <!-- Open way: -400036 (on inner X) to -400039 (on inner Y) — different rings -->
+  <node id='-400043' action='modify' visible='true' lat='47.537' lon='-122.483' />
+  <way id='-400124' action='modify' visible='true'>
+    <nd ref='-400036' />
+    <nd ref='-400043' />
+    <nd ref='-400039' />
+  </way>
+  <relation id='-400203' action='modify' visible='true'>
+    <member type='way' ref='-400121' role='outer' />
+    <member type='way' ref='-400122' role='inner' />
+    <member type='way' ref='-400123' role='inner' />
+    <member type='way' ref='-400124' role='inner' />
+    <tag k='type' v='multipolygon' />
+    <tag k='natural' v='water' />
+    <tag k='_test_id' v='129' />
+    <tag k='_test_notes' v='open inner endpoints on different closed inners' />
+    <tag k='_test_expected' v='No absorption: endpoints on different rings, INNER_WAYS_CANT_FORM_RINGS' />
+  </relation>
 </osm>

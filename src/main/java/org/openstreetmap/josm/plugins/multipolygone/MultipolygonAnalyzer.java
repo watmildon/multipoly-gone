@@ -29,6 +29,8 @@ public class MultipolygonAnalyzer {
     public enum FixOpType {
         /** Chain open outer ways into closed rings within the relation. */
         CONSOLIDATE_RINGS,
+        /** Merge abutting closed inner rings sharing edges into fewer larger rings. */
+        CONSOLIDATE_INNERS,
         /** Decompose self-intersecting rings into non-self-intersecting sub-rings. */
         DECOMPOSE_SELF_INTERSECTIONS,
         /** Extract standalone outer rings (no inners) as independent tagged ways. */
@@ -189,6 +191,14 @@ public class MultipolygonAnalyzer {
                 switch (op.getType()) {
                     case CONSOLIDATE_RINGS ->
                         FixPlan.validateRingsClosed(op.getRings(), relId, "component CONSOLIDATE_RINGS");
+                    case CONSOLIDATE_INNERS -> {
+                        if (op.getConsolidatedInnerGroups() != null) {
+                            for (ConsolidatedInnerGroup group : op.getConsolidatedInnerGroups()) {
+                                FixPlan.validateRingsClosed(
+                                    List.of(group.getMergedRing()), relId, "component CONSOLIDATE_INNERS");
+                            }
+                        }
+                    }
                     case DECOMPOSE_SELF_INTERSECTIONS -> {
                         if (op.getDecomposedRings() != null) {
                             for (DecomposedRing decomp : op.getDecomposedRings()) {
@@ -259,12 +269,29 @@ public class MultipolygonAnalyzer {
         public List<Node> getNewIntersectionNodes() { return newIntersectionNodes; }
     }
 
+    /**
+     * Result of merging abutting closed inner rings into a single larger ring.
+     */
+    public static class ConsolidatedInnerGroup {
+        private final List<WayChainBuilder.Ring> sourceRings;
+        private final WayChainBuilder.Ring mergedRing;
+
+        ConsolidatedInnerGroup(List<WayChainBuilder.Ring> sourceRings, WayChainBuilder.Ring mergedRing) {
+            this.sourceRings = sourceRings;
+            this.mergedRing = mergedRing;
+        }
+
+        public List<WayChainBuilder.Ring> getSourceRings() { return sourceRings; }
+        public WayChainBuilder.Ring getMergedRing() { return mergedRing; }
+    }
+
     public static class FixOp {
         private final FixOpType type;
         private final List<WayChainBuilder.Ring> rings;
         private final List<List<Node>> mergedWays;
         private final List<ComponentResult> components;
         private final List<DecomposedRing> decomposedRings;
+        private final List<ConsolidatedInnerGroup> consolidatedInnerGroups;
         private final List<Node> newNodes;
 
         FixOp(FixOpType type, List<WayChainBuilder.Ring> rings, List<List<Node>> mergedWays) {
@@ -277,6 +304,7 @@ public class MultipolygonAnalyzer {
             this.mergedWays = mergedWays;
             this.components = null;
             this.decomposedRings = null;
+            this.consolidatedInnerGroups = null;
             this.newNodes = newNodes;
         }
 
@@ -286,6 +314,7 @@ public class MultipolygonAnalyzer {
             this.mergedWays = null;
             this.components = components;
             this.decomposedRings = null;
+            this.consolidatedInnerGroups = null;
             this.newNodes = null;
         }
 
@@ -295,6 +324,17 @@ public class MultipolygonAnalyzer {
             this.mergedWays = null;
             this.components = null;
             this.decomposedRings = decomposedRings;
+            this.consolidatedInnerGroups = null;
+            this.newNodes = null;
+        }
+
+        FixOp(FixOpType type, List<ConsolidatedInnerGroup> groups, @SuppressWarnings("unused") int marker) {
+            this.type = type;
+            this.rings = null;
+            this.mergedWays = null;
+            this.components = null;
+            this.decomposedRings = null;
+            this.consolidatedInnerGroups = groups;
             this.newNodes = null;
         }
 
@@ -316,6 +356,10 @@ public class MultipolygonAnalyzer {
 
         public List<DecomposedRing> getDecomposedRings() {
             return decomposedRings;
+        }
+
+        public List<ConsolidatedInnerGroup> getConsolidatedInnerGroups() {
+            return consolidatedInnerGroups;
         }
 
         public List<Node> getNewNodes() {
@@ -392,6 +436,14 @@ public class MultipolygonAnalyzer {
             for (FixOp op : operations) {
                 switch (op.getType()) {
                     case CONSOLIDATE_RINGS -> validateRingsClosed(op.getRings(), relId, "CONSOLIDATE_RINGS");
+                    case CONSOLIDATE_INNERS -> {
+                        if (op.getConsolidatedInnerGroups() != null) {
+                            for (ConsolidatedInnerGroup group : op.getConsolidatedInnerGroups()) {
+                                validateRingsClosed(
+                                    List.of(group.getMergedRing()), relId, "CONSOLIDATE_INNERS");
+                            }
+                        }
+                    }
                     case DECOMPOSE_SELF_INTERSECTIONS -> {
                         if (op.getDecomposedRings() != null) {
                             for (DecomposedRing decomp : op.getDecomposedRings()) {
@@ -507,6 +559,17 @@ public class MultipolygonAnalyzer {
                 case CONSOLIDATE_RINGS -> {
                     if (op.getRings() != null) {
                         sb.append(" rings=").append(fingerprintRings(op.getRings()));
+                    }
+                }
+                case CONSOLIDATE_INNERS -> {
+                    if (op.getConsolidatedInnerGroups() != null) {
+                        List<String> gs = new ArrayList<>();
+                        for (ConsolidatedInnerGroup g : op.getConsolidatedInnerGroups()) {
+                            gs.add("sources=" + fingerprintRings(g.getSourceRings())
+                                + " merged=" + fingerprintRing(g.getMergedRing()));
+                        }
+                        gs.sort(String::compareTo);
+                        sb.append(" groups=").append(gs);
                     }
                 }
                 case DECOMPOSE_SELF_INTERSECTIONS -> {
@@ -1171,6 +1234,9 @@ public class MultipolygonAnalyzer {
             // Also consolidate inner rings if present
             if (!innerWays.isEmpty()) {
                 Optional<List<WayChainBuilder.Ring>> innerRingsOpt = WayChainBuilder.buildRings(innerWays);
+                if (innerRingsOpt.isEmpty()) {
+                    innerRingsOpt = buildRingsWithAbsorption(innerWays);
+                }
                 if (innerRingsOpt.isPresent()) {
                     List<WayChainBuilder.Ring> innerRings = innerRingsOpt.get();
                     List<WayChainBuilder.Ring> innerNeedsChaining = new ArrayList<>();
@@ -1184,6 +1250,16 @@ public class MultipolygonAnalyzer {
                         descParts.add(innerNeedsChaining.size() == 1
                             ? "1 inner ring chained"
                             : innerNeedsChaining.size() + " inner rings chained");
+                    }
+                    // Merge abutting closed inner rings
+                    List<ConsolidatedInnerGroup> bndInnerConsolidations =
+                        mergeAdjoiningInnerRings(innerRings);
+                    if (!bndInnerConsolidations.isEmpty()) {
+                        ops.add(new FixOp(FixOpType.CONSOLIDATE_INNERS, bndInnerConsolidations, 0));
+                        int totalSrc = bndInnerConsolidations.stream()
+                            .mapToInt(g -> g.getSourceRings().size()).sum();
+                        int resCnt = bndInnerConsolidations.size();
+                        descParts.add(totalSrc + " inners merged into " + resCnt);
                     }
                 }
             }
@@ -1221,8 +1297,12 @@ public class MultipolygonAnalyzer {
         // Build rings from inner ways
         Optional<List<WayChainBuilder.Ring>> innerRingsOpt = WayChainBuilder.buildRings(innerWays);
         if (innerRingsOpt.isEmpty()) {
-            if (skipOut != null) skipOut[0] = SkipReason.INNER_WAYS_CANT_FORM_RINGS;
-            return null;
+            // Try absorbing open inner ways into closed inner rings
+            innerRingsOpt = buildRingsWithAbsorption(innerWays);
+            if (innerRingsOpt.isEmpty()) {
+                if (skipOut != null) skipOut[0] = SkipReason.INNER_WAYS_CANT_FORM_RINGS;
+                return null;
+            }
         }
         List<WayChainBuilder.Ring> innerRings = innerRingsOpt.get();
 
@@ -1250,6 +1330,16 @@ public class MultipolygonAnalyzer {
             descParts.add(total == 1
                 ? "1 ring chained"
                 : total + " rings chained");
+        }
+
+        // Merge abutting closed inner rings that share edges
+        List<ConsolidatedInnerGroup> innerConsolidations = mergeAdjoiningInnerRings(innerRings);
+        if (!innerConsolidations.isEmpty()) {
+            ops.add(new FixOp(FixOpType.CONSOLIDATE_INNERS, innerConsolidations, 0));
+            int totalSources = innerConsolidations.stream()
+                .mapToInt(g -> g.getSourceRings().size()).sum();
+            int resultCount = innerConsolidations.size();
+            descParts.add(totalSources + " inners merged into " + resultCount);
         }
 
         // Map inner rings to containing outer rings
@@ -1425,6 +1515,361 @@ public class MultipolygonAnalyzer {
 
     private static String buildDescription(List<String> parts, String primaryTag) {
         return String.join(", ", parts) + " (" + primaryTag + ")";
+    }
+
+    // ---- Adjoining inner ring consolidation ----
+
+    /**
+     * Iteratively merges abutting closed inner rings that share consecutive edges.
+     * Modifies the innerRings list in-place: merged sources are removed, merged ring inserted.
+     * Returns the list of consolidation groups (empty if no merges happened).
+     */
+    private static List<ConsolidatedInnerGroup> mergeAdjoiningInnerRings(
+            List<WayChainBuilder.Ring> innerRings) {
+        List<ConsolidatedInnerGroup> groups = new ArrayList<>();
+        // Map from merged ring to its group (for iterative aggregation)
+        Map<WayChainBuilder.Ring, ConsolidatedInnerGroup> ringToGroup = new HashMap<>();
+
+        boolean merged = true;
+        while (merged) {
+            merged = false;
+            for (int i = 0; i < innerRings.size() && !merged; i++) {
+                for (int j = i + 1; j < innerRings.size() && !merged; j++) {
+                    WayChainBuilder.Ring ringA = innerRings.get(i);
+                    WayChainBuilder.Ring ringB = innerRings.get(j);
+                    WayChainBuilder.Ring result = tryMergeAdjoiningRings(ringA, ringB);
+                    if (result != null && result.getNodes().size() - 1 <= MAX_WAY_NODES) {
+                        // Collect all original source rings (handle iterative merges)
+                        List<WayChainBuilder.Ring> sources = new ArrayList<>();
+                        ConsolidatedInnerGroup groupA = ringToGroup.get(ringA);
+                        ConsolidatedInnerGroup groupB = ringToGroup.get(ringB);
+                        if (groupA != null) {
+                            sources.addAll(groupA.getSourceRings());
+                            groups.remove(groupA);
+                            ringToGroup.remove(ringA);
+                        } else {
+                            sources.add(ringA);
+                        }
+                        if (groupB != null) {
+                            sources.addAll(groupB.getSourceRings());
+                            groups.remove(groupB);
+                            ringToGroup.remove(ringB);
+                        } else {
+                            sources.add(ringB);
+                        }
+
+                        ConsolidatedInnerGroup group = new ConsolidatedInnerGroup(sources, result);
+                        groups.add(group);
+                        ringToGroup.put(result, group);
+
+                        innerRings.remove(j);
+                        innerRings.remove(i);
+                        innerRings.add(i, result);
+                        merged = true;
+                    }
+                }
+            }
+        }
+        return groups;
+    }
+
+    /**
+     * Tries to merge two closed inner rings that share a consecutive edge.
+     * Returns the merged ring, or null if they don't share a valid consecutive edge.
+     */
+    private static WayChainBuilder.Ring tryMergeAdjoiningRings(
+            WayChainBuilder.Ring ringA, WayChainBuilder.Ring ringB) {
+        List<Node> nodesA = ringA.getNodes();
+        List<Node> nodesB = ringB.getNodes();
+        int sizeA = nodesA.size() - 1; // exclude closing node
+        int sizeB = nodesB.size() - 1;
+
+        // Find shared nodes
+        Set<Node> nodesSetB = new HashSet<>();
+        for (int i = 0; i < sizeB; i++) {
+            nodesSetB.add(nodesB.get(i));
+        }
+        Set<Node> sharedSet = new HashSet<>();
+        for (int i = 0; i < sizeA; i++) {
+            if (nodesSetB.contains(nodesA.get(i))) {
+                sharedSet.add(nodesA.get(i));
+            }
+        }
+
+        if (sharedSet.size() < 2) {
+            return null; // need at least 2 shared nodes for an edge
+        }
+
+        // Find the contiguous shared run in ring A
+        int runStart = findSharedRunStart(nodesA, sizeA, sharedSet);
+        if (runStart < 0) return null;
+
+        int runLength = 0;
+        for (int k = 0; k < sizeA; k++) {
+            if (sharedSet.contains(nodesA.get((runStart + k) % sizeA))) {
+                runLength++;
+            } else {
+                break;
+            }
+        }
+        if (runLength != sharedSet.size()) {
+            return null; // shared nodes are not contiguous in A
+        }
+
+        // Find matching run in B (may be forward or reversed)
+        Node runFirstA = nodesA.get(runStart % sizeA);
+        Node runLastA = nodesA.get((runStart + runLength - 1) % sizeA);
+
+        int startInB = -1;
+        for (int i = 0; i < sizeB; i++) {
+            if (nodesB.get(i).equals(runFirstA)) {
+                startInB = i;
+                break;
+            }
+        }
+        if (startInB < 0) return null;
+
+        // Check forward match in B
+        boolean forwardMatch = true;
+        for (int k = 0; k < runLength; k++) {
+            if (!nodesB.get((startInB + k) % sizeB).equals(nodesA.get((runStart + k) % sizeA))) {
+                forwardMatch = false;
+                break;
+            }
+        }
+
+        // Check reverse match in B
+        boolean reverseMatch = false;
+        int reverseStartInB = -1;
+        if (!forwardMatch) {
+            for (int i = 0; i < sizeB; i++) {
+                if (nodesB.get(i).equals(runLastA)) {
+                    reverseStartInB = i;
+                    break;
+                }
+            }
+            if (reverseStartInB >= 0) {
+                reverseMatch = true;
+                for (int k = 0; k < runLength; k++) {
+                    Node expectedA = nodesA.get((runStart + k) % sizeA);
+                    Node actualB = nodesB.get((reverseStartInB + runLength - 1 - k) % sizeB);
+                    if (!actualB.equals(expectedA)) {
+                        reverseMatch = false;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (!forwardMatch && !reverseMatch) {
+            return null;
+        }
+
+        // Build merged ring: junction1 → A non-shared → junction2 → B non-shared → junction1
+        // junction1 = A[runStart] (first shared node in A's run)
+        // junction2 = A[(runStart + runLength - 1) % sizeA] (last shared node in A's run)
+        List<Node> merged = new ArrayList<>();
+
+        // Start at junction2 (last shared), walk A's non-shared, arrive at junction1 (first shared)
+        int aStart = (runStart + runLength - 1) % sizeA; // junction2 position in A
+        int aNonShared = sizeA - runLength;
+        for (int k = 0; k <= aNonShared + 1; k++) { // junction2, non-shared, junction1
+            merged.add(nodesA.get((aStart + k) % sizeA));
+        }
+        // merged now ends at junction1
+
+        // Walk B's non-shared nodes (excluding both junctions which are already in merged)
+        int bNonShared = sizeB - runLength;
+        if (forwardMatch) {
+            // In B, shared run goes from startInB forward.
+            // B's non-shared starts at (startInB + runLength) % sizeB
+            int bStart = (startInB + runLength) % sizeB;
+            for (int k = 0; k < bNonShared; k++) {
+                merged.add(nodesB.get((bStart + k) % sizeB));
+            }
+        } else {
+            // Reverse: A's first shared node (runFirstA) maps to
+            // B[(reverseStartInB + runLength - 1) % sizeB].
+            // B's non-shared starts right after that position.
+            int bStart = (reverseStartInB + runLength) % sizeB;
+            for (int k = 0; k < bNonShared; k++) {
+                merged.add(nodesB.get((bStart + k) % sizeB));
+            }
+        }
+
+        // Close the ring
+        merged.add(merged.get(0));
+
+        if (merged.size() < 4) {
+            return null; // degenerate
+        }
+
+        // Combine source ways
+        List<Way> sourceWays = new ArrayList<>(ringA.getSourceWays());
+        sourceWays.addAll(ringB.getSourceWays());
+
+        return new WayChainBuilder.Ring(merged, sourceWays);
+    }
+
+    /**
+     * Finds the index in a ring's node list where the contiguous shared run begins.
+     * Handles the wrap-around case (run spanning the closing point).
+     */
+    private static int findSharedRunStart(List<Node> nodes, int size, Set<Node> sharedSet) {
+        // Find a transition from non-shared to shared
+        for (int i = 0; i < size; i++) {
+            boolean curr = sharedSet.contains(nodes.get(i));
+            boolean prev = sharedSet.contains(nodes.get((i - 1 + size) % size));
+            if (curr && !prev) {
+                return i;
+            }
+        }
+        // All nodes are shared (shouldn't happen for valid distinct rings)
+        return -1;
+    }
+
+    /**
+     * Finds the index of the ring that contains both endpoints of the open way.
+     * Returns -1 if no such ring exists.
+     */
+    private static int findTargetRing(Way openWay, List<WayChainBuilder.Ring> rings) {
+        Node p = openWay.firstNode();
+        Node q = openWay.lastNode();
+        for (int i = 0; i < rings.size(); i++) {
+            List<Node> ringNodes = rings.get(i).getNodes();
+            int size = ringNodes.size() - 1;
+            boolean hasP = false, hasQ = false;
+            for (int j = 0; j < size; j++) {
+                if (ringNodes.get(j).equals(p)) hasP = true;
+                if (ringNodes.get(j).equals(q)) hasQ = true;
+                if (hasP && hasQ) return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Absorbs an open way into a closed ring by replacing one arc between
+     * the open way's endpoints with the open way's path. Picks the candidate
+     * that produces the larger enclosed area (expanding the inner).
+     *
+     * @return the enlarged Ring, or null if absorption is not possible
+     */
+    private static WayChainBuilder.Ring absorbOpenWayIntoRing(Way openWay,
+            WayChainBuilder.Ring ring) {
+        Node p = openWay.firstNode();
+        Node q = openWay.lastNode();
+        if (p.equals(q)) return null;
+
+        List<Node> ringNodes = ring.getNodes();
+        int size = ringNodes.size() - 1; // exclude closing node
+
+        // Find positions of P and Q in the ring
+        int posP = -1, posQ = -1;
+        for (int i = 0; i < size; i++) {
+            if (ringNodes.get(i).equals(p)) posP = i;
+            if (ringNodes.get(i).equals(q)) posQ = i;
+        }
+        if (posP < 0 || posQ < 0 || posP == posQ) return null;
+
+        List<Node> openNodes = openWay.getNodes();
+
+        // Candidate 1: arc Q→...→P (going forward from Q around ring) + open way P→...→Q
+        List<Node> candidate1 = new ArrayList<>();
+        for (int k = 0; k <= size; k++) {
+            int idx = (posQ + k) % size;
+            candidate1.add(ringNodes.get(idx));
+            if (idx == posP && k > 0) break;
+        }
+        for (int k = 1; k < openNodes.size(); k++) {
+            candidate1.add(openNodes.get(k));
+        }
+
+        // Candidate 2: arc P→...→Q (going forward from P around ring) + reversed open way Q→...→P
+        List<Node> candidate2 = new ArrayList<>();
+        for (int k = 0; k <= size; k++) {
+            int idx = (posP + k) % size;
+            candidate2.add(ringNodes.get(idx));
+            if (idx == posQ && k > 0) break;
+        }
+        for (int k = openNodes.size() - 2; k >= 0; k--) {
+            candidate2.add(openNodes.get(k));
+        }
+
+        // Validate
+        if (candidate1.size() < 4 || candidate2.size() < 4) return null;
+        if (!candidate1.get(0).equals(candidate1.get(candidate1.size() - 1))) return null;
+        if (!candidate2.get(0).equals(candidate2.get(candidate2.size() - 1))) return null;
+
+        // Pick the candidate with larger absolute area
+        double area1 = Math.abs(computeSignedArea(candidate1));
+        double area2 = Math.abs(computeSignedArea(candidate2));
+        List<Node> chosen = (area1 >= area2) ? candidate1 : candidate2;
+
+        List<Way> sourceWays = new ArrayList<>(ring.getSourceWays());
+        sourceWays.add(openWay);
+        return new WayChainBuilder.Ring(chosen, sourceWays);
+    }
+
+    /**
+     * Fallback when buildRings(innerWays) fails: separates closed and open ways,
+     * builds rings from closed ways, then absorbs open ways whose endpoints lie
+     * on a closed ring. Leftover open ways are chained separately.
+     */
+    private static Optional<List<WayChainBuilder.Ring>> buildRingsWithAbsorption(
+            List<Way> innerWays) {
+        List<Way> closedWays = new ArrayList<>();
+        List<Way> openWays = new ArrayList<>();
+        for (Way w : innerWays) {
+            if (w.isClosed()) {
+                closedWays.add(w);
+            } else {
+                openWays.add(w);
+            }
+        }
+        if (openWays.isEmpty() || closedWays.isEmpty()) {
+            return Optional.empty();
+        }
+
+        Optional<List<WayChainBuilder.Ring>> closedRingsOpt =
+            WayChainBuilder.buildRings(closedWays);
+        if (closedRingsOpt.isEmpty()) {
+            return Optional.empty();
+        }
+        List<WayChainBuilder.Ring> rings = new ArrayList<>(closedRingsOpt.get());
+
+        // Iteratively absorb open ways into rings
+        List<Way> remainingOpen = new ArrayList<>(openWays);
+        boolean progress = true;
+        while (progress && !remainingOpen.isEmpty()) {
+            progress = false;
+            Iterator<Way> it = remainingOpen.iterator();
+            while (it.hasNext()) {
+                Way openWay = it.next();
+                int targetIdx = findTargetRing(openWay, rings);
+                if (targetIdx < 0) continue;
+
+                WayChainBuilder.Ring enlarged = absorbOpenWayIntoRing(
+                    openWay, rings.get(targetIdx));
+                if (enlarged != null && enlarged.getNodes().size() - 1 <= MAX_WAY_NODES) {
+                    rings.set(targetIdx, enlarged);
+                    it.remove();
+                    progress = true;
+                }
+            }
+        }
+
+        if (!remainingOpen.isEmpty()) {
+            // Try chaining leftover open ways
+            Optional<List<WayChainBuilder.Ring>> chainedOpt =
+                WayChainBuilder.buildRings(remainingOpen);
+            if (chainedOpt.isEmpty()) {
+                return Optional.empty();
+            }
+            rings.addAll(chainedOpt.get());
+        }
+
+        return Optional.of(rings);
     }
 
     /**

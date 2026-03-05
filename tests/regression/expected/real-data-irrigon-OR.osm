@@ -19026,7 +19026,7 @@
   <node id='13532372300' visible='true' version='1' lat='45.8874731' lon='-119.4970909' />
   <node id='13532383901' visible='true' version='1' lat='45.8875011' lon='-119.4969739' />
   <node id='13532383902' visible='true' version='1' lat='45.8876307' lon='-119.4970379' />
-  <way id='-542140' visible='true'>
+  <way id='-544224' visible='true'>
     <nd ref='13248941227' />
     <nd ref='13248941228' />
     <nd ref='13248941229' />
@@ -19725,6 +19725,46 @@
     <tag k='leisure' v='nature_reserve' />
     <tag k='name' v='Irrigon Wildlife Area' />
     <tag k='operator' v='Oregon Department of Fish and Wildlife' />
+  </way>
+  <way id='-544225' visible='true'>
+    <nd ref='13362765051' />
+    <nd ref='13362764937' />
+    <nd ref='13362764938' />
+    <nd ref='13362764939' />
+    <nd ref='13362764940' />
+    <nd ref='13362764941' />
+    <nd ref='13362764942' />
+    <nd ref='13362764943' />
+    <nd ref='13362764944' />
+    <nd ref='13362764945' />
+    <nd ref='13362764946' />
+    <nd ref='13362764947' />
+    <nd ref='13362764948' />
+    <nd ref='13362764949' />
+    <nd ref='13362764950' />
+    <nd ref='13362764951' />
+    <nd ref='13362764917' />
+    <nd ref='13362764918' />
+    <nd ref='13362764919' />
+    <nd ref='13362764920' />
+    <nd ref='13362764921' />
+    <nd ref='13362764922' />
+    <nd ref='13362764923' />
+    <nd ref='13362764924' />
+    <nd ref='13362764925' />
+    <nd ref='13362764926' />
+    <nd ref='13362764927' />
+    <nd ref='13362764928' />
+    <nd ref='13362764929' />
+    <nd ref='13362764930' />
+    <nd ref='13362764931' />
+    <nd ref='13362764932' />
+    <nd ref='13362764933' />
+    <nd ref='13362765052' />
+    <nd ref='13362765053' />
+    <nd ref='13362765054' />
+    <nd ref='13362765055' />
+    <nd ref='13362765051' />
   </way>
   <way id='5090745' visible='true' version='4'>
     <nd ref='34615227' />
@@ -51411,8 +51451,7 @@
   </relation>
   <relation id='19935916' visible='true' version='1'>
     <member type='way' ref='1457035590' role='outer' />
-    <member type='way' ref='1457035583' role='inner' />
-    <member type='way' ref='1457035589' role='inner' />
+    <member type='way' ref='-544225' role='inner' />
     <member type='way' ref='1457035579' role='inner' />
     <tag k='landuse' v='meadow' />
     <tag k='type' v='multipolygon' />
