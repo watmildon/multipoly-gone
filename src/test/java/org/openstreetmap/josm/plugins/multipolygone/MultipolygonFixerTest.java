@@ -1512,4 +1512,43 @@ class MultipolygonFixerTest {
             .filter(m -> "inner".equals(m.getRole())).count();
         assertEquals(2, innerCount, "Should still have 2 inner members");
     }
+
+    // --- Test case 130 (from testdata-proposed.osm): valid island-within-a-hole ---
+
+    @Test
+    void testCase130_validIslandWithinAHole() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "130");
+        assertNotNull(plan, "Test case 130 should be fixable (valid island-within-a-hole)");
+
+        // Should have CONSOLIDATE_RINGS to chain the island's 2 open ways
+        boolean hasConsolidate = plan.getOperations().stream()
+            .anyMatch(op -> op.getType() == FixOpType.CONSOLIDATE_RINGS);
+        assertTrue(hasConsolidate, "Should have CONSOLIDATE_RINGS for the island");
+
+        Relation relation = plan.getRelation();
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        // Identity-protected (has name tag), so relation survives
+        assertFalse(relation.isDeleted(), "Relation should survive (identity-protected)");
+
+        // Should have outers and inners
+        long outerCount = relation.getMembers().stream()
+            .filter(m -> "outer".equals(m.getRole())).count();
+        long innerCount = relation.getMembers().stream()
+            .filter(m -> "inner".equals(m.getRole())).count();
+        assertTrue(outerCount >= 2, "Should have at least 2 outer members (big outer + island)");
+        assertEquals(1, innerCount, "Should have 1 inner member (the hole)");
+    }
+
+    // --- Test case 131 (from testdata-proposed.osm): invalid nested outer with non-mediating inner ---
+
+    @Test
+    void testCase131_invalidNestedOuterWithInners() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "131");
+        assertNull(plan, "Test case 131 should not be fixable (invalid nested outer)");
+    }
 }

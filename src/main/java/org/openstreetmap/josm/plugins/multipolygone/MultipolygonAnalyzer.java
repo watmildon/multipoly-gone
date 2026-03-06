@@ -910,7 +910,9 @@ public class MultipolygonAnalyzer {
 
         // Single-relation path failed (e.g., multiple closed outers with inners).
         // Try splitting into disconnected components as a fallback.
-        if (!identityProtected) {
+        // Don't split if the failure was NESTED_OUTER_RINGS — that's a structural error
+        // that splitting would mask by putting each outer in its own component.
+        if (!identityProtected && singleSkip[0] != SkipReason.NESTED_OUTER_RINGS) {
             List<Way> allWays = new ArrayList<>(outerWays);
             allWays.addAll(innerWays);
             if (rng != null) {
@@ -1194,9 +1196,11 @@ public class MultipolygonAnalyzer {
             partialMode = true;
         }
 
-        // Skip if any outer ring is nested inside another — ambiguous mapping error.
+        // Skip if any outer ring is nested inside another with no inners to justify
+        // the nesting. When inners exist, defer the check until inner rings are built
+        // so we can validate the island-within-a-hole pattern (outer > inner > outer).
         // In partial mode, skip this check: the incomplete ring set could give false positives.
-        if (!partialMode && hasNestedOuters(outerRings)) {
+        if (!partialMode && innerWays.isEmpty() && hasNestedOuters(outerRings)) {
             if (skipOut != null) skipOut[0] = SkipReason.NESTED_OUTER_RINGS;
             return null;
         }
@@ -1370,6 +1374,15 @@ public class MultipolygonAnalyzer {
         if (!oversizedInners.isEmpty()) {
             innerRings.removeAll(oversizedInners);
             partialMode = true;
+        }
+
+        // Deferred nested outer check: now that inner rings are built, validate
+        // that any nested outers are justified by the island-within-a-hole pattern
+        // (outer > inner > outer). In partial mode, skip: incomplete ring sets
+        // may give false positives.
+        if (!partialMode && hasInvalidNestedOuters(outerRings, innerRings)) {
+            if (skipOut != null) skipOut[0] = SkipReason.NESTED_OUTER_RINGS;
+            return null;
         }
 
         // Record inner consolidation if any inner rings need chaining
@@ -2922,6 +2935,64 @@ public class MultipolygonAnalyzer {
                 }
             }
         }
+        return false;
+    }
+
+    /**
+     * Returns true if any outer ring is geometrically inside another outer ring
+     * without a mediating inner ring justifying the nesting (island-within-a-hole).
+     *
+     * A nested outer O_candidate inside O_container is VALID if there exists an inner ring I
+     * such that O_candidate is inside I and I is inside O_container. This represents
+     * the standard OSM "island in a lake" pattern.
+     */
+    private static boolean hasInvalidNestedOuters(List<WayChainBuilder.Ring> outerRings,
+            List<WayChainBuilder.Ring> innerRings) {
+        if (outerRings.size() < 2) {
+            return false;
+        }
+        for (int i = 0; i < outerRings.size(); i++) {
+            WayChainBuilder.Ring candidate = outerRings.get(i);
+            for (int j = 0; j < outerRings.size(); j++) {
+                if (i == j) continue;
+                WayChainBuilder.Ring container = outerRings.get(j);
+
+                if (!isRingInsideRing(candidate, container)) {
+                    continue;
+                }
+
+                // Candidate IS inside container. Check if any inner ring mediates:
+                // valid if candidate is inside some inner I, and I is inside container.
+                boolean justified = false;
+                for (WayChainBuilder.Ring inner : innerRings) {
+                    if (isRingInsideRing(candidate, inner)
+                            && isRingInsideRing(inner, container)) {
+                        justified = true;
+                        break;
+                    }
+                }
+
+                if (!justified) {
+                    return true; // Invalid nesting — no mediating inner
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Returns true if ring A is geometrically inside ring B.
+     * Tests using the first node of A that is not on B's boundary.
+     */
+    private static boolean isRingInsideRing(WayChainBuilder.Ring a, WayChainBuilder.Ring b) {
+        Set<Node> bNodes = new HashSet<>(b.getNodes());
+        for (Node testNode : a.getNodes()) {
+            if (bNodes.contains(testNode)) {
+                continue;
+            }
+            return Geometry.nodeInsidePolygon(testNode, b.getNodes());
+        }
+        // All nodes of A are shared with B — treat as not inside
         return false;
     }
 
