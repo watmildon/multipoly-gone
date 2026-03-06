@@ -262,6 +262,108 @@ public class WayChainBuilder {
         return Optional.of(result);
     }
 
+    /**
+     * Result of partial ring building: rings that could be formed, plus leftover ways that couldn't.
+     */
+    public static class PartialRingsResult {
+        private final List<Ring> rings;
+        private final List<Way> leftoverWays;
+
+        PartialRingsResult(List<Ring> rings, List<Way> leftoverWays) {
+            this.rings = rings;
+            this.leftoverWays = leftoverWays;
+        }
+
+        public List<Ring> getRings() {
+            return rings;
+        }
+
+        public List<Way> getLeftoverWays() {
+            return leftoverWays;
+        }
+    }
+
+    /**
+     * Best-effort ring building: forms rings from subsets of ways that chain successfully,
+     * returning any unchainable ways as leftovers. Closed ways always succeed.
+     * Open ways are grouped by shared endpoints; each group is tried independently.
+     */
+    public static PartialRingsResult buildRingsPartial(List<Way> ways) {
+        if (ways == null || ways.isEmpty()) {
+            return new PartialRingsResult(new ArrayList<>(), new ArrayList<>());
+        }
+
+        List<Ring> rings = new ArrayList<>();
+        List<Way> openWays = new ArrayList<>();
+
+        // Closed ways always form their own ring
+        for (Way way : ways) {
+            if (way.isClosed()) {
+                rings.add(new Ring(new ArrayList<>(way.getNodes()), List.of(way)));
+            } else {
+                openWays.add(way);
+            }
+        }
+
+        if (openWays.isEmpty()) {
+            return new PartialRingsResult(rings, new ArrayList<>());
+        }
+
+        // Group open ways into connected components by shared endpoints
+        Map<Way, Way> parent = new HashMap<>();
+        for (Way w : openWays) {
+            parent.put(w, w);
+        }
+
+        Map<Node, List<Way>> endpointToWays = new HashMap<>();
+        for (Way way : openWays) {
+            endpointToWays.computeIfAbsent(way.firstNode(), k -> new ArrayList<>()).add(way);
+            endpointToWays.computeIfAbsent(way.lastNode(), k -> new ArrayList<>()).add(way);
+        }
+
+        for (List<Way> group : endpointToWays.values()) {
+            for (int i = 1; i < group.size(); i++) {
+                union(parent, group.get(0), group.get(i));
+            }
+        }
+
+        Map<Way, List<Way>> componentMap = new HashMap<>();
+        for (Way w : openWays) {
+            Way root = find(parent, w);
+            componentMap.computeIfAbsent(root, k -> new ArrayList<>()).add(w);
+        }
+
+        List<Way> leftover = new ArrayList<>();
+
+        // Try building rings from each connected component independently
+        for (List<Way> component : componentMap.values()) {
+            Optional<List<Ring>> result = buildRings(component);
+            if (result.isPresent()) {
+                rings.addAll(result.get());
+            } else {
+                leftover.addAll(component);
+            }
+        }
+
+        return new PartialRingsResult(rings, leftover);
+    }
+
+    private static Way find(Map<Way, Way> parent, Way w) {
+        while (!parent.get(w).equals(w)) {
+            parent.put(w, parent.get(parent.get(w)));
+            w = parent.get(w);
+        }
+        return w;
+    }
+
+    private static void union(Map<Way, Way> parent, Way a, Way b) {
+        Way ra = find(parent, a);
+        Way rb = find(parent, b);
+        if (!ra.equals(rb)) {
+            parent.put(ra, rb);
+        }
+    }
+
     private static class WayEndpoint {
         final Way way;
         final boolean isLastNode;

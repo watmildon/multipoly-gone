@@ -1357,6 +1357,140 @@ class MultipolygonFixerTest {
 
     // --- Test case 125 (from testdata-proposed.osm): untagged edge-sharing inner NOT extracted ---
 
+    // === Partial improvement tests (issue #6) ===
+
+    @Test
+    void testCase126_partialOuterConsolidation() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "126");
+        assertNotNull(plan, "Test case 126 should produce a plan");
+
+        // Should have CONSOLIDATE_RINGS op
+        boolean hasConsolidate = plan.getOperations().stream()
+            .anyMatch(op -> op.getType() == FixOpType.CONSOLIDATE_RINGS);
+        assertTrue(hasConsolidate, "Should have CONSOLIDATE_RINGS for chainable outers");
+
+        // Plan should NOT dissolve the relation (partial fix)
+        assertFalse(plan.dissolvesRelation(), "Partial plan should not dissolve relation");
+
+        Relation relation = plan.getRelation();
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        // Relation should survive
+        assertFalse(relation.isDeleted(), "Relation should survive partial fix");
+
+        // The dangling outer should still be a member
+        boolean hasDanglingMember = relation.getMembers().stream()
+            .anyMatch(m -> m.isWay() && !m.getWay().isClosed() && !"inner".equals(m.getRole()));
+        assertTrue(hasDanglingMember, "Dangling open outer should remain as member");
+
+        // At least one consolidated closed outer should be a member
+        boolean hasClosedOuter = relation.getMembers().stream()
+            .anyMatch(m -> m.isWay() && m.getWay().isClosed() && !"inner".equals(m.getRole()));
+        assertTrue(hasClosedOuter, "Consolidated closed outer should be a member");
+    }
+
+    @Test
+    void testCase127_partialInnerConsolidation() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "127");
+        assertNotNull(plan, "Test case 127 should produce a plan");
+
+        // Should have CONSOLIDATE_RINGS op for inners
+        boolean hasConsolidate = plan.getOperations().stream()
+            .anyMatch(op -> op.getType() == FixOpType.CONSOLIDATE_RINGS);
+        assertTrue(hasConsolidate, "Should have CONSOLIDATE_RINGS for chainable inners");
+
+        // Plan should NOT dissolve the relation
+        assertFalse(plan.dissolvesRelation(), "Partial plan should not dissolve relation");
+
+        Relation relation = plan.getRelation();
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        // Relation should survive
+        assertFalse(relation.isDeleted(), "Relation should survive partial fix");
+
+        // The dangling inner should still be a member
+        boolean hasDanglingInner = relation.getMembers().stream()
+            .anyMatch(m -> m.isWay() && !m.getWay().isClosed() && "inner".equals(m.getRole()));
+        assertTrue(hasDanglingInner, "Dangling open inner should remain as member");
+
+        // At least one consolidated closed inner should be a member
+        boolean hasClosedInner = relation.getMembers().stream()
+            .anyMatch(m -> m.isWay() && m.getWay().isClosed() && "inner".equals(m.getRole()));
+        assertTrue(hasClosedInner, "Consolidated closed inner should be a member");
+    }
+
+    @Test
+    void testCase128_oversizedOuterRingSkip() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "128");
+        assertNotNull(plan, "Test case 128 should produce a plan");
+
+        // Should have CONSOLIDATE_RINGS for the small ring
+        boolean hasConsolidate = plan.getOperations().stream()
+            .anyMatch(op -> op.getType() == FixOpType.CONSOLIDATE_RINGS);
+        assertTrue(hasConsolidate, "Should consolidate the small ring");
+
+        // Plan should NOT dissolve the relation
+        assertFalse(plan.dissolvesRelation(), "Partial plan should not dissolve relation");
+
+        Relation relation = plan.getRelation();
+        int membersBefore = relation.getMembersCount();
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        // Relation should survive
+        assertFalse(relation.isDeleted(), "Relation should survive partial fix");
+
+        // Member count should decrease (small ring consolidated from 2 ways to 1)
+        assertTrue(relation.getMembersCount() < membersBefore,
+            "Member count should decrease after consolidation");
+
+        // The oversized outer ways should still be members (unconsolidated)
+        long openOuterCount = relation.getMembers().stream()
+            .filter(m -> m.isWay() && !m.getWay().isClosed() && !"inner".equals(m.getRole()))
+            .count();
+        assertEquals(2, openOuterCount, "Oversized ring's 2 open ways should remain");
+    }
+
+    @Test
+    void testCase129_allOutersOversized_innersConsolidated() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "129");
+        assertNotNull(plan, "Test case 129 should produce a plan (inner consolidation despite oversized outers)");
+
+        // Should have CONSOLIDATE_RINGS for the chainable inners
+        boolean hasConsolidate = plan.getOperations().stream()
+            .anyMatch(op -> op.getType() == FixOpType.CONSOLIDATE_RINGS);
+        assertTrue(hasConsolidate, "Should consolidate inner ring even though outers are oversized");
+
+        // Should NOT dissolve
+        assertFalse(plan.dissolvesRelation(), "Should not dissolve (partial fix)");
+
+        Relation relation = plan.getRelation();
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        // Relation survives
+        assertFalse(relation.isDeleted(), "Relation should survive");
+
+        // Oversized outer ways should remain as open members
+        long openOuterCount = relation.getMembers().stream()
+            .filter(m -> m.isWay() && !m.getWay().isClosed() && !"inner".equals(m.getRole()))
+            .count();
+        assertEquals(2, openOuterCount, "Oversized outer's 2 open ways should remain");
+
+        // The 2 chainable inner ways should be consolidated into 1 closed inner
+        // Plus the 1 already-closed inner = 2 closed inner members
+        long closedInnerCount = relation.getMembers().stream()
+            .filter(m -> m.isWay() && m.getWay().isClosed() && "inner".equals(m.getRole()))
+            .count();
+        assertEquals(2, closedInnerCount, "Should have 2 closed inner members (1 consolidated + 1 original)");
+    }
+
     @Test
     void testCase125_noExtractUntaggedEdgeSharingInner() {
         DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");

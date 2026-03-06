@@ -1149,6 +1149,10 @@ public class MultipolygonAnalyzer {
      */
     private static ComponentResult analyzeComponent(List<Way> outerWays, List<Way> innerWays,
             boolean identityProtected, boolean boundaryMode, SkipReason[] skipOut) {
+        // Partial mode: when some steps fail but others succeed, accumulate
+        // whatever consolidation ops are possible and keep the relation alive.
+        boolean partialMode = false;
+
         // Try building rings from outers; if that fails, try reclassifying bridging inners
         Optional<List<WayChainBuilder.Ring>> ringsOpt = WayChainBuilder.buildRings(outerWays);
 
@@ -1164,23 +1168,35 @@ public class MultipolygonAnalyzer {
             }
         }
 
+        List<WayChainBuilder.Ring> outerRings;
         if (ringsOpt.isEmpty()) {
-            if (skipOut != null) skipOut[0] = SkipReason.OUTERS_CANT_FORM_RINGS;
-            return null;
-        }
-
-        List<WayChainBuilder.Ring> outerRings = ringsOpt.get();
-
-        // Check node limits on rings that need chaining
-        for (WayChainBuilder.Ring ring : outerRings) {
-            if (!ring.isAlreadyClosed() && ring.getNodes().size() - 1 > MAX_WAY_NODES) {
-                if (skipOut != null) skipOut[0] = SkipReason.CONSOLIDATED_RING_TOO_LARGE;
+            // Full ring building failed — try partial: form rings from subsets that chain
+            WayChainBuilder.PartialRingsResult partial = WayChainBuilder.buildRingsPartial(outerWays);
+            if (partial.getRings().isEmpty()) {
+                if (skipOut != null) skipOut[0] = SkipReason.OUTERS_CANT_FORM_RINGS;
                 return null;
             }
+            outerRings = partial.getRings();
+            partialMode = true;
+        } else {
+            outerRings = ringsOpt.get();
         }
 
-        // Skip if any outer ring is nested inside another — ambiguous mapping error
-        if (hasNestedOuters(outerRings)) {
+        // Check node limits on rings that need chaining — skip oversized rings
+        List<WayChainBuilder.Ring> oversizedOuters = new ArrayList<>();
+        for (WayChainBuilder.Ring ring : outerRings) {
+            if (!ring.isAlreadyClosed() && ring.getNodes().size() - 1 > MAX_WAY_NODES) {
+                oversizedOuters.add(ring);
+            }
+        }
+        if (!oversizedOuters.isEmpty()) {
+            outerRings.removeAll(oversizedOuters);
+            partialMode = true;
+        }
+
+        // Skip if any outer ring is nested inside another — ambiguous mapping error.
+        // In partial mode, skip this check: the incomplete ring set could give false positives.
+        if (!partialMode && hasNestedOuters(outerRings)) {
             if (skipOut != null) skipOut[0] = SkipReason.NESTED_OUTER_RINGS;
             return null;
         }
@@ -1242,8 +1258,16 @@ public class MultipolygonAnalyzer {
                 if (innerRingsOpt.isEmpty()) {
                     innerRingsOpt = buildRingsWithAbsorption(innerWays);
                 }
+                List<WayChainBuilder.Ring> innerRings;
                 if (innerRingsOpt.isPresent()) {
-                    List<WayChainBuilder.Ring> innerRings = innerRingsOpt.get();
+                    innerRings = innerRingsOpt.get();
+                } else {
+                    // Try partial inner ring building
+                    WayChainBuilder.PartialRingsResult partialInner =
+                        WayChainBuilder.buildRingsPartial(innerWays);
+                    innerRings = partialInner.getRings();
+                }
+                if (!innerRings.isEmpty()) {
                     List<WayChainBuilder.Ring> innerNeedsChaining = new ArrayList<>();
                     for (WayChainBuilder.Ring ring : innerRings) {
                         if (!ring.isAlreadyClosed() && ring.getNodes().size() - 1 <= MAX_WAY_NODES) {
@@ -1277,8 +1301,18 @@ public class MultipolygonAnalyzer {
                 outerRings, new ArrayList<>(), String.join(", ", descParts));
         }
 
-        // No inners: dissolve everything (unless identity-protected with multiple outers)
+        // No inners: dissolve everything (unless partial or identity-protected)
         if (innerWays.isEmpty()) {
+            if (partialMode) {
+                // Don't dissolve in partial mode — oversized/unchainable outers remain
+                if (ops.isEmpty()) {
+                    if (skipOut != null) skipOut[0] = SkipReason.NO_OPERATIONS_APPLICABLE;
+                    return null;
+                }
+                descParts.add("partial improvement");
+                return new ComponentResult(outerWays, innerWays, ops, false,
+                    outerRings, new ArrayList<>(), String.join(", ", descParts));
+            }
             if (identityProtected && outerRings.size() > 1) {
                 // Identity-protected: don't dissolve disjoint outers into separate ways.
                 // Only return if we have consolidation or decomposition ops to apply.
@@ -1304,19 +1338,38 @@ public class MultipolygonAnalyzer {
         if (innerRingsOpt.isEmpty()) {
             // Try absorbing open inner ways into closed inner rings
             innerRingsOpt = buildRingsWithAbsorption(innerWays);
-            if (innerRingsOpt.isEmpty()) {
+        }
+        List<WayChainBuilder.Ring> innerRings;
+        if (innerRingsOpt.isEmpty()) {
+            // Full inner ring building failed — try partial
+            WayChainBuilder.PartialRingsResult partialInner = WayChainBuilder.buildRingsPartial(innerWays);
+            if (!partialInner.getRings().isEmpty()) {
+                innerRings = partialInner.getRings();
+                partialMode = true;
+            } else {
+                // No inner rings could be formed at all — return whatever outer ops we have
+                if (!ops.isEmpty()) {
+                    descParts.add("partial improvement");
+                    return new ComponentResult(outerWays, innerWays, ops, false,
+                        outerRings, new ArrayList<>(), String.join(", ", descParts));
+                }
                 if (skipOut != null) skipOut[0] = SkipReason.INNER_WAYS_CANT_FORM_RINGS;
                 return null;
             }
+        } else {
+            innerRings = innerRingsOpt.get();
         }
-        List<WayChainBuilder.Ring> innerRings = innerRingsOpt.get();
 
-        // Check node limits on inner rings that need chaining
+        // Check node limits on inner rings that need chaining — skip oversized
+        List<WayChainBuilder.Ring> oversizedInners = new ArrayList<>();
         for (WayChainBuilder.Ring ring : innerRings) {
             if (!ring.isAlreadyClosed() && ring.getNodes().size() - 1 > MAX_WAY_NODES) {
-                if (skipOut != null) skipOut[0] = SkipReason.INNER_RING_TOO_LARGE;
-                return null;
+                oversizedInners.add(ring);
             }
+        }
+        if (!oversizedInners.isEmpty()) {
+            innerRings.removeAll(oversizedInners);
+            partialMode = true;
         }
 
         // Record inner consolidation if any inner rings need chaining
@@ -1362,6 +1415,15 @@ public class MultipolygonAnalyzer {
 
         // If all inners were extracted, dissolve (same logic as no-inners case)
         if (innerRings.isEmpty()) {
+            if (partialMode) {
+                if (ops.isEmpty()) {
+                    if (skipOut != null) skipOut[0] = SkipReason.NO_OPERATIONS_APPLICABLE;
+                    return null;
+                }
+                descParts.add("partial improvement");
+                return new ComponentResult(outerWays, innerWays, ops, false,
+                    outerRings, new ArrayList<>(), String.join(", ", descParts));
+            }
             if (identityProtected && outerRings.size() > 1) {
                 if (ops.isEmpty()) {
                     if (skipOut != null) skipOut[0] = SkipReason.IDENTITY_PROTECTED_NO_OPS;
@@ -1380,6 +1442,17 @@ public class MultipolygonAnalyzer {
                 null, null, String.join(", ", descParts));
         }
 
+        // In partial mode, skip dissolution/extraction/merge — just return consolidation ops
+        if (partialMode) {
+            if (ops.isEmpty()) {
+                if (skipOut != null) skipOut[0] = SkipReason.NO_OPERATIONS_APPLICABLE;
+                return null;
+            }
+            descParts.add("partial improvement");
+            return new ComponentResult(outerWays, innerWays, ops, false,
+                outerRings, innerRings, String.join(", ", descParts));
+        }
+
         // Map inner rings to containing outer rings
         Map<WayChainBuilder.Ring, List<WayChainBuilder.Ring>> ringToInners = new HashMap<>();
         for (WayChainBuilder.Ring ring : outerRings) {
@@ -1388,6 +1461,7 @@ public class MultipolygonAnalyzer {
         for (WayChainBuilder.Ring innerRing : innerRings) {
             WayChainBuilder.Ring containing = findContainingRing(innerRing, outerRings);
             if (containing == null) {
+                // In non-partial mode, a single unmapped inner is a hard failure
                 if (skipOut != null) skipOut[0] = SkipReason.INNER_NOT_CONTAINED_IN_OUTER;
                 return null;
             }
