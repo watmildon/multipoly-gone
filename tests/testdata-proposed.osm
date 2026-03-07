@@ -13622,4 +13622,59 @@
     <tag k='_test_notes' v='nested outer with non-mediating inner (inner offset, does not enclose nested outer)' />
     <tag k='_test_expected' v='SKIP: NESTED_OUTER_RINGS (inner does not mediate the nesting)' />
   </relation>
+  <node id='-505413' action='modify' visible='true' lat='47.56500000000' lon='-122.48800000000' />
+  <node id='-505414' action='modify' visible='true' lat='47.56641421356' lon='-122.48858578644' />
+  <node id='-505415' action='modify' visible='true' lat='47.56700000000' lon='-122.49000000000' />
+  <node id='-505416' action='modify' visible='true' lat='47.56641421356' lon='-122.49141421356' />
+  <node id='-505417' action='modify' visible='true' lat='47.56500000000' lon='-122.49200000000' />
+  <node id='-505418' action='modify' visible='true' lat='47.56358578644' lon='-122.49141421356' />
+  <node id='-505419' action='modify' visible='true' lat='47.56300000000' lon='-122.49000000000' />
+  <node id='-505420' action='modify' visible='true' lat='47.56358578644' lon='-122.48858578644' />
+  <node id='-505422' action='modify' visible='true' lat='47.56580000000' lon='-122.49030000000' />
+  <node id='-505423' action='modify' visible='true' lat='47.56580000000' lon='-122.48970000000' />
+  <node id='-505424' action='modify' visible='true' lat='47.56520000000' lon='-122.48970000000' />
+  <node id='-505425' action='modify' visible='true' lat='47.56520000000' lon='-122.49030000000' />
+  <node id='-505427' action='modify' visible='true' lat='47.56480000000' lon='-122.49060000000' />
+  <node id='-505428' action='modify' visible='true' lat='47.56420000000' lon='-122.49060000000' />
+  <node id='-505429' action='modify' visible='true' lat='47.56420000000' lon='-122.48940000000' />
+  <node id='-505430' action='modify' visible='true' lat='47.56480000000' lon='-122.48940000000' />
+  <way id='-505421' action='modify' visible='true'>
+    <nd ref='-505413' />
+    <nd ref='-505414' />
+    <nd ref='-505415' />
+    <nd ref='-505416' />
+    <nd ref='-505417' />
+    <nd ref='-505418' />
+    <nd ref='-505419' />
+    <nd ref='-505420' />
+    <nd ref='-505413' />
+  </way>
+  <way id='-505426' action='modify' visible='true'>
+    <nd ref='-505422' />
+    <nd ref='-505423' />
+    <nd ref='-505424' />
+    <nd ref='-505425' />
+    <nd ref='-505422' />
+    <tag k='landuse' v='residential' />
+  </way>
+  <way id='-505431' action='modify' visible='true'>
+    <nd ref='-505427' />
+    <nd ref='-505428' />
+    <nd ref='-505429' />
+    <nd ref='-505430' />
+    <nd ref='-505424' />
+    <nd ref='-505425' />
+    <nd ref='-505427' />
+    <tag k='landuse' v='farmyard' />
+  </way>
+  <relation id='-505432' action='modify' visible='true'>
+    <member type='way' ref='-505421' role='outer' />
+    <member type='way' ref='-505426' role='inner' />
+    <member type='way' ref='-505431' role='inner' />
+    <tag k='type' v='multipolygon' />
+    <tag k='landuse' v='meadow' />
+    <tag k='_test_id' v='132' />
+    <tag k='_test_notes' v='2 inners sharing edge in same direction (forward-match), like farmyard pattern' />
+    <tag k='_test_expected' v='CONSOLIDATE_INNERS: merge 2 inners into 1 perimeter ring' />
+  </relation>
 </osm>

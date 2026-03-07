@@ -1555,6 +1555,44 @@ class MultipolygonFixerTest {
         assertNull(plan, "Test case 131 should not be fixable (invalid nested outer)");
     }
 
+    // --- Test case 132 (from testdata-proposed.osm): CONSOLIDATE_INNERS forward-match ---
+
+    @Test
+    void testCase132_forwardMatchInnersMerge() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "132");
+        assertNotNull(plan, "Test case 132 should be fixable");
+
+        boolean hasConsolidateInners = plan.getOperations().stream()
+            .anyMatch(op -> op.getType() == FixOpType.CONSOLIDATE_INNERS);
+        assertTrue(hasConsolidateInners, "Plan should include CONSOLIDATE_INNERS");
+
+        Relation relation = plan.getRelation();
+        long innersBefore = relation.getMembers().stream()
+            .filter(m -> "inner".equals(m.getRole())).count();
+        assertEquals(2, innersBefore, "Should start with 2 inner members");
+
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        assertFalse(relation.isDeleted(), "Relation should survive (has inners)");
+        long innersAfter = relation.getMembers().stream()
+            .filter(m -> "inner".equals(m.getRole())).count();
+        assertEquals(1, innersAfter, "Should have 1 inner after merging 2 forward-match inners");
+
+        // Verify the merged inner way is closed
+        Way innerWay = relation.getMembers().stream()
+            .filter(m -> "inner".equals(m.getRole()))
+            .map(m -> m.getWay())
+            .findFirst().orElseThrow();
+        assertTrue(innerWay.isClosed(), "Merged inner way should be closed");
+
+        // Verify all original non-shared nodes are present in the merged ring
+        // (8 unique nodes: D, A, B, C from inner1, E, F, G, H from inner2)
+        assertEquals(9, innerWay.getNodesCount(),
+            "Merged ring should have 9 nodes (8 unique + 1 closing)");
+    }
+
     // --- Parent relation protection (issue #10) ---
 
     @Test

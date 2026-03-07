@@ -1842,11 +1842,11 @@ public class MultipolygonAnalyzer {
         // Walk B's non-shared nodes (excluding both junctions which are already in merged)
         int bNonShared = sizeB - runLength;
         if (forwardMatch) {
-            // In B, shared run goes from startInB forward.
-            // B's non-shared starts at (startInB + runLength) % sizeB
-            int bStart = (startInB + runLength) % sizeB;
+            // Forward match: shared run goes same direction in both rings.
+            // Walk B's non-shared arc in reverse (from startInB-1 backwards)
+            // to trace the outer perimeter rather than cutting through.
             for (int k = 0; k < bNonShared; k++) {
-                merged.add(nodesB.get((bStart + k) % sizeB));
+                merged.add(nodesB.get((startInB - 1 - k + sizeB) % sizeB));
             }
         } else {
             // Reverse: A's first shared node (runFirstA) maps to
