@@ -80,7 +80,9 @@ public class MultipolygonAnalyzer {
         NO_OPERATIONS_APPLICABLE("No simplification operations apply",
             "The relation structure is too complex for automatic simplification"),
         MULTI_COMPONENT_SPLIT_NOT_WORTHWHILE("Multi-component split has no fixable components",
-            "Components could be split but none simplify individually");
+            "Components could be split but none simplify individually"),
+        HAS_PARENT_RELATION("Referenced by parent relation",
+            "This relation is a member of another relation and cannot be dissolved or split");
 
         private final String message;
         private final String hint;
@@ -860,6 +862,10 @@ public class MultipolygonAnalyzer {
         if (isBoundary) {
             identityProtected = true;
         }
+        // Relations that are members of other relations cannot be safely dissolved
+        // or split — doing so would break the parent relation's member references.
+        boolean parentProtected = relation.getReferrers().stream()
+            .anyMatch(r -> r instanceof Relation && !r.isDeleted());
 
         // Check if open outer ways form multiple disconnected ring groups.
         // If so, split into sub-relations up front so we reach the simplest
@@ -869,7 +875,7 @@ public class MultipolygonAnalyzer {
         // Already-closed outers are handled fine by the single-relation path
         // (EXTRACT_OUTERS / DISSOLVE), so we only check open ways.
         // Identity-protected relations and boundaries are never split.
-        if (!identityProtected) {
+        if (!identityProtected && !parentProtected) {
             List<Way> openOuterWays = new ArrayList<>();
             for (Way w : outerWays) {
                 if (!w.isClosed()) {
@@ -903,7 +909,7 @@ public class MultipolygonAnalyzer {
         // use the single-relation path.
         SkipReason[] singleSkip = new SkipReason[1];
         FixPlan singleResult = analyzeSingleRelation(relation, outerWays, innerWays,
-            identityProtected, isBoundary, singleSkip);
+            identityProtected, isBoundary, parentProtected, singleSkip);
         if (singleResult != null) {
             return AnalyzeOutcome.fix(singleResult);
         }
@@ -912,7 +918,7 @@ public class MultipolygonAnalyzer {
         // Try splitting into disconnected components as a fallback.
         // Don't split if the failure was NESTED_OUTER_RINGS — that's a structural error
         // that splitting would mask by putting each outer in its own component.
-        if (!identityProtected && singleSkip[0] != SkipReason.NESTED_OUTER_RINGS) {
+        if (!identityProtected && !parentProtected && singleSkip[0] != SkipReason.NESTED_OUTER_RINGS) {
             List<Way> allWays = new ArrayList<>(outerWays);
             allWays.addAll(innerWays);
             if (rng != null) {
@@ -928,11 +934,18 @@ public class MultipolygonAnalyzer {
             }
         }
 
-        // Not splittable — report the skip reason
-        SkipReason reason = singleSkip[0] != null ? singleSkip[0]
-            : (identityProtected
-                ? SkipReason.IDENTITY_PROTECTED_MULTI_COMPONENT
-                : SkipReason.SINGLE_COMPONENT_NOT_FIXABLE);
+        // Not splittable — report the skip reason.
+        // Prefer the specific reason from component analysis; fall back to structural reasons.
+        SkipReason reason;
+        if (singleSkip[0] == SkipReason.HAS_PARENT_RELATION || parentProtected) {
+            reason = SkipReason.HAS_PARENT_RELATION;
+        } else if (singleSkip[0] != null) {
+            reason = singleSkip[0];
+        } else if (identityProtected) {
+            reason = SkipReason.IDENTITY_PROTECTED_MULTI_COMPONENT;
+        } else {
+            reason = SkipReason.SINGLE_COMPONENT_NOT_FIXABLE;
+        }
         return AnalyzeOutcome.skip(relation, reason, null);
     }
 
@@ -942,8 +955,9 @@ public class MultipolygonAnalyzer {
      */
     private static FixPlan analyzeSingleRelation(Relation relation, List<Way> outerWays,
             List<Way> innerWays, boolean identityProtected, boolean isBoundary,
-            SkipReason[] skipOut) {
-        ComponentResult result = analyzeComponent(outerWays, innerWays, identityProtected, isBoundary, skipOut);
+            boolean parentProtected, SkipReason[] skipOut) {
+        ComponentResult result = analyzeComponent(outerWays, innerWays, identityProtected, isBoundary,
+            parentProtected, skipOut);
         if (result == null) {
             return null;
         }
@@ -1005,7 +1019,7 @@ public class MultipolygonAnalyzer {
             List<Way> allOuters = outerComponents.isEmpty() ? new ArrayList<>() : outerComponents.get(0);
             List<Way> allInners = outerCompInners.isEmpty() ? new ArrayList<>() : outerCompInners.get(0);
             SkipReason[] skipOut = new SkipReason[1];
-            FixPlan plan = analyzeSingleRelation(relation, allOuters, allInners, false, false, skipOut);
+            FixPlan plan = analyzeSingleRelation(relation, allOuters, allInners, false, false, false, skipOut);
             if (plan != null) return AnalyzeOutcome.fix(plan);
             return AnalyzeOutcome.skip(relation,
                 skipOut[0] != null ? skipOut[0] : SkipReason.SINGLE_COMPONENT_NOT_FIXABLE, null);
@@ -1086,7 +1100,7 @@ public class MultipolygonAnalyzer {
         if (outerComponents.size() == 1) {
             SkipReason[] skipOut = new SkipReason[1];
             FixPlan plan = analyzeSingleRelation(relation, outerComponents.get(0), outerCompInners.get(0),
-                false, false, skipOut);
+                false, false, false, skipOut);
             if (plan != null) return AnalyzeOutcome.fix(plan);
             return AnalyzeOutcome.skip(relation,
                 skipOut[0] != null ? skipOut[0] : SkipReason.SINGLE_COMPONENT_NOT_FIXABLE, null);
@@ -1100,7 +1114,7 @@ public class MultipolygonAnalyzer {
         for (int c = 0; c < outerComponents.size(); c++) {
             List<Way> compOuters = outerComponents.get(c);
             List<Way> compInners = outerCompInners.get(c);
-            ComponentResult cr = analyzeComponent(compOuters, compInners, false, false, null);
+            ComponentResult cr = analyzeComponent(compOuters, compInners, false, false, false, null);
             if (cr == null && !compInners.isEmpty()) {
                 // Component can't be simplified internally, but in a multi-component split
                 // it still needs to become its own sub-relation. Create a no-op result.
@@ -1147,10 +1161,12 @@ public class MultipolygonAnalyzer {
     /**
      * Analyze a single connected component of ways through the full pipeline.
      * Returns a ComponentResult, or null if the component is not fixable.
+     * @param parentProtected true if the relation has a parent relation and must not be deleted
      * @param skipOut if non-null and the component is not fixable, skipOut[0] is set to the reason
      */
     private static ComponentResult analyzeComponent(List<Way> outerWays, List<Way> innerWays,
-            boolean identityProtected, boolean boundaryMode, SkipReason[] skipOut) {
+            boolean identityProtected, boolean boundaryMode, boolean parentProtected,
+            SkipReason[] skipOut) {
         // Partial mode: when some steps fail but others succeed, accumulate
         // whatever consolidation ops are possible and keep the relation alive.
         boolean partialMode = false;
@@ -1317,6 +1333,17 @@ public class MultipolygonAnalyzer {
                 return new ComponentResult(outerWays, innerWays, ops, false,
                     outerRings, new ArrayList<>(), String.join(", ", descParts));
             }
+            if (parentProtected) {
+                // Parent-protected: relation must survive (parent references it by ID).
+                // Return consolidation ops only; don't dissolve regardless of outer count.
+                if (ops.isEmpty()) {
+                    if (skipOut != null) skipOut[0] = SkipReason.HAS_PARENT_RELATION;
+                    return null;
+                }
+                descParts.add("parent-protected, kept as relation");
+                return new ComponentResult(outerWays, innerWays, ops, false,
+                    outerRings, new ArrayList<>(), String.join(", ", descParts));
+            }
             if (identityProtected && outerRings.size() > 1) {
                 // Identity-protected: don't dissolve disjoint outers into separate ways.
                 // Only return if we have consolidation or decomposition ops to apply.
@@ -1437,6 +1464,15 @@ public class MultipolygonAnalyzer {
                 return new ComponentResult(outerWays, innerWays, ops, false,
                     outerRings, new ArrayList<>(), String.join(", ", descParts));
             }
+            if (parentProtected) {
+                if (ops.isEmpty()) {
+                    if (skipOut != null) skipOut[0] = SkipReason.HAS_PARENT_RELATION;
+                    return null;
+                }
+                descParts.add("parent-protected, kept as relation");
+                return new ComponentResult(outerWays, innerWays, ops, false,
+                    outerRings, new ArrayList<>(), String.join(", ", descParts));
+            }
             if (identityProtected && outerRings.size() > 1) {
                 if (ops.isEmpty()) {
                     if (skipOut != null) skipOut[0] = SkipReason.IDENTITY_PROTECTED_NO_OPS;
@@ -1507,7 +1543,7 @@ public class MultipolygonAnalyzer {
         }
 
         // Analyze what remains after extraction
-        if (retained.size() == 1 && retainedInners.size() == 1) {
+        if (retained.size() == 1 && retainedInners.size() == 1 && !parentProtected) {
             MergeResult mergeResult = tryTouchingInnerMerge(retained.get(0), retainedInners.get(0).getNodes());
             if (mergeResult != null) {
                 for (List<Node> way : mergeResult.mergedWays) {

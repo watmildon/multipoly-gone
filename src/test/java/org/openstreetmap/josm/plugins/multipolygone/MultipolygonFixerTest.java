@@ -15,8 +15,11 @@ import org.openstreetmap.josm.data.osm.DataSet;
 import org.openstreetmap.josm.data.osm.Relation;
 import org.openstreetmap.josm.data.osm.RelationMember;
 import org.openstreetmap.josm.data.osm.Way;
+import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.AnalysisResult;
 import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixOpType;
 import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixPlan;
+import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.SkipReason;
+import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.SkipResult;
 
 class MultipolygonFixerTest {
 
@@ -1550,5 +1553,68 @@ class MultipolygonFixerTest {
         List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
         FixPlan plan = findPlanByTestId(plans, "131");
         assertNull(plan, "Test case 131 should not be fixable (invalid nested outer)");
+    }
+
+    // --- Parent relation protection (issue #10) ---
+
+    @Test
+    void parentRelation_dissolveOnlyRelation_isSkipped() {
+        // Test case 1 would normally DISSOLVE — adding a parent relation should cause it to skip
+        DataSet ds = freshDataSet();
+        FixPlan plan = findPlanByTestId(MultipolygonAnalyzer.findFixableRelations(ds), "1");
+        assertNotNull(plan, "Test case 1 should be fixable without parent relation");
+
+        // Add a parent relation that references the multipolygon
+        Relation parentRelation = new Relation();
+        parentRelation.put("type", "boundary");
+        parentRelation.put("boundary", "administrative");
+        parentRelation.addMember(new RelationMember("subarea", plan.getRelation()));
+        ds.addPrimitive(parentRelation);
+
+        // Re-analyze: test case 1 should now be skipped
+        AnalysisResult result = MultipolygonAnalyzer.analyzeAll(ds, null);
+        FixPlan reanalyzed = findPlanByTestId(result.getFixPlans(), "1");
+        assertNull(reanalyzed, "Test case 1 should not be fixable when it has a parent relation");
+
+        // Verify it's in the skip list with the right reason
+        SkipResult skipResult = result.getSkipResults().stream()
+            .filter(sr -> "1".equals(sr.getRelation().get("_test_id")))
+            .findFirst().orElse(null);
+        assertNotNull(skipResult, "Test case 1 should appear in skip results");
+        assertEquals(SkipReason.HAS_PARENT_RELATION, skipResult.getReason());
+    }
+
+    @Test
+    void parentRelation_consolidateAndDissolve_stripsDissolveKeepsConsolidation() {
+        // Test case 2 does CONSOLIDATE_RINGS + DISSOLVE. With a parent relation,
+        // the dissolve should be suppressed but consolidation should still happen.
+        DataSet ds = freshDataSet();
+        FixPlan planBefore = findPlanByTestId(MultipolygonAnalyzer.findFixableRelations(ds), "2");
+        assertNotNull(planBefore, "Test case 2 should be fixable without parent relation");
+        assertTrue(planBefore.getOperations().stream().anyMatch(op -> op.getType() == FixOpType.DISSOLVE),
+            "Test case 2 should have DISSOLVE op without parent relation");
+
+        // Add a parent relation
+        Relation parentRelation = new Relation();
+        parentRelation.put("type", "boundary");
+        parentRelation.put("boundary", "administrative");
+        parentRelation.addMember(new RelationMember("subarea", planBefore.getRelation()));
+        ds.addPrimitive(parentRelation);
+
+        // Re-analyze: should still be fixable with consolidation only
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan planAfter = findPlanByTestId(plans, "2");
+        assertNotNull(planAfter, "Test case 2 should still be fixable (consolidation) with parent relation");
+        assertTrue(planAfter.getOperations().stream()
+                .anyMatch(op -> op.getType() == FixOpType.CONSOLIDATE_RINGS),
+            "Should still have CONSOLIDATE_RINGS op");
+        assertTrue(planAfter.getOperations().stream()
+                .noneMatch(op -> op.getType() == FixOpType.DISSOLVE),
+            "Should NOT have DISSOLVE op when parent relation exists");
+
+        // Fix and verify relation is NOT deleted
+        MultipolygonFixer.fixRelations(List.of(planAfter));
+        assertFalse(planAfter.getRelation().isDeleted(),
+            "Relation should NOT be deleted when it has a parent relation");
     }
 }
