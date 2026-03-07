@@ -240,9 +240,24 @@ public class MultipolygonFixer {
         List<FixPlan> sortedPlans = new ArrayList<>(plans);
         sortedPlans.sort(Comparator.comparingLong(p -> p.getRelation().getUniqueId()));
 
+        // Re-analyze all relations upfront to get fresh plans with current geometry.
+        // This prevents crashes when the user modifies the dataset (e.g., deletes or
+        // adds nodes) between clicking Refresh and clicking Gone (issue #14).
+        List<FixPlan> freshPlans = new ArrayList<>();
+        for (FixPlan stalePlan : sortedPlans) {
+            Relation relation = stalePlan.getRelation();
+            if (relation.isDeleted()) {
+                continue;
+            }
+            FixPlan fresh = MultipolygonAnalyzer.reanalyze(relation);
+            if (fresh != null) {
+                freshPlans.add(fresh);
+            }
+        }
+
         // All processed relations should be ignored for cleanup referrer checks,
         // whether they are deleted or just modified
-        Set<Relation> processedRelations = sortedPlans.stream()
+        Set<Relation> processedRelations = freshPlans.stream()
             .map(FixPlan::getRelation)
             .collect(Collectors.toSet());
 
@@ -254,12 +269,7 @@ public class MultipolygonFixer {
         // multiple relations reference the exact same set of ways, consolidation is shared
         Map<Set<Way>, Way> globalConsolidations = new HashMap<>();
 
-        for (FixPlan plan : sortedPlans) {
-            Relation relation = plan.getRelation();
-            if (relation.isDeleted()) {
-                continue;
-            }
-
+        for (FixPlan plan : freshPlans) {
             Set<String> insignificantTags = plan.isBoundary()
                 ? boundaryInsignificantTags : mpInsignificantTags;
             allCommands.addAll(buildCommandsForPlan(plan, waysToCleanup, waysRetainedByPlans,

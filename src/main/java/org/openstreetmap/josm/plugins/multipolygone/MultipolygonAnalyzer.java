@@ -170,6 +170,16 @@ public class MultipolygonAnalyzer {
         }
     }
 
+    /**
+     * Re-analyzes a single relation with current geometry.
+     * Used at fix time to ensure plans reflect the latest dataset state (issue #14).
+     * @return a fresh FixPlan, or null if the relation is no longer fixable
+     */
+    public static FixPlan reanalyze(Relation relation) {
+        AnalyzeOutcome outcome = analyze(relation, null);
+        return outcome.plan;
+    }
+
     private static AnalyzeOutcome analyze(Relation relation, Random rng) {
         boolean isBoundary = "boundary".equals(relation.get("type"));
 
