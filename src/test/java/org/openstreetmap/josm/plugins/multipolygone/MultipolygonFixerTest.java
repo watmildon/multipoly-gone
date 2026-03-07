@@ -15,8 +15,7 @@ import org.openstreetmap.josm.data.osm.DataSet;
 import org.openstreetmap.josm.data.osm.Relation;
 import org.openstreetmap.josm.data.osm.RelationMember;
 import org.openstreetmap.josm.data.osm.Way;
-import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixOpType;
-import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixPlan;
+
 
 class MultipolygonFixerTest {
 
@@ -765,7 +764,7 @@ class MultipolygonFixerTest {
 
         // Verify plan structure
         assertEquals(1, plan.getOperations().size(), "Should have 1 operation");
-        assertEquals(MultipolygonAnalyzer.FixOpType.DISSOLVE, plan.getOperations().get(0).getType());
+        assertEquals(FixOpType.DISSOLVE, plan.getOperations().get(0).getType());
 
         var relation = plan.getRelation();
         Way outerWay = relation.getMembers().get(0).getWay();
@@ -1511,5 +1510,145 @@ class MultipolygonFixerTest {
         long innerCount = relation.getMembers().stream()
             .filter(m -> "inner".equals(m.getRole())).count();
         assertEquals(2, innerCount, "Should still have 2 inner members");
+    }
+
+    // --- Test case 130 (from testdata-proposed.osm): valid island-within-a-hole ---
+
+    @Test
+    void testCase130_validIslandWithinAHole() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "130");
+        assertNotNull(plan, "Test case 130 should be fixable (valid island-within-a-hole)");
+
+        // Should have CONSOLIDATE_RINGS to chain the island's 2 open ways
+        boolean hasConsolidate = plan.getOperations().stream()
+            .anyMatch(op -> op.getType() == FixOpType.CONSOLIDATE_RINGS);
+        assertTrue(hasConsolidate, "Should have CONSOLIDATE_RINGS for the island");
+
+        Relation relation = plan.getRelation();
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        // Identity-protected (has name tag), so relation survives
+        assertFalse(relation.isDeleted(), "Relation should survive (identity-protected)");
+
+        // Should have outers and inners
+        long outerCount = relation.getMembers().stream()
+            .filter(m -> "outer".equals(m.getRole())).count();
+        long innerCount = relation.getMembers().stream()
+            .filter(m -> "inner".equals(m.getRole())).count();
+        assertTrue(outerCount >= 2, "Should have at least 2 outer members (big outer + island)");
+        assertEquals(1, innerCount, "Should have 1 inner member (the hole)");
+    }
+
+    // --- Test case 131 (from testdata-proposed.osm): invalid nested outer with non-mediating inner ---
+
+    @Test
+    void testCase131_invalidNestedOuterWithInners() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "131");
+        assertNull(plan, "Test case 131 should not be fixable (invalid nested outer)");
+    }
+
+    // --- Test case 132 (from testdata-proposed.osm): CONSOLIDATE_INNERS forward-match ---
+
+    @Test
+    void testCase132_forwardMatchInnersMerge() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "132");
+        assertNotNull(plan, "Test case 132 should be fixable");
+
+        boolean hasConsolidateInners = plan.getOperations().stream()
+            .anyMatch(op -> op.getType() == FixOpType.CONSOLIDATE_INNERS);
+        assertTrue(hasConsolidateInners, "Plan should include CONSOLIDATE_INNERS");
+
+        Relation relation = plan.getRelation();
+        long innersBefore = relation.getMembers().stream()
+            .filter(m -> "inner".equals(m.getRole())).count();
+        assertEquals(2, innersBefore, "Should start with 2 inner members");
+
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        assertFalse(relation.isDeleted(), "Relation should survive (has inners)");
+        long innersAfter = relation.getMembers().stream()
+            .filter(m -> "inner".equals(m.getRole())).count();
+        assertEquals(1, innersAfter, "Should have 1 inner after merging 2 forward-match inners");
+
+        // Verify the merged inner way is closed
+        Way innerWay = relation.getMembers().stream()
+            .filter(m -> "inner".equals(m.getRole()))
+            .map(m -> m.getWay())
+            .findFirst().orElseThrow();
+        assertTrue(innerWay.isClosed(), "Merged inner way should be closed");
+
+        // Verify all original non-shared nodes are present in the merged ring
+        // (8 unique nodes: D, A, B, C from inner1, E, F, G, H from inner2)
+        assertEquals(9, innerWay.getNodesCount(),
+            "Merged ring should have 9 nodes (8 unique + 1 closing)");
+    }
+
+    // --- Parent relation protection (issue #10) ---
+
+    @Test
+    void parentRelation_dissolveOnlyRelation_isSkipped() {
+        // Test case 1 would normally DISSOLVE — adding a parent relation should cause it to skip
+        DataSet ds = freshDataSet();
+        FixPlan plan = findPlanByTestId(MultipolygonAnalyzer.findFixableRelations(ds), "1");
+        assertNotNull(plan, "Test case 1 should be fixable without parent relation");
+
+        // Add a parent relation that references the multipolygon
+        Relation parentRelation = new Relation();
+        parentRelation.put("type", "boundary");
+        parentRelation.put("boundary", "administrative");
+        parentRelation.addMember(new RelationMember("subarea", plan.getRelation()));
+        ds.addPrimitive(parentRelation);
+
+        // Re-analyze: test case 1 should now be skipped
+        AnalysisResult result = MultipolygonAnalyzer.analyzeAll(ds, null);
+        FixPlan reanalyzed = findPlanByTestId(result.getFixPlans(), "1");
+        assertNull(reanalyzed, "Test case 1 should not be fixable when it has a parent relation");
+
+        // Verify it's in the skip list with the right reason
+        SkipResult skipResult = result.getSkipResults().stream()
+            .filter(sr -> "1".equals(sr.getRelation().get("_test_id")))
+            .findFirst().orElse(null);
+        assertNotNull(skipResult, "Test case 1 should appear in skip results");
+        assertEquals(SkipReason.HAS_PARENT_RELATION, skipResult.getReason());
+    }
+
+    @Test
+    void parentRelation_consolidateAndDissolve_stripsDissolveKeepsConsolidation() {
+        // Test case 2 does CONSOLIDATE_RINGS + DISSOLVE. With a parent relation,
+        // the dissolve should be suppressed but consolidation should still happen.
+        DataSet ds = freshDataSet();
+        FixPlan planBefore = findPlanByTestId(MultipolygonAnalyzer.findFixableRelations(ds), "2");
+        assertNotNull(planBefore, "Test case 2 should be fixable without parent relation");
+        assertTrue(planBefore.getOperations().stream().anyMatch(op -> op.getType() == FixOpType.DISSOLVE),
+            "Test case 2 should have DISSOLVE op without parent relation");
+
+        // Add a parent relation
+        Relation parentRelation = new Relation();
+        parentRelation.put("type", "boundary");
+        parentRelation.put("boundary", "administrative");
+        parentRelation.addMember(new RelationMember("subarea", planBefore.getRelation()));
+        ds.addPrimitive(parentRelation);
+
+        // Re-analyze: should still be fixable with consolidation only
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan planAfter = findPlanByTestId(plans, "2");
+        assertNotNull(planAfter, "Test case 2 should still be fixable (consolidation) with parent relation");
+        assertTrue(planAfter.getOperations().stream()
+                .anyMatch(op -> op.getType() == FixOpType.CONSOLIDATE_RINGS),
+            "Should still have CONSOLIDATE_RINGS op");
+        assertTrue(planAfter.getOperations().stream()
+                .noneMatch(op -> op.getType() == FixOpType.DISSOLVE),
+            "Should NOT have DISSOLVE op when parent relation exists");
+
+        // Fix and verify relation is NOT deleted
+        MultipolygonFixer.fixRelations(List.of(planAfter));
+        assertFalse(planAfter.getRelation().isDeleted(),
+            "Relation should NOT be deleted when it has a parent relation");
     }
 }

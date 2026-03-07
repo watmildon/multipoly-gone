@@ -56,12 +56,7 @@ import org.openstreetmap.josm.gui.io.DownloadPrimitivesTask;
 import org.openstreetmap.josm.gui.layer.MainLayerManager.ActiveLayerChangeEvent;
 import org.openstreetmap.josm.gui.layer.MainLayerManager.ActiveLayerChangeListener;
 import org.openstreetmap.josm.gui.layer.OsmDataLayer;
-import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.AnalysisResult;
-import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixOp;
-import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixOpType;
-import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixPlan;
-import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.SkipReason;
-import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.SkipResult;
+
 import org.openstreetmap.josm.spi.preferences.Config;
 import org.openstreetmap.josm.tools.ImageProvider;
 import org.openstreetmap.josm.tools.Logging;
@@ -337,18 +332,23 @@ public class MultipolyGoneDialog extends ToggleDialog
     }
 
     /**
-     * Finds source ways from CONSOLIDATE_RINGS and DECOMPOSE ops that are candidates
-     * for deletion during cleanup but don't have referrers downloaded yet.
+     * Finds primitives that need referrer data downloaded before fixes can safely proceed.
+     * This includes:
+     * - Source ways from CONSOLIDATE_RINGS, CONSOLIDATE_INNERS, DECOMPOSE ops (cleanup candidates)
+     * - Member ways from TOUCHING_INNER_MERGE ops (all become cleanup candidates)
+     * - Relations themselves when the plan would delete them (DISSOLVE, TOUCHING_INNER_MERGE)
+     *   and we don't know if they have parent relations
      * Only ways without significant tags need referrer data (tagged ways are kept regardless).
      */
-    private Set<Way> findWaysNeedingReferrers(List<FixPlan> plans) {
+    private Set<OsmPrimitive> findPrimitivesNeedingReferrers(List<FixPlan> plans) {
         Set<String> mpInsignificantTags = MultipolygonFixer.getInsignificantTagsForMultipolygon();
         Set<String> boundaryInsignificantTags = MultipolygonFixer.getInsignificantTagsForBoundary();
 
-        Set<Way> result = new java.util.LinkedHashSet<>();
+        Set<OsmPrimitive> result = new java.util.LinkedHashSet<>();
         for (FixPlan plan : plans) {
             Set<String> insignificantTags = plan.isBoundary()
                 ? boundaryInsignificantTags : mpInsignificantTags;
+            boolean planDeletesRelation = false;
             for (FixOp op : plan.getOperations()) {
                 if (op.getType() == FixOpType.CONSOLIDATE_RINGS && op.getRings() != null) {
                     for (WayChainBuilder.Ring ring : op.getRings()) {
@@ -384,6 +384,23 @@ public class MultipolyGoneDialog extends ToggleDialog
                         }
                     }
                 }
+                if (op.getType() == FixOpType.TOUCHING_INNER_MERGE) {
+                    planDeletesRelation = true;
+                    for (RelationMember m : plan.getRelation().getMembers()) {
+                        if (m.isWay() && !m.getWay().isReferrersDownloaded()
+                                && !MultipolygonFixer.hasSignificantTags(m.getWay(), insignificantTags)) {
+                            result.add(m.getWay());
+                        }
+                    }
+                }
+                if (op.getType() == FixOpType.DISSOLVE) {
+                    planDeletesRelation = true;
+                }
+            }
+            // If this plan would delete the relation, we need to know if the relation
+            // has parent relations. Download referrers for the relation itself if unknown.
+            if (planDeletesRelation && !plan.getRelation().isReferrersDownloaded()) {
+                result.add(plan.getRelation());
             }
         }
         return result;
@@ -412,15 +429,15 @@ public class MultipolyGoneDialog extends ToggleDialog
             return;
         }
 
-        Set<Way> waysNeedingReferrers = findWaysNeedingReferrers(plans);
+        Set<OsmPrimitive> primitivesNeedingReferrers = findPrimitivesNeedingReferrers(plans);
 
-        if (waysNeedingReferrers.isEmpty()) {
-            Logging.info("Multipoly-Gone: all cleanup-candidate ways already have referrers downloaded");
+        if (primitivesNeedingReferrers.isEmpty()) {
+            Logging.info("Multipoly-Gone: all cleanup-candidate primitives already have referrers downloaded");
             return;
         }
 
-        Logging.info("Multipoly-Gone: downloading referrers for {0} way(s)", waysNeedingReferrers.size());
-        DownloadReferrersAction.downloadReferrers(editLayer, new ArrayList<>(waysNeedingReferrers));
+        Logging.info("Multipoly-Gone: downloading referrers for {0} primitive(s)", primitivesNeedingReferrers.size());
+        DownloadReferrersAction.downloadReferrers(editLayer, new ArrayList<>(primitivesNeedingReferrers));
     }
 
     /**
@@ -430,8 +447,8 @@ public class MultipolyGoneDialog extends ToggleDialog
      * immediately (no download needed, user chose to skip, or preference is "never").
      */
     private boolean shouldDownloadBeforeFix(List<FixPlan> plans, Runnable fixAction) {
-        Set<Way> waysNeeding = findWaysNeedingReferrers(plans);
-        if (waysNeeding.isEmpty()) {
+        Set<OsmPrimitive> primitivesNeeding = findPrimitivesNeedingReferrers(plans);
+        if (primitivesNeeding.isEmpty()) {
             return false;
         }
 
@@ -443,14 +460,14 @@ public class MultipolyGoneDialog extends ToggleDialog
         }
 
         if ("always".equals(pref)) {
-            downloadThenFix(waysNeeding, fixAction);
+            downloadThenFix(primitivesNeeding, fixAction);
             return true;
         }
 
         // "prompt" — show dialog
-        int choice = showDownloadPrompt(waysNeeding.size());
+        int choice = showDownloadPrompt(primitivesNeeding.size());
         if (choice == 0) { // Download and Fix
-            downloadThenFix(waysNeeding, fixAction);
+            downloadThenFix(primitivesNeeding, fixAction);
             return true;
         }
         if (choice == 1) { // Fix Without Download
@@ -459,10 +476,10 @@ public class MultipolyGoneDialog extends ToggleDialog
         return true; // Cancel or closed — don't proceed
     }
 
-    private int showDownloadPrompt(int wayCount) {
-        String message = tr("{0} way(s) do not have referrers downloaded.\n"
+    private int showDownloadPrompt(int primitiveCount) {
+        String message = tr("{0} primitive(s) do not have referrers downloaded.\n"
             + "Downloading referrers ensures that ways shared with other\n"
-            + "relations are not accidentally deleted.", wayCount);
+            + "relations are not accidentally deleted or modified.", primitiveCount);
         String[] options = {
             tr("Download and Fix"),
             tr("Fix Without Download"),
@@ -477,14 +494,38 @@ public class MultipolyGoneDialog extends ToggleDialog
             null, options, options[0]);
     }
 
-    private void downloadThenFix(Set<Way> ways, Runnable fixAction) {
+    private void downloadThenFix(Set<OsmPrimitive> primitives, Runnable fixAction) {
+        downloadThenFix(primitives, fixAction, 0);
+    }
+
+    private void downloadThenFix(Set<OsmPrimitive> primitives, Runnable fixAction, int depth) {
         OsmDataLayer editLayer = MainApplication.getLayerManager().getEditLayer();
         if (editLayer == null) {
             return;
         }
-        DownloadReferrersAction.downloadReferrers(editLayer, new ArrayList<>(ways));
-        // Chain the fix after download completes, then run on EDT
-        MainApplication.worker.submit(() -> SwingUtilities.invokeLater(fixAction));
+        DownloadReferrersAction.downloadReferrers(editLayer, new ArrayList<>(primitives));
+        // Chain re-analysis after download completes, then run on EDT
+        MainApplication.worker.submit(() -> SwingUtilities.invokeLater(() -> {
+            // Re-analyze: download may have loaded new relations or revealed parent relations
+            refresh();
+
+            if (depth < 3) {
+                // Re-check if more downloads are needed (cascade)
+                List<FixPlan> currentPlans = new ArrayList<>();
+                for (int i = 0; i < listModel.size(); i++) {
+                    currentPlans.add(listModel.get(i));
+                }
+                Set<OsmPrimitive> moreNeeded = findPrimitivesNeedingReferrers(currentPlans);
+                if (!moreNeeded.isEmpty()) {
+                    Logging.info("Multipoly-Gone: cascade download round {0}, {1} more primitive(s) need referrers",
+                        depth + 1, moreNeeded.size());
+                    downloadThenFix(moreNeeded, fixAction, depth + 1);
+                    return;
+                }
+            }
+
+            fixAction.run();
+        }));
     }
 
     private void downloadForSkippedRelations(OsmDataLayer editLayer) {

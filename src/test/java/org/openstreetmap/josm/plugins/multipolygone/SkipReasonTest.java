@@ -11,10 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 import org.openstreetmap.josm.data.osm.DataSet;
 import org.openstreetmap.josm.data.osm.Relation;
-import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.AnalysisResult;
-import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixPlan;
-import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.SkipReason;
-import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.SkipResult;
+
 
 class SkipReasonTest {
 

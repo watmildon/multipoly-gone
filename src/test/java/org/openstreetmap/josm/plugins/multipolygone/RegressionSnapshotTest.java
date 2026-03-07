@@ -21,7 +21,7 @@ import org.openstreetmap.josm.data.UndoRedoHandler;
 import org.openstreetmap.josm.data.osm.DataSet;
 import org.openstreetmap.josm.io.OsmReader;
 import org.openstreetmap.josm.io.OsmWriterFactory;
-import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixPlan;
+
 
 /**
  * Regression snapshot test. Place .osm files in {@code tests/regression/}

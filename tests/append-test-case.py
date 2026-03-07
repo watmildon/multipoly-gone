@@ -219,4 +219,41 @@ if __name__ == '__main__':
     #       expected='DISSOLVE: tag outer, delete relation')
     #   ctx.write()
     # ================================================================
-    print("No new test cases defined. Edit the __main__ block to add one.")
+    ctx = AppendContext('tests/testdata-proposed.osm')
+
+    # ---- Test 130: Valid island-within-a-hole ----
+    # Big outer > inner (hole) > small outer (island, needs chaining from 2 open ways)
+    # Identity-protected (has name tag), so extraction is blocked.
+    # Expected: CONSOLIDATE_RINGS only, relation survives.
+    lat, lon = ctx.grid_pos()
+    outer_big = ctx.closed_polygon(lat, lon, radius=0.002, n=8)
+    inner_hole = ctx.closed_polygon(lat, lon, radius=0.0015, n=6)
+    # Island: 2 open ways that chain into a closed ring
+    island_nodes = ctx.closed_polygon_nodes(lat, lon, radius=0.0005, n=4)
+    island_nodes_closed = island_nodes + [island_nodes[0]]
+    island_ways = ctx.split_way_at(island_nodes_closed, [0, 2])
+    ctx.add_relation(
+        members=[('way', outer_big, 'outer'), ('way', inner_hole, 'inner')]
+                + [('way', wid, 'outer') for wid in island_ways],
+        tags={'natural': 'water', 'name': 'Test Lake'},
+        notes='island-within-a-hole: outer > inner > outer (island needs chaining)',
+        expected='CONSOLIDATE_RINGS: chain island, relation survives (identity-protected)')
+
+    # ---- Test 131: Invalid nested outer with inners present ----
+    # Big outer with a small outer nested inside it (no mediating inner).
+    # An inner IS present but is offset — it does NOT enclose the nested outer.
+    # Expected: SKIP with NESTED_OUTER_RINGS.
+    lat, lon = ctx.grid_pos()
+    outer_big2 = ctx.closed_polygon(lat, lon, radius=0.002, n=8)
+    # Small outer nested inside the big one (at center)
+    small_outer = ctx.closed_polygon(lat, lon, radius=0.0004, n=4)
+    # Inner is offset so it does NOT contain the small outer
+    inner_offset = ctx.closed_polygon(lat + 0.001, lon + 0.001, radius=0.0005, n=4)
+    ctx.add_relation(
+        members=[('way', outer_big2, 'outer'), ('way', small_outer, 'outer'),
+                 ('way', inner_offset, 'inner')],
+        tags={'natural': 'water'},
+        notes='nested outer with non-mediating inner (inner offset, does not enclose nested outer)',
+        expected='SKIP: NESTED_OUTER_RINGS (inner does not mediate the nesting)')
+
+    ctx.write()

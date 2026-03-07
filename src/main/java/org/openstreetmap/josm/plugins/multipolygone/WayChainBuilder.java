@@ -310,9 +310,9 @@ public class WayChainBuilder {
         }
 
         // Group open ways into connected components by shared endpoints
-        Map<Way, Way> parent = new HashMap<>();
+        UnionFind<Way> uf = new UnionFind<>();
         for (Way w : openWays) {
-            parent.put(w, w);
+            uf.makeSet(w);
         }
 
         Map<Node, List<Way>> endpointToWays = new HashMap<>();
@@ -323,20 +323,14 @@ public class WayChainBuilder {
 
         for (List<Way> group : endpointToWays.values()) {
             for (int i = 1; i < group.size(); i++) {
-                union(parent, group.get(0), group.get(i));
+                uf.union(group.get(0), group.get(i));
             }
-        }
-
-        Map<Way, List<Way>> componentMap = new HashMap<>();
-        for (Way w : openWays) {
-            Way root = find(parent, w);
-            componentMap.computeIfAbsent(root, k -> new ArrayList<>()).add(w);
         }
 
         List<Way> leftover = new ArrayList<>();
 
         // Try building rings from each connected component independently
-        for (List<Way> component : componentMap.values()) {
+        for (List<Way> component : uf.componentLists().values()) {
             Optional<List<Ring>> result = buildRings(component);
             if (result.isPresent()) {
                 rings.addAll(result.get());
@@ -346,22 +340,6 @@ public class WayChainBuilder {
         }
 
         return new PartialRingsResult(rings, leftover);
-    }
-
-    private static Way find(Map<Way, Way> parent, Way w) {
-        while (!parent.get(w).equals(w)) {
-            parent.put(w, parent.get(parent.get(w)));
-            w = parent.get(w);
-        }
-        return w;
-    }
-
-    private static void union(Map<Way, Way> parent, Way a, Way b) {
-        Way ra = find(parent, a);
-        Way rb = find(parent, b);
-        if (!ra.equals(rb)) {
-            parent.put(ra, rb);
-        }
     }
 
     private static class WayEndpoint {
