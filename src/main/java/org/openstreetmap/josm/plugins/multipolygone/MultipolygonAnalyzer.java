@@ -1679,6 +1679,18 @@ public class MultipolygonAnalyzer {
     }
 
     // ---- Adjoining inner ring consolidation ----
+    //
+    // Uses "twin edge elimination" (Schurer et al., Computers & Graphics 2000):
+    // when two rings share a contiguous edge, remove the shared edge and trace
+    // the remaining boundary. O(n), preserves exact Node identity.
+    //
+    // Current limitation: only handles a single contiguous shared run between
+    // two rings. If two rings ever share multiple disjoint edge segments, the
+    // merge returns null. A planar-graph face-finding algorithm (build directed
+    // half-edges, remove twins, sort by polar angle at each vertex, trace outer
+    // face) would handle that case — still O(n log n) and Node-identity-safe.
+    // Not justified yet since multi-segment shared edges are extremely rare in
+    // real OSM data.
 
     /**
      * Iteratively merges abutting closed inner rings that share consecutive edges.
