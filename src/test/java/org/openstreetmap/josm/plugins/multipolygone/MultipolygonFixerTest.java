@@ -15,11 +15,7 @@ import org.openstreetmap.josm.data.osm.DataSet;
 import org.openstreetmap.josm.data.osm.Relation;
 import org.openstreetmap.josm.data.osm.RelationMember;
 import org.openstreetmap.josm.data.osm.Way;
-import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.AnalysisResult;
-import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixOpType;
-import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixPlan;
-import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.SkipReason;
-import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.SkipResult;
+
 
 class MultipolygonFixerTest {
 
@@ -768,7 +764,7 @@ class MultipolygonFixerTest {
 
         // Verify plan structure
         assertEquals(1, plan.getOperations().size(), "Should have 1 operation");
-        assertEquals(MultipolygonAnalyzer.FixOpType.DISSOLVE, plan.getOperations().get(0).getType());
+        assertEquals(FixOpType.DISSOLVE, plan.getOperations().get(0).getType());
 
         var relation = plan.getRelation();
         Way outerWay = relation.getMembers().get(0).getWay();

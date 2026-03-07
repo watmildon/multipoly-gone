@@ -56,12 +56,7 @@ import org.openstreetmap.josm.gui.io.DownloadPrimitivesTask;
 import org.openstreetmap.josm.gui.layer.MainLayerManager.ActiveLayerChangeEvent;
 import org.openstreetmap.josm.gui.layer.MainLayerManager.ActiveLayerChangeListener;
 import org.openstreetmap.josm.gui.layer.OsmDataLayer;
-import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.AnalysisResult;
-import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixOp;
-import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixOpType;
-import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixPlan;
-import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.SkipReason;
-import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.SkipResult;
+
 import org.openstreetmap.josm.spi.preferences.Config;
 import org.openstreetmap.josm.tools.ImageProvider;
 import org.openstreetmap.josm.tools.Logging;

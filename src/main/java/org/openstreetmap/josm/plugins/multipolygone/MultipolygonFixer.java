@@ -25,15 +25,145 @@ import org.openstreetmap.josm.data.osm.OsmPrimitive;
 import org.openstreetmap.josm.data.osm.Relation;
 import org.openstreetmap.josm.data.osm.RelationMember;
 import org.openstreetmap.josm.data.osm.Way;
-import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.ComponentResult;
-import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixOp;
-import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixPlan;
+
 import org.openstreetmap.josm.spi.preferences.Config;
 import org.openstreetmap.josm.tools.Logging;
 
 public class MultipolygonFixer {
 
     private static final int MAX_ITERATIONS = 10;
+
+    /**
+     * Result of selecting or creating a target way for ring consolidation.
+     */
+    private static class ConsolidationTarget {
+        final Way targetWay;
+        final Set<Way> toCleanup;
+
+        ConsolidationTarget(Way targetWay, Set<Way> toCleanup) {
+            this.targetWay = targetWay;
+            this.toCleanup = toCleanup;
+        }
+    }
+
+    /**
+     * Selects or creates a target way for a consolidated ring.
+     * Handles reusing existing matching ways, reusing untagged source ways when
+     * tagged sources exist, or creating new ways.
+     */
+    private static ConsolidationTarget selectConsolidationTarget(
+            List<Node> ringNodes, List<Way> sourceWays,
+            Relation relation, DataSet ds, Set<String> insignificantTags,
+            List<Command> commands) {
+        Set<Way> sourceSet = new HashSet<>(sourceWays);
+        Set<Way> toCleanup = new HashSet<>();
+
+        // Check if an existing closed way in the DataSet already has this geometry
+        Way existingMatch = findMatchingWayInDataSet(ringNodes, sourceSet);
+        if (existingMatch != null) {
+            toCleanup.addAll(sourceWays);
+            return new ConsolidationTarget(existingMatch, toCleanup);
+        }
+
+        // Check if any source way has significant tags; if so, reuse an untagged source way
+        boolean anyTagged = false;
+        Way reusableWay = null;
+        for (Way src : sourceWays) {
+            if (hasSignificantTags(src, insignificantTags)) {
+                anyTagged = true;
+            } else if (reusableWay == null && !isSharedWithOtherRelation(src, relation)) {
+                reusableWay = src;
+            }
+        }
+
+        Way targetWay;
+        if (anyTagged && reusableWay != null) {
+            Way modified = new Way(reusableWay);
+            modified.setNodes(ringNodes);
+            commands.add(new ChangeCommand(reusableWay, modified));
+            targetWay = reusableWay;
+            for (Way src : sourceWays) {
+                if (src != reusableWay && !hasSignificantTags(src, insignificantTags)) {
+                    toCleanup.add(src);
+                }
+            }
+        } else {
+            targetWay = new Way();
+            targetWay.setNodes(ringNodes);
+            commands.add(new AddCommand(ds, targetWay));
+            toCleanup.addAll(sourceWays);
+        }
+
+        return new ConsolidationTarget(targetWay, toCleanup);
+    }
+
+    /**
+     * Tags a ring's way with the given tags. Handles ways already in DataSet
+     * (via ChangePropertyCommand) vs new ways (direct setKeys). For already-closed
+     * rings not yet consolidated, creates a new way if the source has significant tags.
+     * For non-closed rings not yet consolidated, creates a new way and schedules
+     * source ways for cleanup via the returned set.
+     *
+     * @return set of source ways that should be cleaned up (empty unless a new way was
+     *         created for a non-closed ring)
+     */
+    private static Set<Way> tagRingWay(WayChainBuilder.Ring ring,
+            Map<WayChainBuilder.Ring, Way> ringToWay,
+            Map<String, String> tags, DataSet ds, Set<String> insignificantTags,
+            List<Command> commands) {
+        Way targetWay = ringToWay.get(ring);
+        if (targetWay != null) {
+            if (targetWay.getDataSet() != null) {
+                for (Map.Entry<String, String> tag : tags.entrySet()) {
+                    commands.add(new ChangePropertyCommand(targetWay, tag.getKey(), tag.getValue()));
+                }
+            } else {
+                targetWay.setKeys(tags);
+            }
+        } else if (ring.isAlreadyClosed()) {
+            Way sourceWay = ring.getSourceWays().get(0);
+            if (hasSignificantTags(sourceWay, insignificantTags)) {
+                Way newWay = new Way();
+                newWay.setNodes(ring.getNodes());
+                newWay.setKeys(tags);
+                commands.add(new AddCommand(ds, newWay));
+            } else {
+                for (Map.Entry<String, String> tag : tags.entrySet()) {
+                    commands.add(new ChangePropertyCommand(sourceWay, tag.getKey(), tag.getValue()));
+                }
+            }
+        } else {
+            // Non-closed ring not yet consolidated — create a new way
+            Way newWay = new Way();
+            newWay.setNodes(ring.getNodes());
+            newWay.setKeys(tags);
+            commands.add(new AddCommand(ds, newWay));
+            return new HashSet<>(ring.getSourceWays());
+        }
+        return Set.of();
+    }
+
+    /**
+     * Schedules nodes for deferred cleanup. Nodes from {@code sourceWays} that are not
+     * referenced by the merged ways and not used by any non-cleanup way are added to
+     * {@code nodesToCleanup}.
+     */
+    private static void scheduleNodeCleanup(Set<Node> mergedNodes,
+            List<Way> sourceWays, Set<Way> waysToCleanup, Set<Node> nodesToCleanup) {
+        Set<Node> sourceNodes = new HashSet<>();
+        for (Way w : sourceWays) {
+            sourceNodes.addAll(w.getNodes());
+        }
+        for (Node node : sourceNodes) {
+            if (!mergedNodes.contains(node)) {
+                boolean usedElsewhere = node.getReferrers().stream()
+                    .anyMatch(r -> r instanceof Way w && !waysToCleanup.contains(w));
+                if (!usedElsewhere) {
+                    nodesToCleanup.add(node);
+                }
+            }
+        }
+    }
 
     public static void fixRelations(List<FixPlan> plans) {
         if (plans.isEmpty()) {
@@ -207,64 +337,21 @@ public class MultipolygonFixer {
                                 memberReplacements.put(src, existing);
                             }
                         } else {
-                            // Check if an existing closed way in the DataSet already
-                            // has this ring's geometry — reuse it instead of creating a duplicate
-                            Way existingMatch = findMatchingWayInDataSet(ring.getNodes(), sourceSet);
-
-                            Way targetWay;
-                            if (existingMatch != null) {
-                                targetWay = existingMatch;
-                                waysToCleanup.addAll(ring.getSourceWays());
-                            } else {
-                                // Check if any source way has significant tags (e.g., highway=residential).
-                                // If so, reuse an untagged source way instead of creating a new one,
-                                // so that the tagged way remains untouched.
-                                // The reusable way must NOT be shared with another relation,
-                                // because ChangeCommand would alter its geometry and break the other relation.
-                                boolean anyTagged = false;
-                                Way reusableWay = null;
-                                for (Way src : ring.getSourceWays()) {
-                                    if (hasSignificantTags(src, insignificantTags)) {
-                                        anyTagged = true;
-                                    } else if (reusableWay == null && !isSharedWithOtherRelation(src, relation)) {
-                                        reusableWay = src;
-                                    }
-                                }
-
-                                if (anyTagged && reusableWay != null) {
-                                    // Reuse the untagged way by changing its nodes to form the closed ring
-                                    Way modified = new Way(reusableWay);
-                                    modified.setNodes(ring.getNodes());
-                                    commands.add(new ChangeCommand(reusableWay, modified));
-                                    targetWay = reusableWay;
-
-                                    // Only add other untagged source ways to cleanup.
-                                    // Tagged source ways must NOT be touched.
-                                    for (Way src : ring.getSourceWays()) {
-                                        if (src != reusableWay && !hasSignificantTags(src, insignificantTags)) {
-                                            waysToCleanup.add(src);
-                                        }
-                                    }
-                                } else {
-                                    // Default: create a new way (either no tagged ways, or all are tagged)
-                                    targetWay = new Way();
-                                    targetWay.setNodes(ring.getNodes());
-                                    commands.add(new AddCommand(ds, targetWay));
-                                    waysToCleanup.addAll(ring.getSourceWays());
-                                }
-                            }
-
-                            ringToWay.put(ring, targetWay);
+                            ConsolidationTarget ct = selectConsolidationTarget(
+                                ring.getNodes(), ring.getSourceWays(),
+                                relation, ds, insignificantTags, commands);
+                            waysToCleanup.addAll(ct.toCleanup);
+                            ringToWay.put(ring, ct.targetWay);
                             for (Way src : ring.getSourceWays()) {
-                                memberReplacements.put(src, targetWay);
+                                memberReplacements.put(src, ct.targetWay);
                             }
-                            globalConsolidations.put(sourceSet, targetWay);
+                            globalConsolidations.put(sourceSet, ct.targetWay);
                         }
                     }
                 }
 
                 case DECOMPOSE_SELF_INTERSECTIONS -> {
-                    for (MultipolygonAnalyzer.DecomposedRing decomp : op.getDecomposedRings()) {
+                    for (DecomposedRing decomp : op.getDecomposedRings()) {
                         // Remove the AddCommand for the consolidated way created in CONSOLIDATE_RINGS,
                         // since it will be replaced by the decomposed sub-rings
                         Way consolidatedWay = ringToWay.get(decomp.getOriginalRing());
@@ -303,7 +390,7 @@ public class MultipolygonFixer {
                 }
 
                 case CONSOLIDATE_INNERS -> {
-                    for (MultipolygonAnalyzer.ConsolidatedInnerGroup group :
+                    for (ConsolidatedInnerGroup group :
                             op.getConsolidatedInnerGroups()) {
                         WayChainBuilder.Ring mergedRing = group.getMergedRing();
                         List<Way> allSourceWays = new ArrayList<>();
@@ -319,82 +406,26 @@ public class MultipolygonFixer {
                             }
                         }
 
-                        boolean anyTagged = false;
-                        Way reusableWay = null;
+                        ConsolidationTarget ct = selectConsolidationTarget(
+                            mergedRing.getNodes(), allSourceWays,
+                            relation, ds, insignificantTags, commands);
+                        waysToCleanup.addAll(ct.toCleanup);
+                        ringToWay.put(mergedRing, ct.targetWay);
                         for (Way src : allSourceWays) {
-                            if (hasSignificantTags(src, insignificantTags)) {
-                                anyTagged = true;
-                            } else if (reusableWay == null
-                                    && !isSharedWithOtherRelation(src, relation)) {
-                                reusableWay = src;
-                            }
-                        }
-
-                        Way targetWay;
-                        if (anyTagged && reusableWay != null) {
-                            Way modified = new Way(reusableWay);
-                            modified.setNodes(mergedRing.getNodes());
-                            commands.add(new ChangeCommand(reusableWay, modified));
-                            targetWay = reusableWay;
-                            for (Way src : allSourceWays) {
-                                if (src != reusableWay
-                                        && !hasSignificantTags(src, insignificantTags)) {
-                                    waysToCleanup.add(src);
-                                }
-                            }
-                        } else {
-                            targetWay = new Way();
-                            targetWay.setNodes(mergedRing.getNodes());
-                            commands.add(new AddCommand(ds, targetWay));
-                            waysToCleanup.addAll(allSourceWays);
-                        }
-
-                        ringToWay.put(mergedRing, targetWay);
-                        for (Way src : allSourceWays) {
-                            memberReplacements.put(src, targetWay);
+                            memberReplacements.put(src, ct.targetWay);
                         }
                     }
                 }
 
                 case EXTRACT_OUTERS -> {
                     for (WayChainBuilder.Ring ring : op.getRings()) {
-                        Way targetWay = ringToWay.get(ring);
-                        if (targetWay != null) {
-                            // Was consolidated in a prior step — tag the way
-                            if (targetWay.getDataSet() != null) {
-                                // Reused existing way — must use commands
-                                for (Map.Entry<String, String> tag : tags.entrySet()) {
-                                    commands.add(new ChangePropertyCommand(targetWay, tag.getKey(), tag.getValue()));
-                                }
-                            } else {
-                                targetWay.setKeys(tags);
-                            }
-                            // Also mark the consolidated way for removal from the relation,
-                            // since source ways were already replaced by it
-                            membersToRemove.add(targetWay);
-                        } else if (ring.isAlreadyClosed()) {
-                            Way sourceWay = ring.getSourceWays().get(0);
-                            if (hasSignificantTags(sourceWay, insignificantTags)) {
-                                // Source way has its own tags — create a new way instead
-                                Way newWay = new Way();
-                                newWay.setNodes(ring.getNodes());
-                                newWay.setKeys(tags);
-                                commands.add(new AddCommand(ds, newWay));
-                            } else {
-                                // Tag existing way in place
-                                for (Map.Entry<String, String> tag : tags.entrySet()) {
-                                    commands.add(new ChangePropertyCommand(sourceWay, tag.getKey(), tag.getValue()));
-                                }
-                            }
-                        } else {
-                            // Create new way from ring nodes
-                            Way newWay = new Way();
-                            newWay.setNodes(ring.getNodes());
-                            newWay.setKeys(tags);
-                            commands.add(new AddCommand(ds, newWay));
-                            waysToCleanup.addAll(ring.getSourceWays());
+                        waysToCleanup.addAll(
+                            tagRingWay(ring, ringToWay, tags, ds, insignificantTags, commands));
+                        // Mark the consolidated way (if any) and source ways for removal from relation
+                        Way consolidated = ringToWay.get(ring);
+                        if (consolidated != null) {
+                            membersToRemove.add(consolidated);
                         }
-                        // Mark source ways for removal from relation
                         membersToRemove.addAll(ring.getSourceWays());
                     }
                 }
@@ -409,32 +440,8 @@ public class MultipolygonFixer {
 
                 case DISSOLVE -> {
                     for (WayChainBuilder.Ring ring : op.getRings()) {
-                        Way targetWay = ringToWay.get(ring);
-                        if (targetWay != null) {
-                            if (targetWay.getDataSet() != null) {
-                                // Reused existing way — must use commands
-                                for (Map.Entry<String, String> tag : tags.entrySet()) {
-                                    commands.add(new ChangePropertyCommand(targetWay, tag.getKey(), tag.getValue()));
-                                }
-                            } else {
-                                // New way not yet in DataSet — direct mutation is fine
-                                targetWay.setKeys(tags);
-                            }
-                        } else if (ring.isAlreadyClosed()) {
-                            Way sourceWay = ring.getSourceWays().get(0);
-                            if (hasSignificantTags(sourceWay, insignificantTags)) {
-                                // Source way has its own tags (e.g., natural=coastline) —
-                                // create a new way with the same geometry instead of clobbering.
-                                Way newWay = new Way();
-                                newWay.setNodes(ring.getNodes());
-                                newWay.setKeys(tags);
-                                commands.add(new AddCommand(ds, newWay));
-                            } else {
-                                for (Map.Entry<String, String> tag : tags.entrySet()) {
-                                    commands.add(new ChangePropertyCommand(sourceWay, tag.getKey(), tag.getValue()));
-                                }
-                            }
-                        }
+                        waysToCleanup.addAll(
+                            tagRingWay(ring, ringToWay, tags, ds, insignificantTags, commands));
                     }
                     commands.add(new DeleteCommand(relation));
                     relationDeleted = true;
@@ -456,389 +463,23 @@ public class MultipolygonFixer {
                         commands.add(new AddCommand(ds, newWay));
                         mergedNodes.addAll(wayNodes);
                     }
-                    // Collect nodes from source ways and mark unused ones for deferred deletion
-                    Set<Node> sourceNodes = new HashSet<>();
+                    // Collect source ways from relation members for cleanup
+                    List<Way> sourceWays = new ArrayList<>();
                     for (RelationMember member : relation.getMembers()) {
                         if (member.isWay() && !membersToRemove.contains(member.getWay())) {
                             waysToCleanup.add(member.getWay());
-                            sourceNodes.addAll(member.getWay().getNodes());
+                            sourceWays.add(member.getWay());
                         }
                     }
-                    // Defer node deletion to cleanup pass (after way deletion) so undo restores
-                    // nodes before ways, preventing "deleted node referenced" errors
-                    for (Node node : sourceNodes) {
-                        if (!mergedNodes.contains(node)) {
-                            boolean usedElsewhere = node.getReferrers().stream()
-                                .anyMatch(r -> r instanceof Way w && !waysToCleanup.contains(w));
-                            if (!usedElsewhere) {
-                                nodesToCleanup.add(node);
-                            }
-                        }
-                    }
+                    scheduleNodeCleanup(mergedNodes, sourceWays, waysToCleanup, nodesToCleanup);
                     commands.add(new DeleteCommand(relation));
                     relationDeleted = true;
                 }
 
                 case SPLIT_RELATION -> {
-                    Set<Way> waysToRemoveFromRelation = new HashSet<>();
-                    Map<Way, Way> splitReplacements = new HashMap<>();
-                    // Non-dissolving components that need to become sub-relations
-                    List<List<RelationMember>> subRelationMemberLists = new ArrayList<>();
-
-                    for (ComponentResult comp : op.getComponents()) {
-                        if (comp == null) continue;
-
-                        Map<WayChainBuilder.Ring, Way> compRingToWay = new HashMap<>();
-                        // Track replacements local to this component for sub-relation building
-                        Map<Way, Way> compReplacements = new HashMap<>();
-
-                        for (FixOp subOp : comp.getOperations()) {
-                            switch (subOp.getType()) {
-                                case CONSOLIDATE_RINGS -> {
-                                    for (WayChainBuilder.Ring ring : subOp.getRings()) {
-                                        Set<Way> sourceSet = new HashSet<>(ring.getSourceWays());
-                                        Way existingMatch = findMatchingWayInDataSet(ring.getNodes(), sourceSet);
-
-                                        Way targetWay;
-                                        if (existingMatch != null) {
-                                            targetWay = existingMatch;
-                                            waysToCleanup.addAll(ring.getSourceWays());
-                                        } else {
-                                            boolean anyTagged = false;
-                                            Way reusableWay = null;
-                                            for (Way src : ring.getSourceWays()) {
-                                                if (hasSignificantTags(src, insignificantTags)) {
-                                                    anyTagged = true;
-                                                } else if (reusableWay == null && !isSharedWithOtherRelation(src, relation)) {
-                                                    reusableWay = src;
-                                                }
-                                            }
-
-                                            if (anyTagged && reusableWay != null) {
-                                                Way modified = new Way(reusableWay);
-                                                modified.setNodes(ring.getNodes());
-                                                commands.add(new ChangeCommand(reusableWay, modified));
-                                                targetWay = reusableWay;
-                                                for (Way src : ring.getSourceWays()) {
-                                                    if (src != reusableWay && !hasSignificantTags(src, insignificantTags)) {
-                                                        waysToCleanup.add(src);
-                                                    }
-                                                }
-                                            } else {
-                                                targetWay = new Way();
-                                                targetWay.setNodes(ring.getNodes());
-                                                commands.add(new AddCommand(ds, targetWay));
-                                                waysToCleanup.addAll(ring.getSourceWays());
-                                            }
-                                        }
-
-                                        compRingToWay.put(ring, targetWay);
-                                        for (Way src : ring.getSourceWays()) {
-                                            splitReplacements.put(src, targetWay);
-                                            compReplacements.put(src, targetWay);
-                                        }
-                                    }
-                                }
-                                case CONSOLIDATE_INNERS -> {
-                                    for (MultipolygonAnalyzer.ConsolidatedInnerGroup group :
-                                            subOp.getConsolidatedInnerGroups()) {
-                                        WayChainBuilder.Ring mergedRing = group.getMergedRing();
-                                        List<Way> allSrcWays = new ArrayList<>();
-                                        for (WayChainBuilder.Ring srcRing : group.getSourceRings()) {
-                                            allSrcWays.addAll(srcRing.getSourceWays());
-                                            Way priorWay = compRingToWay.get(srcRing);
-                                            if (priorWay != null) {
-                                                commands.removeIf(cmd -> cmd instanceof AddCommand
-                                                    && ((AddCommand) cmd).getParticipatingPrimitives()
-                                                        .contains(priorWay));
-                                            }
-                                        }
-
-                                        boolean anyTaggedSplit = false;
-                                        Way reusableWaySplit = null;
-                                        for (Way src : allSrcWays) {
-                                            if (hasSignificantTags(src, insignificantTags)) {
-                                                anyTaggedSplit = true;
-                                            } else if (reusableWaySplit == null
-                                                    && !isSharedWithOtherRelation(src, relation)) {
-                                                reusableWaySplit = src;
-                                            }
-                                        }
-
-                                        Way targetWay;
-                                        if (anyTaggedSplit && reusableWaySplit != null) {
-                                            Way modified = new Way(reusableWaySplit);
-                                            modified.setNodes(mergedRing.getNodes());
-                                            commands.add(new ChangeCommand(reusableWaySplit, modified));
-                                            targetWay = reusableWaySplit;
-                                            for (Way src : allSrcWays) {
-                                                if (src != reusableWaySplit
-                                                        && !hasSignificantTags(src, insignificantTags)) {
-                                                    waysToCleanup.add(src);
-                                                }
-                                            }
-                                        } else {
-                                            targetWay = new Way();
-                                            targetWay.setNodes(mergedRing.getNodes());
-                                            commands.add(new AddCommand(ds, targetWay));
-                                            waysToCleanup.addAll(allSrcWays);
-                                        }
-
-                                        compRingToWay.put(mergedRing, targetWay);
-                                        for (Way src : allSrcWays) {
-                                            splitReplacements.put(src, targetWay);
-                                            compReplacements.put(src, targetWay);
-                                        }
-                                    }
-                                }
-                                case DECOMPOSE_SELF_INTERSECTIONS -> {
-                                    for (MultipolygonAnalyzer.DecomposedRing decomp : subOp.getDecomposedRings()) {
-                                        // Remove the AddCommand for the consolidated way
-                                        Way consolidatedWay = compRingToWay.get(decomp.getOriginalRing());
-                                        if (consolidatedWay != null) {
-                                            commands.removeIf(cmd -> cmd instanceof AddCommand
-                                                && ((AddCommand) cmd).getParticipatingPrimitives().contains(consolidatedWay));
-                                        }
-                                        for (Node node : decomp.getNewIntersectionNodes()) {
-                                            commands.add(new AddCommand(ds, node));
-                                        }
-                                        for (WayChainBuilder.Ring subRing : decomp.getSubRings()) {
-                                            Way newWay = new Way();
-                                            newWay.setNodes(subRing.getNodes());
-                                            commands.add(new AddCommand(ds, newWay));
-                                            compRingToWay.put(subRing, newWay);
-                                        }
-                                        waysToCleanup.addAll(decomp.getOriginalRing().getSourceWays());
-                                        Way firstSubWay = compRingToWay.get(decomp.getSubRings().get(0));
-                                        for (Way src : decomp.getOriginalRing().getSourceWays()) {
-                                            splitReplacements.put(src, firstSubWay);
-                                            compReplacements.put(src, firstSubWay);
-                                        }
-                                    }
-                                }
-                                case EXTRACT_INNERS -> {
-                                    for (WayChainBuilder.Ring ring : subOp.getRings()) {
-                                        waysToRemoveFromRelation.addAll(ring.getSourceWays());
-                                    }
-                                }
-                                case EXTRACT_OUTERS -> {
-                                    for (WayChainBuilder.Ring ring : subOp.getRings()) {
-                                        Way targetWay = compRingToWay.get(ring);
-                                        if (targetWay != null) {
-                                            if (targetWay.getDataSet() != null) {
-                                                for (Map.Entry<String, String> tag : tags.entrySet()) {
-                                                    commands.add(new ChangePropertyCommand(targetWay, tag.getKey(), tag.getValue()));
-                                                }
-                                            } else {
-                                                targetWay.setKeys(tags);
-                                            }
-                                        } else if (ring.isAlreadyClosed()) {
-                                            Way sourceWay = ring.getSourceWays().get(0);
-                                            if (hasSignificantTags(sourceWay, insignificantTags)) {
-                                                Way newWay = new Way();
-                                                newWay.setNodes(ring.getNodes());
-                                                newWay.setKeys(tags);
-                                                commands.add(new AddCommand(ds, newWay));
-                                            } else {
-                                                for (Map.Entry<String, String> tag : tags.entrySet()) {
-                                                    commands.add(new ChangePropertyCommand(sourceWay, tag.getKey(), tag.getValue()));
-                                                }
-                                            }
-                                        }
-                                        waysToRemoveFromRelation.addAll(ring.getSourceWays());
-                                    }
-                                }
-                                case DISSOLVE -> {
-                                    for (WayChainBuilder.Ring ring : subOp.getRings()) {
-                                        Way targetWay = compRingToWay.get(ring);
-                                        if (targetWay != null) {
-                                            if (targetWay.getDataSet() != null) {
-                                                for (Map.Entry<String, String> tag : tags.entrySet()) {
-                                                    commands.add(new ChangePropertyCommand(targetWay, tag.getKey(), tag.getValue()));
-                                                }
-                                            } else {
-                                                targetWay.setKeys(tags);
-                                            }
-                                        } else if (ring.isAlreadyClosed()) {
-                                            Way sourceWay = ring.getSourceWays().get(0);
-                                            if (hasSignificantTags(sourceWay, insignificantTags)) {
-                                                Way newWay = new Way();
-                                                newWay.setNodes(ring.getNodes());
-                                                newWay.setKeys(tags);
-                                                commands.add(new AddCommand(ds, newWay));
-                                            } else {
-                                                for (Map.Entry<String, String> tag : tags.entrySet()) {
-                                                    commands.add(new ChangePropertyCommand(sourceWay, tag.getKey(), tag.getValue()));
-                                                }
-                                            }
-                                        }
-                                    }
-                                    waysToRemoveFromRelation.addAll(comp.getOuterWays());
-                                    waysToRemoveFromRelation.addAll(comp.getInnerWays());
-                                }
-                                case TOUCHING_INNER_MERGE -> {
-                                    if (subOp.getNewNodes() != null) {
-                                        for (Node newNode : subOp.getNewNodes()) {
-                                            commands.add(new AddCommand(ds, newNode));
-                                        }
-                                    }
-                                    Set<Node> mergedNodesComp = new HashSet<>();
-                                    for (List<Node> wayNodes : subOp.getMergedWays()) {
-                                        Way newWay = new Way();
-                                        newWay.setNodes(wayNodes);
-                                        newWay.setKeys(tags);
-                                        commands.add(new AddCommand(ds, newWay));
-                                        mergedNodesComp.addAll(wayNodes);
-                                    }
-                                    waysToRemoveFromRelation.addAll(comp.getOuterWays());
-                                    waysToRemoveFromRelation.addAll(comp.getInnerWays());
-                                    waysToCleanup.addAll(comp.getOuterWays());
-                                    waysToCleanup.addAll(comp.getInnerWays());
-                                    // Defer node deletion to cleanup pass (after way deletion)
-                                    Set<Node> sourceNodesComp = new HashSet<>();
-                                    for (Way w : comp.getOuterWays()) sourceNodesComp.addAll(w.getNodes());
-                                    for (Way w : comp.getInnerWays()) sourceNodesComp.addAll(w.getNodes());
-                                    for (Node node : sourceNodesComp) {
-                                        if (!mergedNodesComp.contains(node)) {
-                                            boolean usedElsewhere = node.getReferrers().stream()
-                                                .anyMatch(r -> r instanceof Way w && !waysToCleanup.contains(w));
-                                            if (!usedElsewhere) {
-                                                nodesToCleanup.add(node);
-                                            }
-                                        }
-                                    }
-                                }
-                                default -> { }
-                            }
-                        }
-
-                        // Non-dissolving component: build member list for a sub-relation
-                        if (!comp.dissolvesCompletely()) {
-                            Set<Way> compWaySet = new HashSet<>();
-                            compWaySet.addAll(comp.getOuterWays());
-                            compWaySet.addAll(comp.getInnerWays());
-                            List<RelationMember> subMembers = new ArrayList<>();
-                            Set<Way> alreadyReplacedInComp = new HashSet<>();
-                            Set<Way> alreadyAddedInComp = new HashSet<>();
-
-                            for (RelationMember member : relation.getMembers()) {
-                                if (!member.isWay()) continue;
-                                Way way = member.getWay();
-                                if (!compWaySet.contains(way)) continue;
-
-                                if (compReplacements.containsKey(way)) {
-                                    Way replacement = compReplacements.get(way);
-                                    if (!alreadyReplacedInComp.contains(replacement)) {
-                                        subMembers.add(new RelationMember(member.getRole(), replacement));
-                                        alreadyReplacedInComp.add(replacement);
-                                    }
-                                } else if (alreadyAddedInComp.add(way)) {
-                                    subMembers.add(member);
-                                }
-                            }
-                            if (!subMembers.isEmpty()) {
-                                subRelationMemberLists.add(subMembers);
-                            }
-                            // Mark these ways for removal from the original relation
-                            waysToRemoveFromRelation.addAll(comp.getOuterWays());
-                            waysToRemoveFromRelation.addAll(comp.getInnerWays());
-                        }
-                    }
-
-                    // Create sub-relations: keep the largest in the original relation,
-                    // create new relations for the rest
-                    if (!subRelationMemberLists.isEmpty()) {
-                        // Find the largest sub-relation to keep in the original
-                        int largestIdx = 0;
-                        for (int i = 1; i < subRelationMemberLists.size(); i++) {
-                            if (subRelationMemberLists.get(i).size() > subRelationMemberLists.get(largestIdx).size()) {
-                                largestIdx = i;
-                            }
-                        }
-
-                        // Create new sub-relations for all except the largest
-                        Map<String, String> relTags = new java.util.LinkedHashMap<>(relation.getKeys());
-                        for (int i = 0; i < subRelationMemberLists.size(); i++) {
-                            if (i == largestIdx) continue;
-                            Relation subRel = new Relation();
-                            subRel.setKeys(relTags);
-                            subRel.setMembers(subRelationMemberLists.get(i));
-                            commands.add(new AddCommand(ds, subRel));
-                            // Record retained ways in sub-relations
-                            for (RelationMember m : subRelationMemberLists.get(i)) {
-                                if (m.isWay()) {
-                                    waysRetainedByPlans.add(m.getWay());
-                                }
-                            }
-                        }
-
-                        // Un-mark the largest component's ways from removal —
-                        // they stay in the original relation.
-                        // Un-mark both the final member ways (replacements + inners)
-                        // AND their source ways so that source ways can be found
-                        // by splitReplacements during the member update loop.
-                        List<RelationMember> keptMembers = subRelationMemberLists.get(largestIdx);
-                        Set<Way> keptWays = new HashSet<>();
-                        for (RelationMember m : keptMembers) {
-                            if (m.isWay()) {
-                                keptWays.add(m.getWay());
-                                waysToRemoveFromRelation.remove(m.getWay());
-                            }
-                        }
-                        // Also un-mark source ways that map to kept replacement ways
-                        for (Map.Entry<Way, Way> entry : splitReplacements.entrySet()) {
-                            if (keptWays.contains(entry.getValue())) {
-                                waysToRemoveFromRelation.remove(entry.getKey());
-                            }
-                        }
-                    }
-
-                    // Modify the original relation: remove consumed/split-out members,
-                    // replace consolidated ones
-                    Relation modified = new Relation(relation);
-                    List<RelationMember> splitMembers = new ArrayList<>();
-                    Set<Way> alreadyReplacedInSplit = new HashSet<>();
-                    Set<Way> alreadyAddedInSplit = new HashSet<>();
-
-                    for (RelationMember member : relation.getMembers()) {
-                        if (!member.isWay()) {
-                            splitMembers.add(member);
-                            continue;
-                        }
-                        Way way = member.getWay();
-
-                        if (waysToRemoveFromRelation.contains(way)) {
-                            continue;
-                        }
-
-                        if (splitReplacements.containsKey(way)) {
-                            Way replacement = splitReplacements.get(way);
-                            if (!alreadyReplacedInSplit.contains(replacement)) {
-                                splitMembers.add(new RelationMember(member.getRole(), replacement));
-                                alreadyReplacedInSplit.add(replacement);
-                            }
-                            continue;
-                        }
-
-                        if (!alreadyAddedInSplit.add(way)) {
-                            continue;
-                        }
-                        splitMembers.add(member);
-                    }
-
-                    if (splitMembers.isEmpty()) {
-                        commands.add(new DeleteCommand(relation));
-                        relationDeleted = true;
-                    } else {
-                        modified.setMembers(splitMembers);
-                        commands.add(new ChangeCommand(relation, modified));
-                        // Record retained ways in the surviving original relation
-                        for (RelationMember m : splitMembers) {
-                            if (m.isWay()) {
-                                waysRetainedByPlans.add(m.getWay());
-                            }
-                        }
-                    }
+                    relationDeleted = buildCommandsForSplit(op, relation, ds, tags,
+                        insignificantTags, commands, waysToCleanup, waysRetainedByPlans,
+                        nodesToCleanup);
                     splitHandled = true;
                 }
             }
@@ -905,6 +546,259 @@ public class MultipolygonFixer {
         }
 
         return commands;
+    }
+
+    /**
+     * Builds commands for a SPLIT_RELATION operation. Each component is processed
+     * independently through the sub-operation pipeline, then non-dissolving components
+     * become sub-relations while the largest is kept in the original relation.
+     *
+     * @return true if the relation was deleted (all components dissolved)
+     */
+    private static boolean buildCommandsForSplit(FixOp op, Relation relation, DataSet ds,
+            Map<String, String> tags, Set<String> insignificantTags,
+            List<Command> commands, Set<Way> waysToCleanup,
+            Set<Way> waysRetainedByPlans, Set<Node> nodesToCleanup) {
+        Set<Way> waysToRemoveFromRelation = new HashSet<>();
+        Map<Way, Way> splitReplacements = new HashMap<>();
+        List<List<RelationMember>> subRelationMemberLists = new ArrayList<>();
+
+        for (ComponentResult comp : op.getComponents()) {
+            if (comp == null) continue;
+
+            Map<WayChainBuilder.Ring, Way> compRingToWay = new HashMap<>();
+            Map<Way, Way> compReplacements = new HashMap<>();
+
+            for (FixOp subOp : comp.getOperations()) {
+                switch (subOp.getType()) {
+                    case CONSOLIDATE_RINGS -> {
+                        for (WayChainBuilder.Ring ring : subOp.getRings()) {
+                            ConsolidationTarget ct = selectConsolidationTarget(
+                                ring.getNodes(), ring.getSourceWays(),
+                                relation, ds, insignificantTags, commands);
+                            waysToCleanup.addAll(ct.toCleanup);
+                            compRingToWay.put(ring, ct.targetWay);
+                            for (Way src : ring.getSourceWays()) {
+                                splitReplacements.put(src, ct.targetWay);
+                                compReplacements.put(src, ct.targetWay);
+                            }
+                        }
+                    }
+                    case CONSOLIDATE_INNERS -> {
+                        for (ConsolidatedInnerGroup group :
+                                subOp.getConsolidatedInnerGroups()) {
+                            WayChainBuilder.Ring mergedRing = group.getMergedRing();
+                            List<Way> allSrcWays = new ArrayList<>();
+                            for (WayChainBuilder.Ring srcRing : group.getSourceRings()) {
+                                allSrcWays.addAll(srcRing.getSourceWays());
+                                Way priorWay = compRingToWay.get(srcRing);
+                                if (priorWay != null) {
+                                    commands.removeIf(cmd -> cmd instanceof AddCommand
+                                        && ((AddCommand) cmd).getParticipatingPrimitives()
+                                            .contains(priorWay));
+                                }
+                            }
+
+                            ConsolidationTarget ct = selectConsolidationTarget(
+                                mergedRing.getNodes(), allSrcWays,
+                                relation, ds, insignificantTags, commands);
+                            waysToCleanup.addAll(ct.toCleanup);
+                            compRingToWay.put(mergedRing, ct.targetWay);
+                            for (Way src : allSrcWays) {
+                                splitReplacements.put(src, ct.targetWay);
+                                compReplacements.put(src, ct.targetWay);
+                            }
+                        }
+                    }
+                    case DECOMPOSE_SELF_INTERSECTIONS -> {
+                        for (DecomposedRing decomp : subOp.getDecomposedRings()) {
+                            Way consolidatedWay = compRingToWay.get(decomp.getOriginalRing());
+                            if (consolidatedWay != null) {
+                                commands.removeIf(cmd -> cmd instanceof AddCommand
+                                    && ((AddCommand) cmd).getParticipatingPrimitives().contains(consolidatedWay));
+                            }
+                            for (Node node : decomp.getNewIntersectionNodes()) {
+                                commands.add(new AddCommand(ds, node));
+                            }
+                            for (WayChainBuilder.Ring subRing : decomp.getSubRings()) {
+                                Way newWay = new Way();
+                                newWay.setNodes(subRing.getNodes());
+                                commands.add(new AddCommand(ds, newWay));
+                                compRingToWay.put(subRing, newWay);
+                            }
+                            waysToCleanup.addAll(decomp.getOriginalRing().getSourceWays());
+                            Way firstSubWay = compRingToWay.get(decomp.getSubRings().get(0));
+                            for (Way src : decomp.getOriginalRing().getSourceWays()) {
+                                splitReplacements.put(src, firstSubWay);
+                                compReplacements.put(src, firstSubWay);
+                            }
+                        }
+                    }
+                    case EXTRACT_INNERS -> {
+                        for (WayChainBuilder.Ring ring : subOp.getRings()) {
+                            waysToRemoveFromRelation.addAll(ring.getSourceWays());
+                        }
+                    }
+                    case EXTRACT_OUTERS -> {
+                        for (WayChainBuilder.Ring ring : subOp.getRings()) {
+                            waysToCleanup.addAll(
+                                tagRingWay(ring, compRingToWay, tags, ds, insignificantTags, commands));
+                            waysToRemoveFromRelation.addAll(ring.getSourceWays());
+                        }
+                    }
+                    case DISSOLVE -> {
+                        for (WayChainBuilder.Ring ring : subOp.getRings()) {
+                            waysToCleanup.addAll(
+                                tagRingWay(ring, compRingToWay, tags, ds, insignificantTags, commands));
+                        }
+                        waysToRemoveFromRelation.addAll(comp.getOuterWays());
+                        waysToRemoveFromRelation.addAll(comp.getInnerWays());
+                    }
+                    case TOUCHING_INNER_MERGE -> {
+                        if (subOp.getNewNodes() != null) {
+                            for (Node newNode : subOp.getNewNodes()) {
+                                commands.add(new AddCommand(ds, newNode));
+                            }
+                        }
+                        Set<Node> mergedNodesComp = new HashSet<>();
+                        for (List<Node> wayNodes : subOp.getMergedWays()) {
+                            Way newWay = new Way();
+                            newWay.setNodes(wayNodes);
+                            newWay.setKeys(tags);
+                            commands.add(new AddCommand(ds, newWay));
+                            mergedNodesComp.addAll(wayNodes);
+                        }
+                        waysToRemoveFromRelation.addAll(comp.getOuterWays());
+                        waysToRemoveFromRelation.addAll(comp.getInnerWays());
+                        List<Way> compSourceWays = new ArrayList<>();
+                        compSourceWays.addAll(comp.getOuterWays());
+                        compSourceWays.addAll(comp.getInnerWays());
+                        waysToCleanup.addAll(compSourceWays);
+                        scheduleNodeCleanup(mergedNodesComp, compSourceWays,
+                            waysToCleanup, nodesToCleanup);
+                    }
+                    default -> { }
+                }
+            }
+
+            // Non-dissolving component: build member list for a sub-relation
+            if (!comp.dissolvesCompletely()) {
+                Set<Way> compWaySet = new HashSet<>();
+                compWaySet.addAll(comp.getOuterWays());
+                compWaySet.addAll(comp.getInnerWays());
+                List<RelationMember> subMembers = new ArrayList<>();
+                Set<Way> alreadyReplacedInComp = new HashSet<>();
+                Set<Way> alreadyAddedInComp = new HashSet<>();
+
+                for (RelationMember member : relation.getMembers()) {
+                    if (!member.isWay()) continue;
+                    Way way = member.getWay();
+                    if (!compWaySet.contains(way)) continue;
+
+                    if (compReplacements.containsKey(way)) {
+                        Way replacement = compReplacements.get(way);
+                        if (!alreadyReplacedInComp.contains(replacement)) {
+                            subMembers.add(new RelationMember(member.getRole(), replacement));
+                            alreadyReplacedInComp.add(replacement);
+                        }
+                    } else if (alreadyAddedInComp.add(way)) {
+                        subMembers.add(member);
+                    }
+                }
+                if (!subMembers.isEmpty()) {
+                    subRelationMemberLists.add(subMembers);
+                }
+                waysToRemoveFromRelation.addAll(comp.getOuterWays());
+                waysToRemoveFromRelation.addAll(comp.getInnerWays());
+            }
+        }
+
+        // Create sub-relations: keep the largest in the original relation,
+        // create new relations for the rest
+        if (!subRelationMemberLists.isEmpty()) {
+            int largestIdx = 0;
+            for (int i = 1; i < subRelationMemberLists.size(); i++) {
+                if (subRelationMemberLists.get(i).size() > subRelationMemberLists.get(largestIdx).size()) {
+                    largestIdx = i;
+                }
+            }
+
+            Map<String, String> relTags = new java.util.LinkedHashMap<>(relation.getKeys());
+            for (int i = 0; i < subRelationMemberLists.size(); i++) {
+                if (i == largestIdx) continue;
+                Relation subRel = new Relation();
+                subRel.setKeys(relTags);
+                subRel.setMembers(subRelationMemberLists.get(i));
+                commands.add(new AddCommand(ds, subRel));
+                for (RelationMember m : subRelationMemberLists.get(i)) {
+                    if (m.isWay()) {
+                        waysRetainedByPlans.add(m.getWay());
+                    }
+                }
+            }
+
+            // Un-mark the largest component's ways from removal
+            List<RelationMember> keptMembers = subRelationMemberLists.get(largestIdx);
+            Set<Way> keptWays = new HashSet<>();
+            for (RelationMember m : keptMembers) {
+                if (m.isWay()) {
+                    keptWays.add(m.getWay());
+                    waysToRemoveFromRelation.remove(m.getWay());
+                }
+            }
+            for (Map.Entry<Way, Way> entry : splitReplacements.entrySet()) {
+                if (keptWays.contains(entry.getValue())) {
+                    waysToRemoveFromRelation.remove(entry.getKey());
+                }
+            }
+        }
+
+        // Modify the original relation: remove consumed/split-out members,
+        // replace consolidated ones
+        Relation modified = new Relation(relation);
+        List<RelationMember> splitMembers = new ArrayList<>();
+        Set<Way> alreadyReplacedInSplit = new HashSet<>();
+        Set<Way> alreadyAddedInSplit = new HashSet<>();
+
+        for (RelationMember member : relation.getMembers()) {
+            if (!member.isWay()) {
+                splitMembers.add(member);
+                continue;
+            }
+            Way way = member.getWay();
+
+            if (waysToRemoveFromRelation.contains(way)) {
+                continue;
+            }
+
+            if (splitReplacements.containsKey(way)) {
+                Way replacement = splitReplacements.get(way);
+                if (!alreadyReplacedInSplit.contains(replacement)) {
+                    splitMembers.add(new RelationMember(member.getRole(), replacement));
+                    alreadyReplacedInSplit.add(replacement);
+                }
+                continue;
+            }
+
+            if (!alreadyAddedInSplit.add(way)) {
+                continue;
+            }
+            splitMembers.add(member);
+        }
+
+        if (splitMembers.isEmpty()) {
+            commands.add(new DeleteCommand(relation));
+            return true;
+        } else {
+            modified.setMembers(splitMembers);
+            commands.add(new ChangeCommand(relation, modified));
+            for (RelationMember m : splitMembers) {
+                if (m.isWay()) {
+                    waysRetainedByPlans.add(m.getWay());
+                }
+            }
+            return false;
+        }
     }
 
     private static Map<String, String> getTransferrableTags(Relation relation) {

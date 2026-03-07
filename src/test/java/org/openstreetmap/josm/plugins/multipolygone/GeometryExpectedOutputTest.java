@@ -16,7 +16,7 @@ import org.openstreetmap.josm.data.osm.DataSet;
 import org.openstreetmap.josm.data.osm.Node;
 import org.openstreetmap.josm.data.osm.Way;
 import org.openstreetmap.josm.plugins.multipolygone.GeometryCanonicalizer.Coord;
-import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixPlan;
+
 
 /**
  * Tests that verify the plugin's output matches the expected geometry

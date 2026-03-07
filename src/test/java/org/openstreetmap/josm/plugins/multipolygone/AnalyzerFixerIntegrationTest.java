@@ -13,7 +13,7 @@ import org.openstreetmap.josm.data.UndoRedoHandler;
 import org.openstreetmap.josm.data.osm.DataSet;
 import org.openstreetmap.josm.data.osm.Relation;
 import org.openstreetmap.josm.data.osm.Way;
-import org.openstreetmap.josm.plugins.multipolygone.MultipolygonAnalyzer.FixPlan;
+
 
 class AnalyzerFixerIntegrationTest {
 
@@ -873,7 +873,7 @@ class AnalyzerFixerIntegrationTest {
 
         // The plan should use SPLIT_RELATION since the outers form 8 disconnected components
         boolean hasSplit = plan.getOperations().stream()
-            .anyMatch(op -> op.getType() == MultipolygonAnalyzer.FixOpType.SPLIT_RELATION);
+            .anyMatch(op -> op.getType() == FixOpType.SPLIT_RELATION);
         assertTrue(hasSplit,
             "Plan should include SPLIT_RELATION for disconnected outer rings");
     }
