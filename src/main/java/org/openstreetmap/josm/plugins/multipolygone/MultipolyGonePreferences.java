@@ -9,7 +9,9 @@ import java.awt.FlowLayout;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.Set;
 
 import javax.swing.BorderFactory;
@@ -47,8 +49,13 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
     public static final String PREF_DEBUG_MODE = "multipolygone.debugMode";
     public static final int DEFAULT_DEBUG_ITERATIONS = 10;
 
+    public static final String PREF_ROAD_WIDTHS = "multipolygone.roadWidths";
+    public static final String DEFAULT_ROAD_WIDTHS =
+        "motorway=12;trunk=10;primary=7;secondary=5;tertiary=4;residential=3.5;service=3";
+
     private DefaultTableModel identityTagsTableModel;
     private DefaultTableModel insignificantTagsTableModel;
+    private DefaultTableModel roadWidthsTableModel;
     private JCheckBox useDiscardableKeysCheckBox;
     private JComboBox<String> downloadBeforeFixCombo;
     private JCheckBox planOnlyCheckBox;
@@ -73,6 +80,27 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
             Config.getPref().put(PREF_INSIGNIFICANT_TAGS_BOUNDARY, oldPref);
             Config.getPref().put(PREF_INSIGNIFICANT_TAGS, null);
         }
+    }
+
+    /**
+     * Parses the road widths preference into a map of highway type → width in meters.
+     */
+    static Map<String, Double> getRoadWidths() {
+        String pref = Config.getPref().get(PREF_ROAD_WIDTHS, DEFAULT_ROAD_WIDTHS);
+        Map<String, Double> widths = new LinkedHashMap<>();
+        for (String entry : pref.split(";")) {
+            String trimmed = entry.trim();
+            if (trimmed.isEmpty()) continue;
+            String[] parts = trimmed.split("=", 2);
+            if (parts.length == 2) {
+                try {
+                    widths.put(parts[0].trim(), Double.parseDouble(parts[1].trim()));
+                } catch (NumberFormatException e) {
+                    // skip malformed entries
+                }
+            }
+        }
+        return widths;
     }
 
     private static Set<String> parseTagSet(String pref) {
@@ -292,7 +320,87 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
         outerGbc.gridy = 2;
         outerPanel.add(downloadPanel, outerGbc);
 
-        // === Section 4: Developer ===
+        // === Section 4: Polygon Breaking ===
+        JPanel breakPanel = new JPanel(new GridBagLayout());
+        breakPanel.setBorder(BorderFactory.createTitledBorder(tr("Polygon Breaking")));
+        gbc = new GridBagConstraints();
+        gbc.insets = new Insets(3, 5, 3, 5);
+        gbc.anchor = GridBagConstraints.WEST;
+        row = 0;
+
+        gbc.gridx = 0;
+        gbc.gridy = row++;
+        gbc.gridwidth = 4;
+        JLabel roadWidthsInfo = new JLabel(
+            tr("Road types and widths (meters) used for polygon splitting"));
+        roadWidthsInfo.setToolTipText(
+            tr("When splitting a polygon along a road, the polygon boundary is offset "
+               + "from the road centerline by half the configured width."));
+        breakPanel.add(roadWidthsInfo, gbc);
+        gbc.gridwidth = 1;
+
+        roadWidthsTableModel = new DefaultTableModel(
+                new String[]{tr("Highway type"), tr("Width (m)")}, 0) {
+            @Override
+            public Class<?> getColumnClass(int columnIndex) {
+                return String.class;
+            }
+        };
+
+        String currentRoadWidths = Config.getPref().get(PREF_ROAD_WIDTHS, DEFAULT_ROAD_WIDTHS);
+        for (String entry : currentRoadWidths.split(";")) {
+            String trimmed = entry.trim();
+            if (trimmed.isEmpty()) continue;
+            String[] parts = trimmed.split("=", 2);
+            if (parts.length == 2) {
+                roadWidthsTableModel.addRow(new Object[]{parts[0].trim(), parts[1].trim()});
+            }
+        }
+
+        JTable roadWidthsTable = new JTable(roadWidthsTableModel);
+        roadWidthsTable.getColumnModel().getColumn(0).setPreferredWidth(200);
+        roadWidthsTable.getColumnModel().getColumn(1).setPreferredWidth(80);
+        roadWidthsTable.setRowHeight(22);
+        JScrollPane roadWidthsScrollPane = new JScrollPane(roadWidthsTable);
+        roadWidthsScrollPane.setPreferredSize(new Dimension(400, 132));
+
+        gbc.gridx = 0;
+        gbc.gridy = row++;
+        gbc.gridwidth = 4;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.weightx = 1.0;
+        breakPanel.add(roadWidthsScrollPane, gbc);
+        gbc.fill = GridBagConstraints.NONE;
+        gbc.weightx = 0;
+        gbc.gridwidth = 1;
+
+        gbc.gridx = 0;
+        gbc.gridy = row++;
+        gbc.gridwidth = 4;
+        JPanel roadWidthsButtonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        JButton roadWidthsAddButton = new JButton(tr("Add"));
+        roadWidthsAddButton.addActionListener(e -> {
+            roadWidthsTableModel.addRow(new Object[]{"", ""});
+            int newRow = roadWidthsTableModel.getRowCount() - 1;
+            roadWidthsTable.editCellAt(newRow, 0);
+            roadWidthsTable.getSelectionModel().setSelectionInterval(newRow, newRow);
+        });
+        JButton roadWidthsRemoveButton = new JButton(tr("Remove"));
+        roadWidthsRemoveButton.addActionListener(e -> {
+            int[] selected = roadWidthsTable.getSelectedRows();
+            for (int i = selected.length - 1; i >= 0; i--) {
+                roadWidthsTableModel.removeRow(selected[i]);
+            }
+        });
+        roadWidthsButtonPanel.add(roadWidthsAddButton);
+        roadWidthsButtonPanel.add(roadWidthsRemoveButton);
+        breakPanel.add(roadWidthsButtonPanel, gbc);
+        gbc.gridwidth = 1;
+
+        outerGbc.gridy = 3;
+        outerPanel.add(breakPanel, outerGbc);
+
+        // === Section 5: Developer ===
         JPanel devPanel = new JPanel(new GridBagLayout());
         devPanel.setBorder(BorderFactory.createTitledBorder(tr("Developer")));
         gbc = new GridBagConstraints();
@@ -314,7 +422,7 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
             Config.getPref().getBoolean(PREF_DEBUG_MODE, false));
         addCheckBox(devPanel, gbc, row++, debugModeCheckBox);
 
-        outerGbc.gridy = 3;
+        outerGbc.gridy = 4;
         outerPanel.add(devPanel, outerGbc);
 
         JPanel wrapper = new JPanel(new BorderLayout());
@@ -374,6 +482,17 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
 
         String[] downloadValues = {"prompt", "always", "never"};
         Config.getPref().put(PREF_DOWNLOAD_BEFORE_FIX, downloadValues[downloadBeforeFixCombo.getSelectedIndex()]);
+
+        // Serialize road widths table
+        StringBuilder roadWidths = new StringBuilder();
+        for (int i = 0; i < roadWidthsTableModel.getRowCount(); i++) {
+            String type = ((String) roadWidthsTableModel.getValueAt(i, 0)).trim();
+            String width = ((String) roadWidthsTableModel.getValueAt(i, 1)).trim();
+            if (type.isEmpty() || width.isEmpty()) continue;
+            if (roadWidths.length() > 0) roadWidths.append(';');
+            roadWidths.append(type).append('=').append(width);
+        }
+        Config.getPref().put(PREF_ROAD_WIDTHS, roadWidths.toString());
 
         Config.getPref().putBoolean(PREF_PLAN_ONLY, planOnlyCheckBox.isSelected());
         Config.getPref().putBoolean(PREF_DEBUG_MODE, debugModeCheckBox.isSelected());

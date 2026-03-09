@@ -4,6 +4,7 @@ import java.util.List;
 
 import org.openstreetmap.josm.data.coor.EastNorth;
 import org.openstreetmap.josm.data.osm.Node;
+import org.openstreetmap.josm.data.projection.ProjectionRegistry;
 
 /**
  * Shared geometry primitives used by multiple classes in the plugin.
@@ -71,5 +72,60 @@ class GeometryUtils {
      */
     static boolean isNear(EastNorth a, EastNorth b, double tol) {
         return Math.abs(a.east() - b.east()) < tol && Math.abs(a.north() - b.north()) < tol;
+    }
+
+    /**
+     * Computes two points offset perpendicular to a line direction at a given point.
+     * The offset distance is in the same units as EastNorth (meters for most projections).
+     *
+     * @param lineStart start of the line segment defining direction
+     * @param lineEnd   end of the line segment defining direction
+     * @param point     the point to offset from
+     * @param offsetMeters offset distance (positive)
+     * @return array of two EastNorth: [left, right] where left is to the left
+     *         of the direction from lineStart→lineEnd
+     */
+    static EastNorth[] perpendicularOffsets(EastNorth lineStart, EastNorth lineEnd,
+            EastNorth point, double offsetMeters) {
+        double dx = lineEnd.east() - lineStart.east();
+        double dy = lineEnd.north() - lineStart.north();
+
+        // Convert meters to EastNorth units using the projection's scale
+        double metersPerUnit = ProjectionRegistry.getProjection().getMetersPerUnit();
+
+        // For degree-based projections (EPSG:4326), east and north have
+        // different metric scales: 1° longitude = cos(lat) × 1° latitude.
+        // Compute the perpendicular in metric space to get correct offsets.
+        double eastScale = 1.0;
+        if (metersPerUnit > 10000) {
+            double cosLat = Math.cos(Math.toRadians(point.north()));
+            if (cosLat > 0.01) {
+                eastScale = cosLat;
+            }
+        }
+
+        // Scale dx to metric units for proper perpendicular computation
+        double dxMetric = dx * eastScale;
+        double dyMetric = dy;
+        double lenMetric = Math.sqrt(dxMetric * dxMetric + dyMetric * dyMetric);
+        if (lenMetric < 1e-10) {
+            return new EastNorth[]{point, point};
+        }
+
+        // Unit perpendicular in metric space: rotate direction 90° left
+        double pxMetric = -dyMetric / lenMetric;
+        double pyMetric = dxMetric / lenMetric;
+
+        // Convert offset from meters to EastNorth units
+        double offsetUnits = offsetMeters / metersPerUnit;
+
+        // Apply perpendicular offset, converting back from metric to EastNorth
+        double offsetEast = pxMetric * offsetUnits / eastScale;
+        double offsetNorth = pyMetric * offsetUnits;
+
+        return new EastNorth[]{
+            new EastNorth(point.east() + offsetEast, point.north() + offsetNorth),
+            new EastNorth(point.east() - offsetEast, point.north() - offsetNorth)
+        };
     }
 }
