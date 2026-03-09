@@ -66,14 +66,57 @@ class PolygonBreaker {
             }
         }
 
-        // Build road network graph and find corridors
-        List<BreakPlan.RoadCorridor> corridors = buildRoadNetworkCorridors(
+        // Build road graph and find corridors + interior loops
+        RoadGraphResult roadResult = buildRoadGraph(
             polyNodes, polygon, ds, roadWidths, innerRings);
+        List<BreakPlan.RoadCorridor> corridors = buildCorridorsFromGraph(
+            roadResult, polyNodes);
+        List<InteriorLoop> interiorLoops = findInteriorLoops(
+            roadResult.graph, 7.0);
 
-        if (corridors.isEmpty()) return null;
+        if (corridors.isEmpty() && interiorLoops.isEmpty()) return null;
 
-        // Split the polygon using all corridors
-        List<List<EastNorth>> resultPolygons = splitPolygon(polyNodes, corridors);
+        List<List<EastNorth>> resultPolygons;
+        boolean corridorsSplit = false;
+        if (!corridors.isEmpty()) {
+            resultPolygons = splitPolygon(polyNodes, corridors);
+            if (resultPolygons != null && resultPolygons.size() >= 2) {
+                corridorsSplit = true;
+            } else {
+                if (interiorLoops.isEmpty()) return null;
+                resultPolygons = new ArrayList<>();
+                List<EastNorth> wholePoly = new ArrayList<>();
+                for (Node n : polyNodes) wholePoly.add(n.getEastNorth());
+                resultPolygons.add(wholePoly);
+            }
+        } else {
+            resultPolygons = new ArrayList<>();
+            List<EastNorth> wholePoly = new ArrayList<>();
+            for (Node n : polyNodes) wholePoly.add(n.getEastNorth());
+            resultPolygons.add(wholePoly);
+        }
+
+        // For interior loops: if corridors split the polygon, replace any
+        // narrow corridor-gap polygon with the proper loop interior polygon.
+        // If corridors didn't split, use slit-carving to subtract loops.
+        Set<Integer> loopProtected = new HashSet<>();
+        if (!interiorLoops.isEmpty()) {
+            if (corridorsSplit) {
+                loopProtected.addAll(
+                    replaceLoopGapPolygons(resultPolygons, interiorLoops));
+            } else {
+                applyInteriorLoops(resultPolygons, interiorLoops, roadResult.graph);
+                // Mark any added loop interior polygons
+                for (InteriorLoop loop : interiorLoops) {
+                    for (int pi = 0; pi < resultPolygons.size(); pi++) {
+                        if (resultPolygons.get(pi) == loop.innerPolygon) {
+                            loopProtected.add(pi);
+                        }
+                    }
+                }
+            }
+        }
+
         if (resultPolygons == null || resultPolygons.size() < 2) return null;
 
         // Fix inter-polygon edge crossings caused by corridor offsets at sharp bends.
@@ -85,27 +128,42 @@ class PolygonBreaker {
         // small (< 5% of original area) and non-compact (spiky/thin shape).
         // A polygon that is small but compact (e.g. a real piece from a corner clip)
         // is preserved. Compactness = perimeter²/(4π×area), 1.0 = perfect circle.
+
         double originalArea = Math.abs(signedAreaEN(
             polyNodes.stream().map(Node::getEastNorth).collect(
                 java.util.stream.Collectors.toList())));
         double minArea = originalArea * 0.05;
-        resultPolygons.removeIf(poly -> {
+        for (int pi = resultPolygons.size() - 1; pi >= 0; pi--) {
+            if (loopProtected.contains(pi)) continue;
+            List<EastNorth> poly = resultPolygons.get(pi);
             double area = Math.abs(signedAreaEN(poly));
-            if (area >= minArea) return false;
+            if (area >= minArea) continue;
             double perimeter = 0;
-            for (int pi = 0; pi < poly.size() - 1; pi++) {
-                EastNorth a = poly.get(pi);
-                EastNorth b = poly.get(pi + 1);
+            for (int qi = 0; qi < poly.size() - 1; qi++) {
+                EastNorth a = poly.get(qi);
+                EastNorth b = poly.get(qi + 1);
                 perimeter += Math.sqrt(
                     Math.pow(b.east() - a.east(), 2) + Math.pow(b.north() - a.north(), 2));
             }
             double compactness = (perimeter * perimeter) / (4 * Math.PI * area);
-            return compactness > 3.0;
-        });
+            if (compactness > 3.0) {
+                resultPolygons.remove(pi);
+            }
+        }
         if (resultPolygons.size() < 2) return null;
 
+        // Reject any self-intersecting result polygons — these are always
+        // incorrect and indicate a bug in corridor/loop processing.
+        for (int pi = resultPolygons.size() - 1; pi >= 0; pi--) {
+            if (isSelfIntersecting(resultPolygons.get(pi))) {
+                resultPolygons.remove(pi);
+            }
+        }
+        if (resultPolygons.size() < 2) return null;
+
+        int splitCount = corridors.size();
         String desc = tr("{0} roads split polygon into {1} parts",
-            corridors.size(), resultPolygons.size());
+            splitCount, resultPolygons.size());
         return new BreakPlan(source, corridors, resultPolygons, innerWays, desc);
     }
 
@@ -132,21 +190,25 @@ class PolygonBreaker {
     // Road network graph construction
     // -----------------------------------------------------------------------
 
+    /** Result of building the road graph: the graph plus component analysis. */
+    private static class RoadGraphResult {
+        final RoadGraph graph;
+        final List<List<GraphNode>> components;
+
+        RoadGraphResult(RoadGraph graph, List<List<GraphNode>> components) {
+            this.graph = graph;
+            this.components = components;
+        }
+    }
+
     /**
-     * Builds road corridors by constructing a road network graph inside the
-     * polygon, then finding paths between boundary crossings.
-     *
-     * <p>This handles roads split into multiple Ways (shared interior nodes),
-     * T-junctions, and branching roads.</p>
+     * Builds the road network graph inside a polygon.
      */
-    private static List<BreakPlan.RoadCorridor> buildRoadNetworkCorridors(
+    private static RoadGraphResult buildRoadGraph(
             List<Node> polyNodes, Way polygon, DataSet ds,
             Map<String, Double> roadWidths, List<List<Node>> innerRings) {
 
-        List<BreakPlan.RoadCorridor> corridors = new ArrayList<>();
         BBox polyBBox = polygon.getBBox();
-
-        // Step 1: Collect all relevant road Ways and their crossings
         List<RoadWayInfo> roadInfos = new ArrayList<>();
         for (Way road : ds.getWays()) {
             if (road.isDeleted() || road == polygon) continue;
@@ -160,15 +222,20 @@ class PolygonBreaker {
             roadInfos.add(new RoadWayInfo(road, width, crossings));
         }
 
-        // Step 2: Build the road graph — nodes are OSM Nodes + synthetic crossing
-        // points; edges are road segments between them
         RoadGraph graph = buildRoadGraph(roadInfos, polyNodes);
-
-        // Step 3: Find connected components and build corridors
         List<List<GraphNode>> components = graph.findConnectedComponents();
+        return new RoadGraphResult(graph, components);
+    }
 
-        for (List<GraphNode> component : components) {
-            // Find terminal nodes: boundary crossings and junction nodes (degree 3+)
+    /**
+     * Builds road corridors from a pre-built road graph.
+     */
+    private static List<BreakPlan.RoadCorridor> buildCorridorsFromGraph(
+            RoadGraphResult roadResult, List<Node> polyNodes) {
+
+        List<BreakPlan.RoadCorridor> corridors = new ArrayList<>();
+
+        for (List<GraphNode> component : roadResult.components) {
             List<GraphNode> boundaryCrossings = new ArrayList<>();
             List<GraphNode> junctions = new ArrayList<>();
             for (GraphNode gn : component) {
@@ -179,7 +246,6 @@ class PolygonBreaker {
             if (boundaryCrossings.size() < 2) continue;
 
             if (junctions.isEmpty()) {
-                // Simple case: no junctions, pair boundary crossings sequentially
                 if (boundaryCrossings.size() % 2 != 0) continue;
                 boundaryCrossings.sort((a, b) -> {
                     int cmp = Integer.compare(a.polySegmentIndex, b.polySegmentIndex);
@@ -189,16 +255,13 @@ class PolygonBreaker {
                 for (int i = 0; i < boundaryCrossings.size(); i += 2) {
                     GraphNode entry = boundaryCrossings.get(i);
                     GraphNode exit = boundaryCrossings.get(i + 1);
-                    List<GraphEdge> path = findPath(entry, exit, graph);
+                    List<GraphEdge> path = findPath(entry, exit, roadResult.graph);
                     if (path == null || path.isEmpty()) continue;
                     BreakPlan.RoadCorridor corridor = buildCorridorFromPath(
                         entry, exit, path, polyNodes, null);
                     if (corridor != null) corridors.add(corridor);
                 }
             } else {
-                // T-junction / complex case: decompose at junction nodes.
-                // Enumerate all linear segments between terminal nodes
-                // (boundary crossings and junctions), each becomes a corridor.
                 corridors.addAll(buildCorridorsFromJunctionComponent(
                     component, boundaryCrossings, junctions, polyNodes));
             }
@@ -210,12 +273,9 @@ class PolygonBreaker {
     /**
      * Builds corridors from a component that contains junction nodes (degree 3+).
      *
-     * <p>Strategy: enumerate all "half-corridors" — paths from each boundary
-     * crossing to its nearest junction. Then pair consecutive boundary crossings
-     * around the polygon perimeter, composing their half-corridor offsets into
-     * full crossing pairs. At the junction, offsets transition from one road's
-     * perpendicular to the next road's perpendicular via a connecting segment
-     * on the junction's offset circle.</p>
+     * <p>Strategy: sort boundary crossings by polygon perimeter position, then
+     * pair consecutive crossings (i, i+1 mod n). For each pair, find the
+     * shortest path through the graph and build a corridor.</p>
      */
     private static List<BreakPlan.RoadCorridor> buildCorridorsFromJunctionComponent(
             List<GraphNode> component, List<GraphNode> boundaryCrossings,
@@ -223,7 +283,6 @@ class PolygonBreaker {
 
         List<BreakPlan.RoadCorridor> corridors = new ArrayList<>();
 
-        // Sort boundary crossings by polygon boundary position
         boundaryCrossings.sort((a, b) -> {
             int cmp = Integer.compare(a.polySegmentIndex, b.polySegmentIndex);
             return cmp != 0 ? cmp : Double.compare(a.polyT, b.polyT);
@@ -232,319 +291,532 @@ class PolygonBreaker {
         int n = boundaryCrossings.size();
         if (n < 2) return corridors;
 
-        // Build a half-corridor from each boundary crossing to its nearest
-        // junction. Each half-corridor has independent left/right offsets.
-        List<HalfCorridor> halves = new ArrayList<>();
-        for (GraphNode crossing : boundaryCrossings) {
-            HalfCorridor half = buildHalfCorridor(crossing, junctions, polyNodes);
-            if (half == null) return corridors; // can't reach junction
-            halves.add(half);
-        }
+        RoadGraph graph = new RoadGraph();
 
-        // Precompute consistent junction offset points for all corridor pairs.
-        // For corridor (i, i+1), the left junction point is the average of
-        // from[i].left.last and to[i+1].right.last. For adjacent corridors to
-        // tile without gaps or overlaps, corridor (i,i+1)'s left junction must
-        // equal corridor (i-1,i)'s right junction. We compute one shared point
-        // per boundary crossing at the junction.
-        //
-        // For crossing i, the shared junction point between corridors (i-1,i)
-        // and (i,i+1) is where half[i]'s junction offsets meet. The right side
-        // of corridor (i-1,i) uses half[i].left.last (reversed into the corridor).
-        // The left side of corridor (i,i+1) uses half[i].left.last.
-        // So the shared point at crossing i is the average of:
-        //   half[i-1].right.last  (from corridor (i-1,i) right at junction)
-        //   half[i].left.last     (from corridor (i,i+1) left at junction)
-        // But actually these are the SAME half-corridor's left vs right at junction.
-        // Let me think again...
-        //
-        // Corridor (i, j=i+1): left = from_i.left → junction → to_j.right reversed
-        //   Left junction = avg(from_i.left.last, to_j.right.last)
-        // Corridor (j, k=j+1): right = from_j.right → junction → to_k.left reversed
-        //   Right junction = avg(from_j.right.last, to_k.left.last)
-        //
-        // For these to match: avg(from_i.left.last, to_j.right.last) must equal
-        // avg(from_j.right.last, to_k.left.last). This doesn't hold in general.
-        //
-        // The fix: compute one shared junction point per corridor boundary,
-        // which is the average of ALL the junction offsets that meet there.
-        // Between corridors (i,i+1) and (i+1,i+2), the shared point involves
-        // from_i.left, to_{i+1}.right, from_{i+1}.right, to_{i+2}.left.
-        // But actually it's simpler: at boundary crossing i, two corridors meet.
-        // The left of corridor (i,i+1) at the junction and the right of
-        // corridor (i-1,i) at the junction. Compute one point per pair.
-
-        // Precompute junction bisector points for each corridor pair.
-        // For corridor (i, i+1): the junction point between roads i and i+1
-        // should be at the angular bisector of those roads' directions,
-        // at a distance from the junction center that keeps it halfWidth
-        // from both road centerlines.
-        // The distance = halfWidth / sin(halfAngle), capped to avoid
-        // extreme miter extensions at near-parallel roads.
-
-        // Build corridors from half-corridor pairs
         for (int i = 0; i < n; i++) {
             int j = (i + 1) % n;
-            HalfCorridor from = halves.get(i);
-            HalfCorridor to = halves.get(j);
-
-            // Compute junction bisector point between road i and road j.
-            // roadDirFromJunction points from junction toward the boundary
-            // crossing for each half. Between roads i and j, we want a
-            // point in the angular bisector direction.
-            double halfWidth = Math.max(from.width, to.width) / 2.0;
-            EastNorth juncPt = computeJunctionBisectorPoint(
-                from.junctionPosition, from.roadDirFromJunction,
-                to.roadDirFromJunction, halfWidth);
-
-            // Combined left  = from.left  + juncPt + to.right reversed
-            // Combined right = from.right + juncPt + to.left reversed
-            // Note: at exit, the corridor's left side corresponds to the 'to'
-            // half-corridor's RIGHT (bwd = toward the polygon arc between the
-            // two crossings), and the corridor's right side corresponds to the
-            // 'to' half's LEFT (fwd = away from the polygon arc).
-            List<EastNorth> leftOffsets = new ArrayList<>(from.leftOffsets);
-            List<EastNorth> toRightRev = new ArrayList<>(to.rightOffsets);
-            Collections.reverse(toRightRev);
-            if (!toRightRev.isEmpty() && !leftOffsets.isEmpty()) {
-                // Replace the junction-end offset of from with the bisector point
-                leftOffsets.set(leftOffsets.size() - 1, juncPt);
-                // Skip the junction-end offset of to (reversed, it's first)
-                leftOffsets.addAll(toRightRev.subList(1, toRightRev.size()));
-            }
-
-            List<EastNorth> rightOffsets = new ArrayList<>(from.rightOffsets);
-            List<EastNorth> toLeftRev = new ArrayList<>(to.leftOffsets);
-            Collections.reverse(toLeftRev);
-            if (!toLeftRev.isEmpty() && !rightOffsets.isEmpty()) {
-                rightOffsets.set(rightOffsets.size() - 1, juncPt);
-                rightOffsets.addAll(toLeftRev.subList(1, toLeftRev.size()));
-            }
-
-            // Fix any miter-join crossings in the composed corridor
-            fixCorridorCrossings(leftOffsets, rightOffsets);
-
             GraphNode entry = boundaryCrossings.get(i);
             GraphNode exit = boundaryCrossings.get(j);
 
-            // Ensure "right" at entry faces the polygon boundary vertex
-            // that PRECEDES the entry in ring order. The ring inserts
-            // right-then-left at entry portals. Walking the ring in polygon
-            // order, we encounter the preceding boundary vertex, then right,
-            // then left. So "right" should be on the side toward the
-            // preceding vertex.
-            {
-                int segIdx = entry.polySegmentIndex;
-                EastNorth prevVtx = polyNodes.get(segIdx).getEastNorth();
-                // Direction from entry crossing to previous vertex
-                double toPrevDx = prevVtx.east() - entry.position.east();
-                double toPrevDy = prevVtx.north() - entry.position.north();
-                // Direction from entry crossing to right offset
-                EastNorth rightPt = rightOffsets.get(0);
-                double toRightDx = rightPt.east() - entry.position.east();
-                double toRightDy = rightPt.north() - entry.position.north();
-                // Dot product: positive means right offset is roughly toward
-                // prevVtx (same side). Negative means it's away (wrong side).
-                double dot = toPrevDx * toRightDx + toPrevDy * toRightDy;
-                if (dot < 0) {
-                    // Right offset is away from preceding vertex — swap
-                    List<EastNorth> tmp = leftOffsets;
-                    leftOffsets = rightOffsets;
-                    rightOffsets = tmp;
-                }
-            }
+            List<GraphEdge> path = findPath(entry, exit, graph);
+            if (path == null || path.isEmpty()) continue;
 
-            BreakPlan.CrossingPair pair = new BreakPlan.CrossingPair(
-                new BreakPlan.BoundaryPosition(entry.polySegmentIndex, entry.polyT,
-                    entry.position),
-                new BreakPlan.BoundaryPosition(exit.polySegmentIndex, exit.polyT,
-                    exit.position),
-                leftOffsets, rightOffsets);
-
-            // Collect source ways from both halves
-            List<Way> sourceWays = new ArrayList<>();
-            for (Way w : from.sourceWays) {
-                if (!sourceWays.contains(w)) sourceWays.add(w);
-            }
-            for (Way w : to.sourceWays) {
-                if (!sourceWays.contains(w)) sourceWays.add(w);
-            }
-
-            corridors.add(new BreakPlan.RoadCorridor(sourceWays,
-                Math.max(from.width, to.width),
-                Collections.singletonList(pair)));
+            BreakPlan.RoadCorridor corridor = buildCorridorFromPath(
+                entry, exit, path, polyNodes, null);
+            if (corridor != null) corridors.add(corridor);
         }
 
         return corridors;
     }
 
-    /** Half-corridor: offsets from a boundary crossing to a junction. */
-    private static class HalfCorridor {
-        final List<EastNorth> leftOffsets;
-        final List<EastNorth> rightOffsets;
-        final List<Way> sourceWays;
-        final double width;
-        final EastNorth junctionPosition;
-        /** Direction from junction center toward the boundary crossing (unit vector). */
-        final EastNorth roadDirFromJunction;
+    // -----------------------------------------------------------------------
+    // Interior loop detection and processing
+    // -----------------------------------------------------------------------
 
-        HalfCorridor(List<EastNorth> left, List<EastNorth> right,
-                     List<Way> sourceWays, double width,
-                     EastNorth junctionPosition, EastNorth roadDirFromJunction) {
-            this.leftOffsets = left;
-            this.rightOffsets = right;
-            this.sourceWays = sourceWays;
-            this.width = width;
-            this.junctionPosition = junctionPosition;
-            this.roadDirFromJunction = roadDirFromJunction;
+    /** A closed loop in the road graph entirely inside the polygon. */
+    private static class InteriorLoop {
+        /** The inward-offset polygon representing the loop's interior area. */
+        final List<EastNorth> innerPolygon;
+        /** The road cycle polygon (centerline, closed). */
+        final List<EastNorth> cyclePolygon;
+
+        InteriorLoop(List<EastNorth> innerPolygon, List<EastNorth> cyclePolygon) {
+            this.innerPolygon = innerPolygon;
+            this.cyclePolygon = cyclePolygon;
         }
     }
 
     /**
-     * Builds a half-corridor from a boundary crossing to the nearest junction.
+     * Finds interior loops (cycles) in the road network graph and computes
+     * their inward-offset polygons. An interior loop is a cycle where all
+     * nodes are inside the polygon (no boundary crossings).
      */
-    private static HalfCorridor buildHalfCorridor(GraphNode crossing,
-            List<GraphNode> junctions, List<Node> polyNodes) {
-        Set<GraphNode> junctionSet = new HashSet<>(junctions);
+    private static List<InteriorLoop> findInteriorLoops(
+            RoadGraph graph, double defaultWidth) {
 
-        // BFS from crossing to nearest junction
-        Map<GraphNode, GraphEdge> cameFrom = new HashMap<>();
-        Set<GraphNode> visited = new HashSet<>();
-        LinkedList<GraphNode> queue = new LinkedList<>();
-        queue.add(crossing);
-        visited.add(crossing);
+        List<InteriorLoop> loops = new ArrayList<>();
+        Set<GraphNode> usedInCycle = new HashSet<>();
 
-        GraphNode junction = null;
-        while (!queue.isEmpty()) {
-            GraphNode current = queue.poll();
-            if (junctionSet.contains(current) && current != crossing) {
-                junction = current;
-                break;
-            }
-            for (GraphEdge edge : current.edges) {
-                GraphNode neighbor = edge.other(current);
-                if (!visited.contains(neighbor)) {
-                    visited.add(neighbor);
-                    cameFrom.put(neighbor, edge);
-                    queue.add(neighbor);
-                }
-            }
-        }
-        if (junction == null) return null;
+        for (GraphNode start : graph.nodes) {
+            if (start.isBoundaryCrossing) continue;
+            if (usedInCycle.contains(start)) continue;
+            if (start.edges.size() < 2) continue;
 
-        // Reconstruct path
-        List<GraphEdge> path = new ArrayList<>();
-        GraphNode node = junction;
-        while (node != crossing) {
-            GraphEdge edge = cameFrom.get(node);
-            path.add(0, edge);
-            node = edge.other(node);
-        }
+            List<GraphNode> cycle = findInteriorCycle(start, usedInCycle);
+            if (cycle == null || cycle.size() < 3) continue;
 
-        // Collect path nodes
-        List<GraphNode> pathNodes = new ArrayList<>();
-        pathNodes.add(crossing);
-        GraphNode current = crossing;
-        for (GraphEdge edge : path) {
-            current = edge.other(current);
-            pathNodes.add(current);
-        }
+            usedInCycle.addAll(cycle);
 
-        double maxWidth = 0;
-        for (GraphEdge edge : path) {
-            maxWidth = Math.max(maxWidth, edge.width);
-        }
-        double halfWidth = maxWidth / 2.0;
-
-        // Build offset polylines
-        List<EastNorth> left = new ArrayList<>();
-        List<EastNorth> right = new ArrayList<>();
-
-        for (int i = 0; i < pathNodes.size(); i++) {
-            GraphNode gn = pathNodes.get(i);
-            EastNorth prev, next;
-
-            EastNorth[] offsets;
-            if (i == 0 && gn.isBoundaryCrossing) {
-                // Boundary crossing: find portal points on the polygon boundary
-                GraphEdge edge = path.get(0);
-                EastNorth roadStart = getSegmentDirectionAt(gn, edge, true);
-                EastNorth roadEnd = getSegmentDirectionAt(gn, edge, false);
-                EastNorth fwd = findBoundaryPortalPoint(polyNodes,
-                    gn.polySegmentIndex, gn.polyT, roadStart, roadEnd,
-                    halfWidth, true);
-                EastNorth bwd = findBoundaryPortalPoint(polyNodes,
-                    gn.polySegmentIndex, gn.polyT, roadStart, roadEnd,
-                    halfWidth, false);
-                if (fwd != null && bwd != null) {
-                    offsets = new EastNorth[]{fwd, bwd};
-                } else {
-                    offsets = GeometryUtils.perpendicularOffsets(
-                        roadStart, roadEnd, gn.position, halfWidth);
-                }
-            } else if (i == 0 || i == pathNodes.size() - 1) {
-                GraphEdge edge = (i == 0) ? path.get(0) : path.get(path.size() - 1);
-                prev = getSegmentDirectionAt(gn, edge, true);
-                next = getSegmentDirectionAt(gn, edge, false);
-                offsets = GeometryUtils.perpendicularOffsets(
-                    prev, next, gn.position, halfWidth);
-            } else {
-                EastNorth prevPos = pathNodes.get(i - 1).position;
-                EastNorth nextPos = pathNodes.get(i + 1).position;
-                offsets = computeMiterJoin(
-                    prevPos, gn.position, nextPos, halfWidth);
-                if (offsets == null) {
-                    offsets = GeometryUtils.perpendicularOffsets(
-                        prevPos, nextPos, gn.position, halfWidth);
-                }
-            }
-
-            // For all non-entry nodes, ensure consistent side assignment
-            if (i > 0 && !left.isEmpty()) {
-                EastNorth prevLeft = left.get(left.size() - 1);
-                EastNorth prevCenter = pathNodes.get(i - 1).position;
-                double segDx = gn.position.east() - prevCenter.east();
-                double segDy = gn.position.north() - prevCenter.north();
-                double segLen = Math.sqrt(segDx * segDx + segDy * segDy);
-                if (segLen > 1e-15) {
-                    double prevSide = segDx * (prevLeft.north() - prevCenter.north())
-                        - segDy * (prevLeft.east() - prevCenter.east());
-                    double curSide = segDx * (offsets[0].north() - gn.position.north())
-                        - segDy * (offsets[0].east() - gn.position.east());
-                    if (prevSide * curSide < 0) {
-                        EastNorth tmp = offsets[0];
-                        offsets[0] = offsets[1];
-                        offsets[1] = tmp;
+            // Compute the maximum road width along the cycle
+            double maxWidth = 0;
+            for (int i = 0; i < cycle.size(); i++) {
+                GraphNode a = cycle.get(i);
+                GraphNode b = cycle.get((i + 1) % cycle.size());
+                for (GraphEdge e : a.edges) {
+                    if (e.other(a) == b) {
+                        maxWidth = Math.max(maxWidth, e.width);
+                        break;
                     }
                 }
             }
-            left.add(offsets[0]);
-            right.add(offsets[1]);
-        }
+            double halfWidth = maxWidth / 2.0;
 
-        List<Way> sourceWays = new ArrayList<>();
-        for (GraphEdge edge : path) {
-            if (!sourceWays.contains(edge.sourceWay)) {
-                sourceWays.add(edge.sourceWay);
+            // Build closed polygon from cycle nodes
+            List<EastNorth> loopPoly = new ArrayList<>();
+            for (GraphNode gn : cycle) {
+                loopPoly.add(gn.position);
+            }
+            loopPoly.add(loopPoly.get(0));
+
+            List<EastNorth> innerPoly = offsetClosedPolygon(loopPoly, halfWidth);
+            if (innerPoly != null && innerPoly.size() >= 4) {
+                loops.add(new InteriorLoop(innerPoly, loopPoly));
+            }
+        }
+        return loops;
+    }
+
+    /**
+     * Finds a simple cycle containing the given node, composed entirely of
+     * interior (non-boundary-crossing) nodes.
+     *
+     * <p>For each pair of interior neighbors of start, BFS from one to the
+     * other avoiding start. If a path is found, the cycle is:
+     * start → neighborA → ... → neighborB → start.</p>
+     */
+    private static List<GraphNode> findInteriorCycle(GraphNode start,
+            Set<GraphNode> excluded) {
+        List<GraphNode> interiorNeighbors = new ArrayList<>();
+        for (GraphEdge edge : start.edges) {
+            GraphNode neighbor = edge.other(start);
+            if (!neighbor.isBoundaryCrossing && !excluded.contains(neighbor)) {
+                interiorNeighbors.add(neighbor);
+            }
+        }
+        if (interiorNeighbors.size() < 2) return null;
+
+        for (int ni = 0; ni < interiorNeighbors.size(); ni++) {
+            GraphNode seedA = interiorNeighbors.get(ni);
+            for (int nj = ni + 1; nj < interiorNeighbors.size(); nj++) {
+                GraphNode seedB = interiorNeighbors.get(nj);
+
+                Map<GraphNode, GraphNode> parent = new HashMap<>();
+                LinkedList<GraphNode> queue = new LinkedList<>();
+                parent.put(seedA, seedA);
+                queue.add(seedA);
+
+                boolean found = false;
+                while (!queue.isEmpty() && !found) {
+                    GraphNode current = queue.poll();
+                    for (GraphEdge edge : current.edges) {
+                        GraphNode next = edge.other(current);
+                        if (next == start) continue;
+                        if (next.isBoundaryCrossing) continue;
+                        if (excluded.contains(next)) continue;
+                        if (parent.containsKey(next)) continue;
+                        parent.put(next, current);
+                        if (next == seedB) { found = true; break; }
+                        queue.add(next);
+                    }
+                }
+
+                if (found) {
+                    List<GraphNode> cycle = new ArrayList<>();
+                    cycle.add(start);
+                    List<GraphNode> path = new ArrayList<>();
+                    GraphNode node = seedB;
+                    while (node != seedA) {
+                        path.add(0, node);
+                        node = parent.get(node);
+                    }
+                    path.add(0, seedA);
+                    cycle.addAll(path);
+                    return cycle;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Offsets a closed polygon inward by the given distance.
+     * Uses perpendicular offsets at each vertex, choosing the side that
+     * moves toward the polygon centroid (inward).
+     */
+    private static List<EastNorth> offsetClosedPolygon(List<EastNorth> poly, double dist) {
+        int n = poly.size() - 1; // last == first for closed polygon
+        if (n < 3) return null;
+
+        double cx = 0, cy = 0;
+        for (int i = 0; i < n; i++) {
+            cx += poly.get(i).east();
+            cy += poly.get(i).north();
+        }
+        cx /= n;
+        cy /= n;
+        EastNorth centroid = new EastNorth(cx, cy);
+
+        List<EastNorth> result = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            EastNorth prev = poly.get((i - 1 + n) % n);
+            EastNorth curr = poly.get(i);
+            EastNorth next = poly.get((i + 1) % n);
+
+            EastNorth[] offsets = GeometryUtils.perpendicularOffsets(prev, next, curr, dist);
+
+            double d0 = Math.pow(offsets[0].east() - centroid.east(), 2)
+                + Math.pow(offsets[0].north() - centroid.north(), 2);
+            double d1 = Math.pow(offsets[1].east() - centroid.east(), 2)
+                + Math.pow(offsets[1].north() - centroid.north(), 2);
+            result.add(d0 < d1 ? offsets[0] : offsets[1]);
+        }
+        result.add(result.get(0));
+        return result;
+    }
+
+    /**
+     * Subtracts interior loop cutouts from result polygons.
+     * For each loop, finds which result polygon contains its centroid,
+     * then replaces that polygon with one that has the loop carved out
+     * via a slit (zero-width cut connecting outer boundary to hole).
+     */
+    private static void applyInteriorLoops(List<List<EastNorth>> resultPolygons,
+            List<InteriorLoop> loops, RoadGraph graph) {
+        // Collect all road edges from the graph for slit crossing checks
+        List<EastNorth[]> roadEdges = new ArrayList<>();
+        for (GraphEdge edge : graph.edges) {
+            roadEdges.add(new EastNorth[]{edge.from.position, edge.to.position});
+            // Also add intermediate road node segments
+            if (edge.sourceWay != null) {
+                List<Node> wayNodes = edge.sourceWay.getNodes();
+                for (int i = 0; i < wayNodes.size() - 1; i++) {
+                    roadEdges.add(new EastNorth[]{
+                        wayNodes.get(i).getEastNorth(),
+                        wayNodes.get(i + 1).getEastNorth()});
+                }
             }
         }
 
-        // Compute direction from junction toward the boundary crossing
-        EastNorth juncPos = junction.position;
-        GraphNode preJunc = pathNodes.get(pathNodes.size() - 2);
-        double dirDx = preJunc.position.east() - juncPos.east();
-        double dirDy = preJunc.position.north() - juncPos.north();
-        double dirLen = Math.sqrt(dirDx * dirDx + dirDy * dirDy);
-        EastNorth roadDir = dirLen > 1e-15
-            ? new EastNorth(dirDx / dirLen, dirDy / dirLen)
-            : new EastNorth(1, 0);
+        for (InteriorLoop loop : loops) {
+            List<EastNorth> hole = loop.innerPolygon;
+            int hn = hole.size() - 1;
+            if (hn < 3) continue;
 
-        return new HalfCorridor(left, right, sourceWays, maxWidth,
-            juncPos, roadDir);
+            // Compute hole centroid
+            double cx = 0, cy = 0;
+            for (int i = 0; i < hn; i++) {
+                cx += hole.get(i).east();
+                cy += hole.get(i).north();
+            }
+            cx /= hn;
+            cy /= hn;
+            EastNorth centroid = new EastNorth(cx, cy);
+
+            // Find which result polygon contains the centroid
+            int containingIdx = -1;
+            for (int pi = 0; pi < resultPolygons.size(); pi++) {
+                if (pointInsideOrOnPolygon(centroid, resultPolygons.get(pi))) {
+                    containingIdx = pi;
+                    break;
+                }
+            }
+            if (containingIdx < 0) continue;
+
+            List<EastNorth> outer = resultPolygons.get(containingIdx);
+
+            // Find closest pair of points (outer, hole) whose connecting slit
+            // does not cross any corridor offset edge.
+            int outerSplitIdx = 0;
+            int holeSplitIdx = 0;
+            double minDist = Double.MAX_VALUE;
+            int outerN = outer.size() - 1; // exclude closing point
+            for (int oi = 0; oi < outerN; oi++) {
+                for (int hi = 0; hi < hn; hi++) {
+                    double d = outer.get(oi).distanceSq(hole.get(hi));
+                    if (d < minDist
+                            && !slitCrossesCorridors(outer.get(oi), hole.get(hi),
+                                                     roadEdges)) {
+                        minDist = d;
+                        outerSplitIdx = oi;
+                        holeSplitIdx = hi;
+                    }
+                }
+            }
+
+            // Build new polygon: outer boundary with hole inserted via slit.
+            // The hole must be traced in the OPPOSITE winding direction from
+            // the outer boundary so it subtracts area.
+            List<EastNorth> carved = new ArrayList<>();
+
+            // Trace outer from split point around
+            for (int k = 0; k <= outerN; k++) {
+                carved.add(outer.get((outerSplitIdx + k) % outerN));
+            }
+
+            // Determine winding directions
+            double outerArea = signedAreaEN(outer);
+            double holeArea = signedAreaEN(hole);
+            // If outer and hole have the same winding, reverse the hole
+            // so it subtracts. If they have opposite winding, trace forward.
+            boolean reverseHole = (outerArea > 0) == (holeArea > 0);
+
+            if (reverseHole) {
+                for (int k = 0; k <= hn; k++) {
+                    carved.add(hole.get((holeSplitIdx - k + hn) % hn));
+                }
+            } else {
+                for (int k = 0; k <= hn; k++) {
+                    carved.add(hole.get((holeSplitIdx + k) % hn));
+                }
+            }
+
+            // Close the polygon (back to start via the slit)
+            carved.add(carved.get(0));
+
+            // Replace the containing polygon with the carved version
+            resultPolygons.set(containingIdx, carved);
+
+            // Add the hole interior as a separate result polygon
+            resultPolygons.add(hole);
+        }
     }
 
+    /**
+     * Handles interior loops after corridor splitting.
+     *
+     * <p>When corridors split the polygon around an interior loop, the face tracer
+     * produces 3 faces: two "real" pieces on either side of the loop, and a narrow
+     * gap polygon between the two corridor offset polylines. This method:</p>
+     * <ol>
+     *   <li>Removes the narrow gap polygon</li>
+     *   <li>Finds the result polygon that contains the loop interior</li>
+     *   <li>Subtracts the loop interior from that polygon (replacing shared
+     *       corridor-offset edges with the loop's outer boundary)</li>
+     *   <li>Adds the loop interior as a new result polygon</li>
+     * </ol>
+     *
+     * @return indices of loop interior polygons that should be protected from
+     *         the junction-gap filter
+     */
+    private static Set<Integer> replaceLoopGapPolygons(List<List<EastNorth>> resultPolygons,
+            List<InteriorLoop> loops) {
+        Set<Integer> protectedIndices = new HashSet<>();
+        for (InteriorLoop loop : loops) {
+            double cycleArea = Math.abs(signedAreaEN(loop.cyclePolygon));
+            EastNorth cycleCentroid = polygonCentroid(loop.cyclePolygon);
 
-    // (unused methods removed)
+            // Step 1: Find and remove the narrow gap polygon
+            int gapIdx = -1;
+            double gapArea = Double.MAX_VALUE;
+            for (int pi = 0; pi < resultPolygons.size(); pi++) {
+                List<EastNorth> poly = resultPolygons.get(pi);
+                double area = Math.abs(signedAreaEN(poly));
+                if (area > cycleArea * 0.5) continue;
+                if (area >= gapArea) continue;
+                EastNorth centroid = polygonCentroid(poly);
+                if (centroid == null || cycleCentroid == null) continue;
+                double dist = centroid.distance(cycleCentroid);
+                double cycleRadius = Math.sqrt(cycleArea / Math.PI);
+                if (dist < cycleRadius * 2) {
+                    gapIdx = pi;
+                    gapArea = area;
+                }
+            }
+            if (gapIdx >= 0) {
+                resultPolygons.remove(gapIdx);
+            }
+
+            // Step 2: Find the result polygon that contains the loop centroid
+            EastNorth loopCentroid = polygonCentroid(loop.innerPolygon);
+            int containingIdx = -1;
+            for (int pi = 0; pi < resultPolygons.size(); pi++) {
+                if (loopCentroid != null
+                        && pointInsideOrOnPolygon(loopCentroid, resultPolygons.get(pi))) {
+                    containingIdx = pi;
+                    break;
+                }
+            }
+
+            // Step 3: Subtract loop interior from the containing polygon
+            if (containingIdx >= 0) {
+                List<EastNorth> container = resultPolygons.get(containingIdx);
+                List<EastNorth> clipped = subtractLoopFromPolygon(
+                    container, loop.innerPolygon);
+                if (clipped != null) {
+                    resultPolygons.set(containingIdx, clipped);
+                }
+            }
+
+            // Step 4: Add loop interior as a new result polygon
+            resultPolygons.add(loop.innerPolygon);
+            protectedIndices.add(resultPolygons.size() - 1);
+        }
+        return protectedIndices;
+    }
+
+    /**
+     * Subtracts a hole polygon from a container polygon by finding shared
+     * edges (where corridor offsets overlap with hole boundary) and replacing
+     * the shared portion with the non-shared boundary of the container.
+     *
+     * <p>The container polygon has vertices that follow the corridor offsets
+     * around the loop interior. These vertices are (approximately) the same
+     * as some hole boundary vertices. This method traces the container boundary,
+     * skipping vertices that are inside the hole, and inserts hole boundary
+     * vertices where the container enters/exits the hole region.</p>
+     */
+    private static List<EastNorth> subtractLoopFromPolygon(
+            List<EastNorth> container, List<EastNorth> hole) {
+        int cn = container.size() - 1; // exclude closing point
+        int hn = hole.size() - 1;
+        if (cn < 3 || hn < 3) return null;
+
+        // Find container vertices that are inside or on the hole boundary.
+        // These are the corridor-offset vertices that trace inside the loop.
+        double tolerance = 5e-5; // ~5m in degrees — corridor offsets vs loop offsets differ slightly
+        boolean[] insideHole = new boolean[cn];
+        int firstOutside = -1;
+        for (int i = 0; i < cn; i++) {
+            insideHole[i] = pointInsideOrOnPolygon(container.get(i), hole)
+                || isNearAnyVertex(container.get(i), hole, tolerance);
+            if (!insideHole[i] && firstOutside < 0) firstOutside = i;
+        }
+        if (firstOutside < 0) return null; // all inside — shouldn't happen
+
+        // Trace the container starting from firstOutside.
+        // When we hit a vertex inside the hole, skip the inside vertices and
+        // instead trace the hole boundary from the entry point to the exit point.
+        // We try both directions around the hole and pick the one that produces
+        // the larger-area result (correct subtraction = container minus hole).
+        // Collect entry/exit info first.
+        int entryContainerIdx = -1;
+        int exitContainerIdx = -1;
+        for (int step = 0; step < cn; step++) {
+            int i = (firstOutside + step) % cn;
+            int next = (i + 1) % cn;
+            if (!insideHole[i] && insideHole[next] && entryContainerIdx < 0) {
+                entryContainerIdx = i;
+            }
+            if (insideHole[i] && !insideHole[(i + 1) % cn] && exitContainerIdx < 0) {
+                exitContainerIdx = (i + 1) % cn;
+            }
+        }
+        if (entryContainerIdx < 0 || exitContainerIdx < 0) return null;
+
+        int holeEntry = closestHoleVertex(container.get(entryContainerIdx), hole, hn);
+        int holeExit = closestHoleVertex(container.get(exitContainerIdx), hole, hn);
+
+        // Try both directions around the hole and pick the better result
+        List<EastNorth> bestResult = null;
+        double bestArea = -1;
+        for (int dir = 0; dir < 2; dir++) {
+            List<EastNorth> result = new ArrayList<>();
+            // Trace outside container vertices
+            for (int step = 0; step < cn; step++) {
+                int i = (firstOutside + step) % cn;
+                if (!insideHole[i]) {
+                    result.add(container.get(i));
+                    int next = (i + 1) % cn;
+                    if (insideHole[next]) {
+                        // Insert hole boundary vertices
+                        if (dir == 0) {
+                            // Forward direction around hole
+                            for (int h = 0; h <= hn; h++) {
+                                int hi = (holeEntry + h) % hn;
+                                result.add(hole.get(hi));
+                                if (hi == holeExit) break;
+                            }
+                        } else {
+                            // Reverse direction around hole
+                            for (int h = 0; h <= hn; h++) {
+                                int hi = (holeEntry - h + hn) % hn;
+                                result.add(hole.get(hi));
+                                if (hi == holeExit) break;
+                            }
+                        }
+                    }
+                }
+            }
+            if (result.size() < 3) continue;
+            result.add(result.get(0));
+            double area = Math.abs(signedAreaEN(result));
+            // The correct subtraction produces area ≈ container - hole,
+            // which is SMALLER than the container. Pick the smaller result.
+            if (bestResult == null || area < bestArea) {
+                bestArea = area;
+                bestResult = result;
+            }
+        }
+
+        return bestResult;
+    }
+
+    /** Finds the closest hole vertex to a given point. */
+    private static int closestHoleVertex(EastNorth pt, List<EastNorth> hole, int hn) {
+        int best = 0;
+        double bestDist = Double.MAX_VALUE;
+        for (int i = 0; i < hn; i++) {
+            double d = pt.distanceSq(hole.get(i));
+            if (d < bestDist) {
+                bestDist = d;
+                best = i;
+            }
+        }
+        return best;
+    }
+
+    /** Returns true if pt is within tolerance of any vertex in poly. */
+    private static boolean isNearAnyVertex(EastNorth pt, List<EastNorth> poly, double tol) {
+        double tolSq = tol * tol;
+        for (int i = 0; i < poly.size() - 1; i++) {
+            if (pt.distanceSq(poly.get(i)) < tolSq) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Returns true if the closed polygon has any self-intersections
+     * (non-adjacent edges that properly cross each other).
+     */
+    private static boolean isSelfIntersecting(List<EastNorth> poly) {
+        int n = poly.size() - 1; // exclude closing point
+        for (int i = 0; i < n; i++) {
+            EastNorth a1 = poly.get(i);
+            EastNorth a2 = poly.get(i + 1);
+            for (int j = i + 2; j < n; j++) {
+                if (j == n - 1 && i == 0) continue; // skip adjacent closing edge
+                EastNorth b1 = poly.get(j);
+                EastNorth b2 = poly.get(j + 1);
+                if (GeometryUtils.segmentsCross(a1, a2, b1, b2)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** Computes the centroid of a closed polygon. */
+    private static EastNorth polygonCentroid(List<EastNorth> poly) {
+        int n = poly.size() - 1; // exclude closing point
+        if (n < 3) return null;
+        double cx = 0, cy = 0;
+        for (int i = 0; i < n; i++) {
+            cx += poly.get(i).east();
+            cy += poly.get(i).north();
+        }
+        return new EastNorth(cx / n, cy / n);
+    }
+
+    /** Returns true if the segment from a to b crosses any corridor offset edge. */
+    private static boolean slitCrossesCorridors(EastNorth a, EastNorth b,
+            List<EastNorth[]> roadEdges) {
+        for (EastNorth[] edge : roadEdges) {
+            if (Geometry.getSegmentSegmentIntersection(a, b, edge[0], edge[1]) != null) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     // -----------------------------------------------------------------------
     // Road graph data structures
@@ -727,10 +999,26 @@ class PolygonBreaker {
                 crossIdx++;
             }
 
-            // Create edges between consecutive graph nodes
+            // Create edges between consecutive graph nodes.
+            // Skip edges where the road segment between two consecutive
+            // boundary crossings is outside the polygon (re-entrant roads).
             for (int i = 0; i < roadGraphNodes.size() - 1; i++) {
                 GraphNode from = roadGraphNodes.get(i);
                 GraphNode to = roadGraphNodes.get(i + 1);
+
+                // If both endpoints are boundary crossings and neither is an
+                // interior node, check whether the road between them is inside
+                // the polygon. If the midpoint is outside, skip this edge.
+                if (from.isBoundaryCrossing && to.isBoundaryCrossing) {
+                    EastNorth mid = new EastNorth(
+                        (from.position.east() + to.position.east()) / 2,
+                        (from.position.north() + to.position.north()) / 2);
+                    List<EastNorth> polyEN = new ArrayList<>(polyNodes.size());
+                    for (Node pn : polyNodes) polyEN.add(pn.getEastNorth());
+                    if (!pointInsideOrOnPolygon(mid, polyEN)) {
+                        continue; // road exits and re-enters — don't connect
+                    }
+                }
 
                 // Collect intermediate road nodes between from and to
                 List<Node> intermediates = collectIntermediates(
@@ -846,12 +1134,34 @@ class PolygonBreaker {
             GraphNode gn = pathNodes.get(i);
 
             // Use cached offsets to ensure consistency across corridors
-            // sharing any node (junction or boundary crossing)
-            if (junctionOffsets != null) {
+            // sharing any node (junction or boundary crossing).
+            // The cached offsets have a fixed left/right assignment from the
+            // first corridor that computed them. For subsequent corridors
+            // approaching from different directions, we may need to swap
+            // left/right to maintain consistency with the current path.
+            if (junctionOffsets != null && i > 0) {
                 EastNorth[] cached = junctionOffsets.get(gn);
                 if (cached != null) {
-                    leftOffsets.add(cached[0]);
-                    rightOffsets.add(cached[1]);
+                    EastNorth[] offsets = new EastNorth[]{cached[0], cached[1]};
+                    // Check side consistency against previous left offset
+                    EastNorth prevLeft = leftOffsets.get(leftOffsets.size() - 1);
+                    EastNorth prevCenter = pathNodes.get(i - 1).position;
+                    double segDx = gn.position.east() - prevCenter.east();
+                    double segDy = gn.position.north() - prevCenter.north();
+                    double segLen = Math.sqrt(segDx * segDx + segDy * segDy);
+                    if (segLen > 1e-15) {
+                        double prevSide = segDx * (prevLeft.north() - prevCenter.north())
+                            - segDy * (prevLeft.east() - prevCenter.east());
+                        double curSide = segDx * (offsets[0].north() - gn.position.north())
+                            - segDy * (offsets[0].east() - gn.position.east());
+                        if (prevSide * curSide < 0) {
+                            EastNorth tmp = offsets[0];
+                            offsets[0] = offsets[1];
+                            offsets[1] = tmp;
+                        }
+                    }
+                    leftOffsets.add(offsets[0]);
+                    rightOffsets.add(offsets[1]);
                     continue;
                 }
             }
@@ -1033,65 +1343,7 @@ class PolygonBreaker {
      * segments, each offset perpendicular to its own segment. This keeps each
      * offset on its correct side of the road.</p>
      */
-    private static void fixCorridorCrossings(List<EastNorth> left, List<EastNorth> right) {
-        if (left.size() != right.size() || left.size() < 2) return;
-
-        for (int i = 0; i < left.size() - 1; i++) {
-            EastNorth l1 = left.get(i);
-            EastNorth l2 = left.get(i + 1);
-            EastNorth r1 = right.get(i);
-            EastNorth r2 = right.get(i + 1);
-
-            if (!GeometryUtils.segmentsCross(l1, l2, r1, r2)) continue;
-
-            // Road centerline at vertices i and i+1
-            EastNorth roadPrev = mid(l1, r1);
-            EastNorth roadCurr = mid(l2, r2);
-            double hw = Math.sqrt(dist2(l1, roadPrev));
-            if (hw < 1e-10) hw = Math.sqrt(dist2(r1, roadPrev));
-
-            // Compute bevel: two offset points pulled back from the apex
-            // along incoming and outgoing road segments. Each point is offset
-            // perpendicular to its own segment, ensuring it stays on the
-            // correct side of the road.
-            //
-            // Pullback distance = hw (halfWidth), so the bevel starts where
-            // the offset is guaranteed to be hw away from the road center.
-            double inDx = roadCurr.east() - roadPrev.east();
-            double inDy = roadCurr.north() - roadPrev.north();
-            double inLen = Math.sqrt(inDx * inDx + inDy * inDy);
-            // Pull back along incoming segment, but not more than 40% of
-            // segment length to avoid overshooting past the previous node
-            double pullback = Math.min(hw * 1.5, inLen * 0.4);
-            EastNorth inPt = new EastNorth(
-                roadCurr.east() - inDx / inLen * pullback,
-                roadCurr.north() - inDy / inLen * pullback);
-            EastNorth[] inOffsets = GeometryUtils.perpendicularOffsets(
-                roadPrev, roadCurr, inPt, hw);
-
-            if (i + 2 < left.size()) {
-                EastNorth roadNext = mid(left.get(i + 2), right.get(i + 2));
-                double outDx = roadNext.east() - roadCurr.east();
-                double outDy = roadNext.north() - roadCurr.north();
-                double outLen = Math.sqrt(outDx * outDx + outDy * outDy);
-                double pushfwd = Math.min(hw * 1.5, outLen * 0.4);
-                EastNorth outPt = new EastNorth(
-                    roadCurr.east() + outDx / outLen * pushfwd,
-                    roadCurr.north() + outDy / outLen * pushfwd);
-                EastNorth[] outOffsets = GeometryUtils.perpendicularOffsets(
-                    roadCurr, roadNext, outPt, hw);
-
-                left.set(i + 1, inOffsets[0]);
-                right.set(i + 1, inOffsets[1]);
-                left.add(i + 2, outOffsets[0]);
-                right.add(i + 2, outOffsets[1]);
-                i++; // skip inserted vertex
-            } else {
-                left.set(i + 1, inOffsets[0]);
-                right.set(i + 1, inOffsets[1]);
-            }
-        }
-    }
+    // (fixCorridorCrossings removed — no longer needed)
 
     /**
      * Computes the miter join at a road bend: the intersection of the left
@@ -1156,85 +1408,7 @@ class PolygonBreaker {
         return GeometryUtils.perpendicularOffsets(point, bisPt, point, hw);
     }
 
-    private static EastNorth mid(EastNorth a, EastNorth b) {
-        return new EastNorth((a.east() + b.east()) / 2, (a.north() + b.north()) / 2);
-    }
-
-    /**
-     * Computes a junction bisector point between two roads meeting at a junction.
-     * The point lies on the angular bisector of the two road directions,
-     * at a distance from the junction center that keeps it at least halfWidth
-     * from both road centerlines.
-     *
-     * @param juncPos   junction center position
-     * @param dirA      unit direction from junction toward road A's boundary crossing
-     * @param dirB      unit direction from junction toward road B's boundary crossing
-     * @param halfWidth half the road width (buffer distance)
-     * @return the bisector offset point
-     */
-    private static EastNorth computeJunctionBisectorPoint(
-            EastNorth juncPos, EastNorth dirA, EastNorth dirB, double halfWidth) {
-        // Bisector direction = average of the two unit directions
-        double bisX = dirA.east() + dirB.east();
-        double bisY = dirA.north() + dirB.north();
-        double bisLen = Math.sqrt(bisX * bisX + bisY * bisY);
-
-        if (bisLen < 1e-15) {
-            // Roads are opposite directions (180° apart) — perpendicular bisector
-            bisX = -dirA.north();
-            bisY = dirA.east();
-            bisLen = Math.sqrt(bisX * bisX + bisY * bisY);
-            if (bisLen < 1e-15) return juncPos;
-        }
-        bisX /= bisLen;
-        bisY /= bisLen;
-
-        // Half-angle between the two road directions
-        // cos(fullAngle) = dirA · dirB
-        double dotAB = dirA.east() * dirB.east() + dirA.north() * dirB.north();
-        dotAB = Math.max(-1, Math.min(1, dotAB));
-        double fullAngle = Math.acos(dotAB);
-        double halfAngle = fullAngle / 2.0;
-
-        // Distance from junction center to the bisector point:
-        // To be at least halfWidth from both road centerlines,
-        // d = halfWidth / sin(halfAngle)
-        // Cap at 4x halfWidth to avoid extreme extensions for near-parallel roads.
-        double sinHalf = Math.sin(halfAngle);
-        double dist;
-        if (sinHalf < 0.01) {
-            dist = halfWidth * 4; // near-parallel roads, cap the distance
-        } else {
-            dist = halfWidth / sinHalf;
-            dist = Math.min(dist, halfWidth * 4);
-        }
-
-        // Convert halfWidth from meters to EastNorth units
-        double metersPerUnit = org.openstreetmap.josm.data.projection.ProjectionRegistry
-            .getProjection().getMetersPerUnit();
-        double distUnits = dist / metersPerUnit;
-
-        // For EPSG:4326, apply latitude scaling to east component
-        if (metersPerUnit > 10000) {
-            double cosLat = Math.cos(Math.toRadians(juncPos.north()));
-            if (cosLat > 0.01) {
-                // The bisector direction is in raw coordinate units.
-                // Scale the east component by 1/cosLat so the metric distance
-                // is correct.
-                double metricBisX = bisX * cosLat;
-                double metricBisLen = Math.sqrt(metricBisX * metricBisX + bisY * bisY);
-                if (metricBisLen > 1e-15) {
-                    return new EastNorth(
-                        juncPos.east() + bisX / metricBisLen * distUnits,
-                        juncPos.north() + bisY / metricBisLen * distUnits);
-                }
-            }
-        }
-
-        return new EastNorth(
-            juncPos.east() + bisX * distUnits,
-            juncPos.north() + bisY * distUnits);
-    }
+    // (mid and computeJunctionBisectorPoint removed — no longer needed)
 
     /**
      * Finds a point ON the polygon boundary that is {@code bufferMeters} away

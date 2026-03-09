@@ -86,9 +86,9 @@ class BreakPlan {
      */
     static class CrossingPair {
         /** Position of the entry crossing on the polygon boundary. */
-        final BoundaryPosition entry;
+        BoundaryPosition entry;
         /** Position of the exit crossing on the polygon boundary. */
-        final BoundaryPosition exit;
+        BoundaryPosition exit;
         /** Offset polyline on the left side of the road (entry→exit direction). */
         final List<EastNorth> leftOffsets;
         /** Offset polyline on the right side of the road (entry→exit direction). */

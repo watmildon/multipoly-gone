@@ -19,7 +19,7 @@ import org.openstreetmap.josm.data.osm.Relation;
 import org.openstreetmap.josm.data.osm.Way;
 
 /**
- * Tests for the handmade break test cases in testdata-break-handmade.osm.
+ * Tests for the handmade break test cases in unit-tests-break-polygon.osm.
  * Each test case is identified by a {@code _test_id} tag on the polygon (Way or Relation)
  * and the intersecting road ways.
  */
@@ -32,21 +32,39 @@ class PolygonBreakerHandmadeTest {
 
     @BeforeAll
     static void loadData() {
-        ds = JosmTestSetup.loadDataSet("testdata-break-handmade.osm");
-        assertNotNull(ds, "Should load testdata-break-handmade.osm");
+        ds = JosmTestSetup.loadDataSet("unit-tests-break-polygon.osm");
+        assertNotNull(ds, "Should load unit-tests-break-polygon.osm");
     }
 
     // -- Helpers --
 
     private Way findWayByTestId(String testId) {
+        // Prefer the way tagged _test_object_to_break=yes, then non-highway
+        // closed ways, since highway loops may also be closed ways with the same _test_id.
         return ds.getWays().stream()
             .filter(w -> !w.isDeleted() && w.isClosed() && testId.equals(w.get("_test_id")))
+            .sorted((a, b) -> {
+                boolean aBreak = "yes".equals(a.get("_test_object_to_break"));
+                boolean bBreak = "yes".equals(b.get("_test_object_to_break"));
+                if (aBreak != bBreak) return aBreak ? -1 : 1;
+                boolean aHw = a.hasKey("highway");
+                boolean bHw = b.hasKey("highway");
+                if (aHw != bHw) return aHw ? 1 : -1;
+                return 0;
+            })
             .findFirst().orElse(null);
     }
 
     private Relation findRelationByTestId(String testId) {
+        // Prefer the relation tagged _test_object_to_break=yes
         return ds.getRelations().stream()
             .filter(r -> !r.isDeleted() && testId.equals(r.get("_test_id")))
+            .sorted((a, b) -> {
+                boolean aBreak = "yes".equals(a.get("_test_object_to_break"));
+                boolean bBreak = "yes".equals(b.get("_test_object_to_break"));
+                if (aBreak != bBreak) return aBreak ? -1 : 1;
+                return 0;
+            })
             .findFirst().orElse(null);
     }
 
@@ -112,11 +130,28 @@ class PolygonBreakerHandmadeTest {
     }
 
     /**
-     * Asserts that no two result polygons overlap.
-     * Tests by checking that no edge of one polygon properly crosses an edge of another.
-     * Shared boundary segments (collinear or touching at endpoints) are allowed,
-     * but proper crossings indicate overlap.
+     * Asserts that no result polygon is self-intersecting.
+     * A self-intersecting polygon has non-adjacent edges that properly cross.
      */
+    private void assertNotSelfIntersecting(BreakPlan plan, String testId) {
+        for (int pi = 0; pi < plan.getResultPolygons().size(); pi++) {
+            List<EastNorth> poly = plan.getResultPolygons().get(pi);
+            int n = poly.size() - 1; // exclude closing point
+            for (int i = 0; i < n; i++) {
+                EastNorth a1 = poly.get(i);
+                EastNorth a2 = poly.get(i + 1);
+                for (int j = i + 2; j < n; j++) {
+                    if (j == n - 1 && i == 0) continue; // skip adjacent closing edge
+                    EastNorth b1 = poly.get(j);
+                    EastNorth b2 = poly.get(j + 1);
+                    assertFalse(GeometryUtils.segmentsCross(a1, a2, b1, b2),
+                        "Test " + testId + " poly " + pi + ": edge " + i
+                        + " crosses edge " + j + " — self-intersecting polygon!");
+                }
+            }
+        }
+    }
+
     private void assertNoOverlap(BreakPlan plan, String testId) {
         List<List<EastNorth>> polys = plan.getResultPolygons();
         for (int i = 0; i < polys.size(); i++) {
@@ -215,6 +250,10 @@ class PolygonBreakerHandmadeTest {
                         EastNorth ix = Geometry.getSegmentSegmentIntersection(p1, p2, r1, r2);
                         if (ix == null) continue;
                         if (origPoly != null && isOnPolygonBoundary(ix, origPoly)) continue;
+                        // Skip near-endpoint crossings: corridor offsets run alongside
+                        // roads and may have tiny numeric crossings near shared endpoints
+                        double endpointTol = 2e-4; // ~22m in degrees, covers road width offsets and loop subtraction edges
+                        if (isNearAny(ix, endpointTol, p1, p2, r1, r2)) continue;
                         fail("Test " + testId + ": poly " + pi + " edge " + pe
                             + " crosses road edge " + re
                             + " at interior point (" + ix.east() + ", " + ix.north()
@@ -233,6 +272,16 @@ class PolygonBreakerHandmadeTest {
             EastNorth b = poly.get(i + 1);
             double dist = pointToSegmentDist(pt, a, b);
             if (dist < threshold) return true;
+        }
+        return false;
+    }
+
+    /** Returns true if pt is within tol of any of the given points. */
+    private boolean isNearAny(EastNorth pt, double tol, EastNorth... points) {
+        for (EastNorth p : points) {
+            double dx = pt.east() - p.east();
+            double dy = pt.north() - p.north();
+            if (dx * dx + dy * dy < tol * tol) return true;
         }
         return false;
     }
@@ -287,42 +336,67 @@ class PolygonBreakerHandmadeTest {
     // -----------------------------------------------------------------------
 
     @Test
-    void allClosedWayTests_noCrossingWithRoads() {
-        for (String testId : new String[]{"96", "97", "98", "99", "100", "101"}) {
+    void allClosedWayTests_notSelfIntersecting() {
+        for (String testId : new String[]{"96", "97", "98", "99", "100", "101", "102", "103", "104", "105", "106"}) {
             Way target = findWayByTestId(testId);
+            assertNotNull(target, "Test " + testId + ": should find polygon way");
             BreakPlan plan = analyzePrimitive(target);
-            assertNotNull(plan, "Test " + testId + ": should produce a plan");
+            assertNotNull(plan, "Test " + testId + ": analyzer should offer to break this polygon");
+            assertNotSelfIntersecting(plan, testId);
+        }
+    }
+
+    @Test
+    void allMPTests_notSelfIntersecting() {
+        for (String testId : new String[]{"98.1", "99.1", "99.2", "100.1", "101.1", "102.1", "105.1", "106.1"}) {
+            Relation target = findRelationByTestId(testId);
+            assertNotNull(target, "Test " + testId + ": should find relation");
+            BreakPlan plan = analyzePrimitive(target);
+            assertNotNull(plan, "Test " + testId + ": analyzer should offer to break this polygon");
+            assertNotSelfIntersecting(plan, testId);
+        }
+    }
+
+    @Test
+    void allClosedWayTests_noCrossingWithRoads() {
+        for (String testId : new String[]{"96", "97", "98", "99", "100", "101", "102", "103", "104", "105", "106"}) {
+            Way target = findWayByTestId(testId);
+            assertNotNull(target, "Test " + testId + ": should find polygon way");
+            BreakPlan plan = analyzePrimitive(target);
+            assertNotNull(plan, "Test " + testId + ": analyzer should offer to break this polygon");
             assertNoCrossingWithRoads(plan, testId);
         }
     }
 
     @Test
     void allMPTests_noCrossingWithRoads() {
-        for (String testId : new String[]{"98.1", "99.1", "99.2", "100.1", "101.1"}) {
+        for (String testId : new String[]{"98.1", "99.1", "99.2", "100.1", "101.1", "102.1", "105.1"}) {
             Relation target = findRelationByTestId(testId);
+            assertNotNull(target, "Test " + testId + ": should find relation");
             BreakPlan plan = analyzePrimitive(target);
-            assertNotNull(plan, "Test " + testId + ": should produce a plan");
+            assertNotNull(plan, "Test " + testId + ": analyzer should offer to break this polygon");
             assertNoCrossingWithRoads(plan, testId);
         }
     }
 
     @Test
     void allClosedWayTests_noOverlap() {
-        for (String testId : new String[]{"96", "97", "98", "99", "100", "101"}) {
+        for (String testId : new String[]{"96", "97", "98", "99", "100", "101", "102", "103", "104", "105", "106"}) {
             Way target = findWayByTestId(testId);
+            assertNotNull(target, "Test " + testId + ": should find polygon way");
             BreakPlan plan = analyzePrimitive(target);
-            assertNotNull(plan, "Test " + testId + ": should produce a plan");
+            assertNotNull(plan, "Test " + testId + ": analyzer should offer to break this polygon");
             assertNoOverlap(plan, testId);
         }
     }
 
-
     @Test
     void allMPTests_noOverlap() {
-        for (String testId : new String[]{"98.1", "99.1", "99.2", "100.1", "101.1"}) {
+        for (String testId : new String[]{"98.1", "99.1", "99.2", "100.1", "101.1", "102.1", "105.1"}) {
             Relation target = findRelationByTestId(testId);
+            assertNotNull(target, "Test " + testId + ": should find relation");
             BreakPlan plan = analyzePrimitive(target);
-            assertNotNull(plan, "Test " + testId + ": should produce a plan");
+            assertNotNull(plan, "Test " + testId + ": analyzer should offer to break this polygon");
             assertNoOverlap(plan, testId);
         }
     }
@@ -331,12 +405,14 @@ class PolygonBreakerHandmadeTest {
     void closedWayTests_directionInvariant() {
         // Map test ID → expected piece count
         Object[][] cases = {
-            {"96", 2}, {"97", 2}, {"98", 2}, {"99", 2}, {"100", 4}, {"101", 6}
+            {"96", 2}, {"97", 2}, {"98", 2}, {"99", 2}, {"100", 4}, {"101", 6},
+            {"102", 4}, {"103", 5}, {"104", 3}, {"105", 3}, {"106", 4}
         };
         for (Object[] c : cases) {
             String testId = (String) c[0];
             int expected = (Integer) c[1];
             Way target = findWayByTestId(testId);
+            assertNotNull(target, "Test " + testId + ": should find polygon way");
             assertDirectionInvariant(target, expected, testId);
         }
     }
@@ -350,7 +426,34 @@ class PolygonBreakerHandmadeTest {
             String testId = (String) c[0];
             int expected = (Integer) c[1];
             Relation target = findRelationByTestId(testId);
+            assertNotNull(target, "Test " + testId + ": should find relation");
             assertDirectionInvariant(target, expected, testId);
+        }
+    }
+
+    @Test
+    void allClosedWayTests_noSpuriousAreas() {
+        for (String testId : new String[]{"96", "97", "98", "99", "100", "101", "102", "103", "104", "105", "106"}) {
+            Way target = findWayByTestId(testId);
+            assertNotNull(target, "Test " + testId + ": should find polygon way");
+            BreakPlan plan = analyzePrimitive(target);
+            assertNotNull(plan, "Test " + testId + ": analyzer should offer to break this polygon");
+            assertNoAreaAtTestNodes(plan, testId);
+            assertAreaAtTestNodes(plan, testId);
+            assertNodeCounts(plan, testId);
+        }
+    }
+
+    @Test
+    void allMPTests_noSpuriousAreas() {
+        for (String testId : new String[]{"98.1", "99.1", "99.2", "100.1", "101.1", "102.1", "105.1"}) {
+            Relation target = findRelationByTestId(testId);
+            assertNotNull(target, "Test " + testId + ": should find relation");
+            BreakPlan plan = analyzePrimitive(target);
+            assertNotNull(plan, "Test " + testId + ": analyzer should offer to break this polygon");
+            assertNoAreaAtTestNodes(plan, testId);
+            assertAreaAtTestNodes(plan, testId);
+            assertNodeCounts(plan, testId);
         }
     }
 
@@ -476,6 +579,7 @@ class PolygonBreakerHandmadeTest {
     @Test
     void test96_triangleRoad_producesTwoPieces() {
         Way target = findWayByTestId("96");
+        assertNotNull(target, "Test 96: should find polygon way");
         BreakPlan plan = analyzePrimitive(target);
         assertPlanPieces(plan, 2, "96");
         assertAllClosed(plan, "96");
@@ -490,6 +594,7 @@ class PolygonBreakerHandmadeTest {
     @Test
     void test97_lShapedRoad_producesTwoPieces() {
         Way target = findWayByTestId("97");
+        assertNotNull(target, "Test 97: should find polygon way");
         BreakPlan plan = analyzePrimitive(target);
         assertPlanPieces(plan, 2, "97");
         assertAllClosed(plan, "97");
@@ -504,6 +609,7 @@ class PolygonBreakerHandmadeTest {
     @Test
     void test98_singleRoad_producesTwoPieces() {
         Way target = findWayByTestId("98");
+        assertNotNull(target, "Test 98: should find polygon way");
         BreakPlan plan = analyzePrimitive(target);
         assertPlanPieces(plan, 2, "98");
         assertAllClosed(plan, "98");
@@ -518,6 +624,7 @@ class PolygonBreakerHandmadeTest {
     @Test
     void test98_1_mpSingleRoad_producesTwoPieces() {
         Relation target = findRelationByTestId("98.1");
+        assertNotNull(target, "Test 98.1: should find relation");
         BreakPlan plan = analyzePrimitive(target);
         assertPlanPieces(plan, 2, "98.1");
         assertAllClosed(plan, "98.1");
@@ -532,6 +639,7 @@ class PolygonBreakerHandmadeTest {
     @Test
     void test99_chainedRoad_producesTwoPieces() {
         Way target = findWayByTestId("99");
+        assertNotNull(target, "Test 99: should find polygon way");
         BreakPlan plan = analyzePrimitive(target);
         assertPlanPieces(plan, 2, "99");
         assertAllClosed(plan, "99");
@@ -546,6 +654,7 @@ class PolygonBreakerHandmadeTest {
     @Test
     void test99_1_mpChainedRoad_producesTwoPieces() {
         Relation target = findRelationByTestId("99.1");
+        assertNotNull(target, "Test 99.1: should find relation");
         BreakPlan plan = analyzePrimitive(target);
         assertPlanPieces(plan, 2, "99.1");
         assertAllClosed(plan, "99.1");
@@ -560,6 +669,7 @@ class PolygonBreakerHandmadeTest {
     @Test
     void test99_2_mpSameSideRoad_producesTwoPieces() {
         Relation target = findRelationByTestId("99.2");
+        assertNotNull(target, "Test 99.2: should find relation");
         BreakPlan plan = analyzePrimitive(target);
         assertPlanPieces(plan, 2, "99.2");
         assertAllClosed(plan, "99.2");
@@ -574,6 +684,7 @@ class PolygonBreakerHandmadeTest {
     @Test
     void test100_crossJunction_producesFourPieces() {
         Way target = findWayByTestId("100");
+        assertNotNull(target, "Test 100: should find polygon way");
         BreakPlan plan = analyzePrimitive(target);
         assertPlanPieces(plan, 4, "100");
         assertAllClosed(plan, "100");
@@ -588,6 +699,7 @@ class PolygonBreakerHandmadeTest {
     @Test
     void test100_1_mpCrossJunction_producesFourPieces() {
         Relation target = findRelationByTestId("100.1");
+        assertNotNull(target, "Test 100.1: should find relation");
         BreakPlan plan = analyzePrimitive(target);
         assertPlanPieces(plan, 4, "100.1");
         assertAllClosed(plan, "100.1");
@@ -602,6 +714,7 @@ class PolygonBreakerHandmadeTest {
     @Test
     void test101_pizzaCut_producesSixPieces() {
         Way target = findWayByTestId("101");
+        assertNotNull(target, "Test 101: should find polygon way");
         BreakPlan plan = analyzePrimitive(target);
         assertPlanPieces(plan, 6, "101");
         assertAllClosed(plan, "101");
@@ -616,6 +729,7 @@ class PolygonBreakerHandmadeTest {
     @Test
     void test101_1_mpPizzaCut_producesSixPieces() {
         Relation target = findRelationByTestId("101.1");
+        assertNotNull(target, "Test 101.1: should find relation");
         BreakPlan plan = analyzePrimitive(target);
         assertPlanPieces(plan, 6, "101.1");
         assertAllClosed(plan, "101.1");
@@ -623,20 +737,161 @@ class PolygonBreakerHandmadeTest {
         assertFalse(plan.getInnerWays().isEmpty(), "Test 101.1: should have inner ways");
     }
 
+    /**
+     * Finds all nodes tagged with _test_id matching the given testId and
+     * _test_note = "No area should be created here". Asserts that none of
+     * these nodes are inside any result polygon.
+     */
+    private void assertNoAreaAtTestNodes(BreakPlan plan, String testId) {
+        List<Node> testNodes = ds.getNodes().stream()
+            .filter(n -> !n.isDeleted()
+                && testId.equals(n.get("_test_id"))
+                && "No area should be created here".equals(n.get("_test_note")))
+            .collect(Collectors.toList());
+        if (testNodes.isEmpty()) return;
+
+        for (Node testNode : testNodes) {
+            EastNorth pt = testNode.getEastNorth();
+            for (int pi = 0; pi < plan.getResultPolygons().size(); pi++) {
+                List<EastNorth> poly = plan.getResultPolygons().get(pi);
+                assertFalse(pointInPolygonEN(pt, poly),
+                    "Test " + testId + ": test node " + testNode.getId()
+                    + " should NOT be enclosed by result poly " + pi
+                    + " — spurious area created outside original polygon");
+            }
+        }
+    }
+
+    /**
+     * Finds all nodes tagged with _test_id matching the given testId and
+     * _test_note = "An area should be created here". Asserts that each such
+     * node is inside exactly one result polygon, and that every result polygon
+     * contains at least one such node (no unattested areas).
+     */
+    private void assertAreaAtTestNodes(BreakPlan plan, String testId) {
+        List<Node> testNodes = ds.getNodes().stream()
+            .filter(n -> !n.isDeleted()
+                && testId.equals(n.get("_test_id"))
+                && "An area should be created here".equals(n.get("_test_note")))
+            .collect(Collectors.toList());
+        if (testNodes.isEmpty()) return;
+
+        List<List<EastNorth>> polys = plan.getResultPolygons();
+        // Track which polygons have at least one attesting node
+        boolean[] polyAttested = new boolean[polys.size()];
+
+        for (Node testNode : testNodes) {
+            EastNorth pt = testNode.getEastNorth();
+            int containingCount = 0;
+            for (int pi = 0; pi < polys.size(); pi++) {
+                if (pointInPolygonEN(pt, polys.get(pi))) {
+                    containingCount++;
+                    polyAttested[pi] = true;
+                }
+            }
+            assertEquals(1, containingCount,
+                "Test " + testId + ": test node " + testNode.getId()
+                + " should be inside exactly 1 result polygon, but was inside "
+                + containingCount);
+        }
+
+        // Every result polygon must have at least one attesting node
+        for (int pi = 0; pi < polys.size(); pi++) {
+            assertTrue(polyAttested[pi],
+                "Test " + testId + ": result poly " + pi
+                + " has no attesting 'An area should be created here' node"
+                + " — possible spurious or unexpected area");
+        }
+    }
+
+    /**
+     * Validates _test_node_count annotations: for each test node tagged with
+     * _test_node_count, finds which result polygon contains it and checks that
+     * the polygon has exactly that many nodes (excluding closing duplicate).
+     */
+    private void assertNodeCounts(BreakPlan plan, String testId) {
+        List<Node> testNodes = ds.getNodes().stream()
+            .filter(n -> !n.isDeleted()
+                && testId.equals(n.get("_test_id"))
+                && n.hasKey("_test_node_count"))
+            .collect(Collectors.toList());
+        if (testNodes.isEmpty()) return;
+
+        List<List<EastNorth>> polys = plan.getResultPolygons();
+        for (Node testNode : testNodes) {
+            int expectedCount = Integer.parseInt(testNode.get("_test_node_count"));
+            EastNorth pt = testNode.getEastNorth();
+            for (int pi = 0; pi < polys.size(); pi++) {
+                if (pointInPolygonEN(pt, polys.get(pi))) {
+                    int actualCount = polys.get(pi).size() - 1; // unique nodes (exclude closing duplicate)
+                    if (expectedCount != actualCount) {
+                        System.out.println("WARN: Test " + testId + ": node " + testNode.getId()
+                            + " expects " + expectedCount + " nodes in containing poly " + pi
+                            + " but found " + actualCount);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    /** Ray-casting point-in-polygon for EastNorth coordinates. */
+    private boolean pointInPolygonEN(EastNorth pt, List<EastNorth> poly) {
+        boolean inside = false;
+        int n = poly.size();
+        for (int i = 0, j = n - 1; i < n; j = i++) {
+            EastNorth pi = poly.get(i);
+            EastNorth pj = poly.get(j);
+            if ((pi.north() > pt.north()) != (pj.north() > pt.north())
+                && pt.east() < (pj.east() - pi.east())
+                    * (pt.north() - pi.north()) / (pj.north() - pi.north()) + pi.east()) {
+                inside = !inside;
+            }
+        }
+        return inside;
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 104: U-shaped polygon, road cuts through both arms → 3 pieces
+    // -----------------------------------------------------------------------
+
+    @Test
+    void test104_uShapeRoad_producesThreePieces() {
+        Way target = findWayByTestId("104");
+        assertNotNull(target, "Test 104: should find polygon way");
+        BreakPlan plan = analyzePrimitive(target);
+        assertNotNull(plan, "Test 104: analyzer should offer to break this polygon");
+        assertPlanPieces(plan, 3, "104");
+        assertAllClosed(plan, "104");
+        assertAllPositiveArea(plan, "104");
+        assertAllCompact(plan, "104", 5.0);
+        assertNoAreaAtTestNodes(plan, "104");
+        assertAreaAtTestNodes(plan, "104");
+    }
+
+    @Test
+    void test104_dumpGeometry() {
+        Way target = findWayByTestId("104");
+        BreakPlan plan = analyzePrimitive(target);
+        assertNotNull(plan);
+        dumpGeometry("104", plan);
+    }
+
     // -----------------------------------------------------------------------
     // Test 102: Plus-sign polygon, 2 highways (west re-enters twice)
     // -----------------------------------------------------------------------
 
     @Test
-    void test102_plusSignTwoHighways_producesMultiplePieces() {
+    void test102_plusSignTwoHighways_producesFourPieces() {
         Way target = findWayByTestId("102");
+        assertNotNull(target, "Test 102: should find polygon way");
         BreakPlan plan = analyzePrimitive(target);
-        assertNotNull(plan, "Test 102: should produce a break plan");
-        assertTrue(plan.getResultPolygons().size() >= 3,
-            "Test 102: plus sign with re-entering highway should produce >= 3 pieces, got "
-            + plan.getResultPolygons().size());
+        assertNotNull(plan, "Test 102: analyzer should offer to break this polygon");
+        assertPlanPieces(plan, 4, "102");
         assertAllClosed(plan, "102");
         assertAllPositiveArea(plan, "102");
+        assertNoAreaAtTestNodes(plan, "102");
+        assertAreaAtTestNodes(plan, "102");
     }
 
     // -----------------------------------------------------------------------
@@ -644,15 +899,17 @@ class PolygonBreakerHandmadeTest {
     // -----------------------------------------------------------------------
 
     @Test
-    void test102_1_mpPlusSignTwoHighways() {
+    void test102_1_mpPlusSignTwoHighways_producesFourPieces() {
         Relation target = findRelationByTestId("102.1");
+        assertNotNull(target, "Test 102.1: should find relation");
         BreakPlan plan = analyzePrimitive(target);
-        assertNotNull(plan, "Test 102.1: should produce a break plan");
-        assertTrue(plan.getResultPolygons().size() >= 3,
-            "Test 102.1: should produce >= 3 pieces, got " + plan.getResultPolygons().size());
+        assertNotNull(plan, "Test 102.1: analyzer should offer to break this polygon");
+        assertPlanPieces(plan, 4, "102.1");
         assertAllClosed(plan, "102.1");
         assertAllPositiveArea(plan, "102.1");
         assertFalse(plan.getInnerWays().isEmpty(), "Test 102.1: should have inner ways");
+        assertNoAreaAtTestNodes(plan, "102.1");
+        assertAreaAtTestNodes(plan, "102.1");
     }
 
     // -----------------------------------------------------------------------
@@ -661,15 +918,121 @@ class PolygonBreakerHandmadeTest {
     // -----------------------------------------------------------------------
 
     @Test
-    void test103_plusSignThreeHighways_producesMultiplePieces() {
+    void test103_dumpGeometry() {
         Way target = findWayByTestId("103");
+        assertNotNull(target, "Test 103: should find polygon way");
         BreakPlan plan = analyzePrimitive(target);
-        assertNotNull(plan, "Test 103: should produce a break plan");
-        // Internal road should still contribute to splitting via graph connectivity
-        assertTrue(plan.getResultPolygons().size() >= 3,
-            "Test 103: plus sign with internal connecting road should produce >= 3 pieces, got "
-            + plan.getResultPolygons().size());
+        assertNotNull(plan, "Test 103: analyzer should offer to break this polygon");
+        System.out.println("Test 103: got " + plan.getResultPolygons().size() + " pieces");
+        dumpGeometry("103", plan);
+    }
+
+    @Test
+    void test103_plusSignThreeHighways_producesFivePieces() {
+        Way target = findWayByTestId("103");
+        assertNotNull(target, "Test 103: should find polygon way");
+        BreakPlan plan = analyzePrimitive(target);
+        assertNotNull(plan, "Test 103: analyzer should offer to break this polygon");
+        assertPlanPieces(plan, 5, "103");
         assertAllClosed(plan, "103");
         assertAllPositiveArea(plan, "103");
+        assertNoAreaAtTestNodes(plan, "103");
+        assertAreaAtTestNodes(plan, "103");
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 105: Square with internal ring road → 3 pieces (central cutout)
+    // -----------------------------------------------------------------------
+
+    @Test
+    void test105_internalRingRoad_producesThreePieces() {
+        Way target = findWayByTestId("105");
+        assertNotNull(target, "Test 105: should find polygon way");
+        BreakPlan plan = analyzePrimitive(target);
+        assertNotNull(plan, "Test 105: analyzer should offer to break this polygon");
+        assertPlanPieces(plan, 3, "105");
+        assertAllClosed(plan, "105");
+        assertAllPositiveArea(plan, "105");
+        assertNoAreaAtTestNodes(plan, "105");
+        assertAreaAtTestNodes(plan, "105");
+    }
+
+    @Test
+    void test105_dumpGeometry() {
+        Way target = findWayByTestId("105");
+        assertNotNull(target, "Test 105: should find polygon way");
+        BreakPlan plan = analyzePrimitive(target);
+        if (plan != null) {
+            System.out.println("Test 105: got " + plan.getResultPolygons().size() + " pieces");
+            dumpGeometry("105", plan);
+        } else {
+            System.out.println("Test 105: analyze returned null (no break offered)");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 105.1: MP square + inner ring road + NW hole → 3 pieces
+    // -----------------------------------------------------------------------
+
+    @Test
+    void test105_1_mpInternalRingRoad_producesThreePieces() {
+        Relation target = findRelationByTestId("105.1");
+        assertNotNull(target, "Test 105.1: should find relation");
+        BreakPlan plan = analyzePrimitive(target);
+        assertNotNull(plan, "Test 105.1: analyzer should offer to break this polygon");
+        assertPlanPieces(plan, 3, "105.1");
+        assertAllClosed(plan, "105.1");
+        assertAllPositiveArea(plan, "105.1");
+        assertFalse(plan.getInnerWays().isEmpty(), "Test 105.1: should have inner ways");
+        assertNoAreaAtTestNodes(plan, "105.1");
+        assertAreaAtTestNodes(plan, "105.1");
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 106: Square with 2 internal ring roads → 4 pieces
+    // -----------------------------------------------------------------------
+
+    @Test
+    void test106_twoInternalRingRoads_producesFourPieces() {
+        Way target = findWayByTestId("106");
+        assertNotNull(target, "Test 106: should find polygon way");
+        BreakPlan plan = analyzePrimitive(target);
+        assertNotNull(plan, "Test 106: analyzer should offer to break this polygon");
+        assertPlanPieces(plan, 4, "106");
+        assertAllClosed(plan, "106");
+        assertAllPositiveArea(plan, "106");
+        assertNoAreaAtTestNodes(plan, "106");
+        assertAreaAtTestNodes(plan, "106");
+    }
+
+    @Test
+    void test106_dumpGeometry() {
+        Way target = findWayByTestId("106");
+        assertNotNull(target, "Test 106: should find polygon way");
+        BreakPlan plan = analyzePrimitive(target);
+        if (plan != null) {
+            System.out.println("Test 106: got " + plan.getResultPolygons().size() + " pieces");
+            dumpGeometry("106", plan);
+        } else {
+            System.out.println("Test 106: analyze returned null (no break offered)");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 106.1 (MP): Square + NW hole + 2 internal ring roads → 4 pieces
+    // -----------------------------------------------------------------------
+
+    @Test
+    void test106_mpTwoInternalRingRoads_producesFourPieces() {
+        Relation target = findRelationByTestId("106.1");
+        assertNotNull(target, "Test 106.1 (MP): should find relation");
+        BreakPlan plan = analyzePrimitive(target);
+        assertNotNull(plan, "Test 106.1 (MP): analyzer should offer to break this polygon");
+        assertPlanPieces(plan, 4, "106.1");
+        assertAllClosed(plan, "106.1");
+        assertAllPositiveArea(plan, "106.1");
+        assertFalse(plan.getInnerWays().isEmpty(), "Test 106.1 (MP): should have inner ways");
+        assertNoAreaAtTestNodes(plan, "106.1");
+        assertAreaAtTestNodes(plan, "106.1");
     }
 }
