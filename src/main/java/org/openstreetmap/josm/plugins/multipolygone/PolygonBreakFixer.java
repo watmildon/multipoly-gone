@@ -77,7 +77,9 @@ class PolygonBreakFixer {
 
         // Create new outer ways for each sub-polygon
         List<Way> newOuterWays = new ArrayList<>();
-        for (List<EastNorth> subPoly : plan.getResultPolygons()) {
+        for (BreakPlan.ResultPolygon resultPoly : plan.getResultPolygons()) {
+            List<EastNorth> subPoly = resultPoly.coordinates;
+            List<Node> reusedNodes = resultPoly.reusedNodes;
             if (subPoly.size() < 4) continue;
 
             List<Node> wayNodes = new ArrayList<>();
@@ -85,6 +87,9 @@ class PolygonBreakFixer {
                 if (i == subPoly.size() - 1 && !wayNodes.isEmpty()) {
                     // Closure point: reuse the first node so JOSM sees a closed way
                     wayNodes.add(wayNodes.get(0));
+                } else if (reusedNodes.get(i) != null) {
+                    // Reuse existing node from original polygon
+                    wayNodes.add(reusedNodes.get(i));
                 } else {
                     LatLon ll = ProjectionRegistry.getProjection().eastNorth2latlon(subPoly.get(i));
                     Node node = new Node(ll);

@@ -41,38 +41,18 @@ class DebugBreakRoadNetwork {
         System.out.println("\nCorridors: " + plan.getCorridors().size());
         for (int c = 0; c < plan.getCorridors().size(); c++) {
             BreakPlan.RoadCorridor cor = plan.getCorridors().get(c);
-            System.out.printf("  Corridor %d: %d ways, width=%.1fm, %d pairs%n",
-                c, cor.getSourceWays().size(), cor.getWidthMeters(),
-                cor.getCrossingPairs().size());
+            System.out.printf("  Corridor %d: %d ways, width=%.1fm%n",
+                c, cor.getSourceWays().size(), cor.getWidthMeters());
             for (Way w : cor.getSourceWays()) {
                 String name = w.get("name");
                 System.out.printf("    Way: %s name=%s%n", w,
                     name != null ? name : "(unnamed)");
             }
-            for (int p = 0; p < cor.getCrossingPairs().size(); p++) {
-                BreakPlan.CrossingPair pair = cor.getCrossingPairs().get(p);
-                System.out.printf("    Pair %d: entry seg=%d t=%.6f pos=(%.8f,%.8f)%n",
-                    p, pair.entry.segmentIndex, pair.entry.t,
-                    pair.entry.point.east(), pair.entry.point.north());
-                System.out.printf("            exit  seg=%d t=%.6f pos=(%.8f,%.8f)%n",
-                    pair.exit.segmentIndex, pair.exit.t,
-                    pair.exit.point.east(), pair.exit.point.north());
-                System.out.println("    Left offsets (" + pair.leftOffsets.size() + "):");
-                for (int li = 0; li < pair.leftOffsets.size(); li++) {
-                    EastNorth pt = pair.leftOffsets.get(li);
-                    System.out.printf("      [%d] (%.8f, %.8f)%n", li, pt.east(), pt.north());
-                }
-                System.out.println("    Right offsets (" + pair.rightOffsets.size() + "):");
-                for (int ri = 0; ri < pair.rightOffsets.size(); ri++) {
-                    EastNorth pt = pair.rightOffsets.get(ri);
-                    System.out.printf("      [%d] (%.8f, %.8f)%n", ri, pt.east(), pt.north());
-                }
-            }
         }
 
-        System.out.println("\nResult polygons: " + plan.getResultPolygons().size());
-        for (int i = 0; i < plan.getResultPolygons().size(); i++) {
-            List<EastNorth> poly = plan.getResultPolygons().get(i);
+        System.out.println("\nResult polygons: " + plan.getResultCoordinates().size());
+        for (int i = 0; i < plan.getResultCoordinates().size(); i++) {
+            List<EastNorth> poly = plan.getResultCoordinates().get(i);
             double area = computeSignedArea(poly);
             EastNorth first = poly.get(0);
             EastNorth last = poly.get(poly.size() - 1);

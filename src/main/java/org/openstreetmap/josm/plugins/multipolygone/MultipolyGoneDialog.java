@@ -1015,15 +1015,15 @@ public class MultipolyGoneDialog extends ToggleDialog
             JLabel label = (JLabel) super.getListCellRendererComponent(
                 jlist, value, index, isSelected, cellHasFocus);
             if (value instanceof BreakPlan.RoadCorridor corridor) {
-                Way road = corridor.getRoad();
-                String highway = road.get("highway");
-                String name = road.get("name");
+                Way road = corridor.getPrimaryWay();
+                String highway = road != null ? road.get("highway") : "?";
+                String name = road != null ? road.get("name") : null;
                 String text = "highway=" + highway;
                 if (name != null) {
                     text = name + " (" + text + ")";
                 }
                 text += " \u2014 " + corridor.getWidthMeters() + "m wide, "
-                    + corridor.getCrossingPairs().size() + " crossing(s)";
+                    + corridor.getSourceWays().size() + " way(s)";
                 label.setText(text);
             }
             return label;

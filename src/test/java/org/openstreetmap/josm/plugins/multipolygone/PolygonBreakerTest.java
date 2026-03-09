@@ -43,7 +43,7 @@ class PolygonBreakerTest {
         BreakPlan plan = PolygonBreaker.analyze(forest, ds);
         assertNotNull(plan, "Should produce a break plan");
         assertEquals(2, plan.getCorridors().size(), "Should find 2 intersecting roads");
-        assertEquals(3, plan.getResultPolygons().size(),
+        assertEquals(3, plan.getResultCoordinates().size(),
             "Two roads should split the polygon into 3 pieces");
     }
 
@@ -54,8 +54,8 @@ class PolygonBreakerTest {
         BreakPlan plan = PolygonBreaker.analyze(forest, ds);
         assertNotNull(plan);
 
-        for (int i = 0; i < plan.getResultPolygons().size(); i++) {
-            List<EastNorth> poly = plan.getResultPolygons().get(i);
+        for (int i = 0; i < plan.getResultCoordinates().size(); i++) {
+            List<EastNorth> poly = plan.getResultCoordinates().get(i);
             assertTrue(poly.size() >= 4,
                 "Sub-polygon " + i + " should have at least 4 points (triangle + closure)");
             EastNorth first = poly.get(0);
@@ -72,8 +72,8 @@ class PolygonBreakerTest {
         BreakPlan plan = PolygonBreaker.analyze(forest, ds);
         assertNotNull(plan);
 
-        for (int i = 0; i < plan.getResultPolygons().size(); i++) {
-            List<EastNorth> poly = plan.getResultPolygons().get(i);
+        for (int i = 0; i < plan.getResultCoordinates().size(); i++) {
+            List<EastNorth> poly = plan.getResultCoordinates().get(i);
             double area = computeSignedAreaEN(poly);
             assertTrue(Math.abs(area) > 1e-6,
                 "Sub-polygon " + i + " should have non-trivial area, got " + area);
@@ -101,8 +101,8 @@ class PolygonBreakerTest {
                     (n1.east() + n2.east()) / 2,
                     (n1.north() + n2.north()) / 2);
 
-                for (int pi = 0; pi < plan.getResultPolygons().size(); pi++) {
-                    List<EastNorth> poly = plan.getResultPolygons().get(pi);
+                for (int pi = 0; pi < plan.getResultCoordinates().size(); pi++) {
+                    List<EastNorth> poly = plan.getResultCoordinates().get(pi);
                     assertFalse(GeometryUtils.pointInsideOrOnPolygon(mid, poly),
                         "Road midpoint should NOT be inside sub-polygon " + pi
                         + "; road centerline must be excluded by offset");
@@ -160,7 +160,7 @@ class PolygonBreakerTest {
         BreakPlan plan = PolygonBreaker.analyze(rel, ds);
         assertNotNull(plan, "Should produce a break plan for MP");
         assertEquals(2, plan.getCorridors().size(), "Should find 2 intersecting roads");
-        assertEquals(3, plan.getResultPolygons().size(),
+        assertEquals(3, plan.getResultCoordinates().size(),
             "Two roads should split the polygon into 3 pieces");
         assertFalse(plan.getInnerWays().isEmpty(), "Plan should carry inner ways");
     }
@@ -242,9 +242,9 @@ class PolygonBreakerTest {
 
         BreakPlan plan = PolygonBreaker.analyze(rel, ds);
         assertNotNull(plan, "Should produce a break plan");
-        assertEquals(4, plan.getCorridors().size(),
-            "Should find 4 corridors (South Hwy chained + 3 T-junction corridors)");
-        assertEquals(4, plan.getResultPolygons().size(),
+        assertEquals(3, plan.getCorridors().size(),
+            "Should find 3 corridors (connected road ways chained together)");
+        assertEquals(4, plan.getResultCoordinates().size(),
             "Road network should split the polygon into 4 pieces");
     }
 
@@ -255,8 +255,8 @@ class PolygonBreakerTest {
         BreakPlan plan = PolygonBreaker.analyze(rel, ds);
         assertNotNull(plan);
 
-        for (int i = 0; i < plan.getResultPolygons().size(); i++) {
-            List<EastNorth> poly = plan.getResultPolygons().get(i);
+        for (int i = 0; i < plan.getResultCoordinates().size(); i++) {
+            List<EastNorth> poly = plan.getResultCoordinates().get(i);
             assertTrue(poly.size() >= 4,
                 "Sub-polygon " + i + " should have at least 4 points");
             EastNorth first = poly.get(0);
@@ -273,8 +273,8 @@ class PolygonBreakerTest {
         BreakPlan plan = PolygonBreaker.analyze(rel, ds);
         assertNotNull(plan);
 
-        for (int i = 0; i < plan.getResultPolygons().size(); i++) {
-            List<EastNorth> poly = plan.getResultPolygons().get(i);
+        for (int i = 0; i < plan.getResultCoordinates().size(); i++) {
+            List<EastNorth> poly = plan.getResultCoordinates().get(i);
             double area = computeSignedAreaEN(poly);
             assertTrue(Math.abs(area) > 1e-6,
                 "Sub-polygon " + i + " should have non-trivial area, got " + area);
@@ -333,8 +333,8 @@ class PolygonBreakerTest {
         BreakPlan plan = PolygonBreaker.analyze(rel, ds);
         assertNotNull(plan);
 
-        for (int i = 0; i < plan.getResultPolygons().size(); i++) {
-            List<EastNorth> poly = plan.getResultPolygons().get(i);
+        for (int i = 0; i < plan.getResultCoordinates().size(); i++) {
+            List<EastNorth> poly = plan.getResultCoordinates().get(i);
             double area = Math.abs(computeSignedAreaEN(poly));
             double perimeter = 0;
             for (int pi = 0; pi < poly.size() - 1; pi++) {
@@ -371,8 +371,8 @@ class PolygonBreakerTest {
                     (n1.east() + n2.east()) / 2,
                     (n1.north() + n2.north()) / 2);
 
-                for (int pi = 0; pi < plan.getResultPolygons().size(); pi++) {
-                    List<EastNorth> poly = plan.getResultPolygons().get(pi);
+                for (int pi = 0; pi < plan.getResultCoordinates().size(); pi++) {
+                    List<EastNorth> poly = plan.getResultCoordinates().get(pi);
                     String name = road.get("name");
                     assertFalse(GeometryUtils.pointInsideOrOnPolygon(mid, poly),
                         "Road '" + (name != null ? name : "(unnamed)")

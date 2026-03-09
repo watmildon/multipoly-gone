@@ -75,13 +75,13 @@ class PolygonBreakerHandmadeTest {
 
     private void assertPlanPieces(BreakPlan plan, int expectedPieces, String testId) {
         assertNotNull(plan, "Test " + testId + ": should produce a break plan");
-        assertEquals(expectedPieces, plan.getResultPolygons().size(),
+        assertEquals(expectedPieces, plan.getResultCoordinates().size(),
             "Test " + testId + ": expected " + expectedPieces + " result pieces");
     }
 
     private void assertAllClosed(BreakPlan plan, String testId) {
-        for (int i = 0; i < plan.getResultPolygons().size(); i++) {
-            List<EastNorth> poly = plan.getResultPolygons().get(i);
+        for (int i = 0; i < plan.getResultCoordinates().size(); i++) {
+            List<EastNorth> poly = plan.getResultCoordinates().get(i);
             assertTrue(poly.size() >= 4,
                 "Test " + testId + " poly " + i + ": needs at least 4 points");
             EastNorth first = poly.get(0);
@@ -92,8 +92,8 @@ class PolygonBreakerHandmadeTest {
     }
 
     private void assertAllPositiveArea(BreakPlan plan, String testId) {
-        for (int i = 0; i < plan.getResultPolygons().size(); i++) {
-            List<EastNorth> poly = plan.getResultPolygons().get(i);
+        for (int i = 0; i < plan.getResultCoordinates().size(); i++) {
+            List<EastNorth> poly = plan.getResultCoordinates().get(i);
             double area = computeSignedAreaEN(poly);
             assertTrue(Math.abs(area) > 1e-10,
                 "Test " + testId + " poly " + i + ": should have non-trivial area, got " + area);
@@ -101,8 +101,8 @@ class PolygonBreakerHandmadeTest {
     }
 
     private void assertAllCompact(BreakPlan plan, String testId, double maxCompactness) {
-        for (int i = 0; i < plan.getResultPolygons().size(); i++) {
-            List<EastNorth> poly = plan.getResultPolygons().get(i);
+        for (int i = 0; i < plan.getResultCoordinates().size(); i++) {
+            List<EastNorth> poly = plan.getResultCoordinates().get(i);
             double area = Math.abs(computeSignedAreaEN(poly));
             double perimeter = 0;
             for (int pi = 0; pi < poly.size() - 1; pi++) {
@@ -134,8 +134,8 @@ class PolygonBreakerHandmadeTest {
      * A self-intersecting polygon has non-adjacent edges that properly cross.
      */
     private void assertNotSelfIntersecting(BreakPlan plan, String testId) {
-        for (int pi = 0; pi < plan.getResultPolygons().size(); pi++) {
-            List<EastNorth> poly = plan.getResultPolygons().get(pi);
+        for (int pi = 0; pi < plan.getResultCoordinates().size(); pi++) {
+            List<EastNorth> poly = plan.getResultCoordinates().get(pi);
             int n = poly.size() - 1; // exclude closing point
             for (int i = 0; i < n; i++) {
                 EastNorth a1 = poly.get(i);
@@ -153,7 +153,7 @@ class PolygonBreakerHandmadeTest {
     }
 
     private void assertNoOverlap(BreakPlan plan, String testId) {
-        List<List<EastNorth>> polys = plan.getResultPolygons();
+        List<List<EastNorth>> polys = plan.getResultCoordinates();
         for (int i = 0; i < polys.size(); i++) {
             for (int j = i + 1; j < polys.size(); j++) {
                 assertNoEdgeCrossings(polys.get(i), polys.get(j), testId, i, j);
@@ -197,7 +197,7 @@ class PolygonBreakerHandmadeTest {
             BreakPlan reversedPlan = PolygonBreaker.analyze(target, ds);
             assertNotNull(reversedPlan,
                 "Test " + testId + " (reversed roads): should still produce a break plan");
-            assertEquals(expectedPieces, reversedPlan.getResultPolygons().size(),
+            assertEquals(expectedPieces, reversedPlan.getResultCoordinates().size(),
                 "Test " + testId + " (reversed roads): piece count should be identical");
             assertAllClosed(reversedPlan, testId + " reversed");
             assertAllPositiveArea(reversedPlan, testId + " reversed");
@@ -229,7 +229,7 @@ class PolygonBreakerHandmadeTest {
      */
     private void assertNoCrossingWithRoads(BreakPlan plan, String testId) {
         List<Way> roads = findHighwaysByTestId(testId);
-        List<List<EastNorth>> polys = plan.getResultPolygons();
+        List<List<EastNorth>> polys = plan.getResultCoordinates();
         // Build original polygon boundary for containment checks
         List<EastNorth> origPoly = buildSourcePolygonEN(plan);
         for (int pi = 0; pi < polys.size(); pi++) {
@@ -469,24 +469,14 @@ class PolygonBreakerHandmadeTest {
         System.out.println("=== Test 96 corridors ===");
         for (int ci = 0; ci < plan.getCorridors().size(); ci++) {
             BreakPlan.RoadCorridor c = plan.getCorridors().get(ci);
-            for (int pi = 0; pi < c.getCrossingPairs().size(); pi++) {
-                BreakPlan.CrossingPair cp = c.getCrossingPairs().get(pi);
-                System.out.println("Corridor " + ci + " pair " + pi);
-                System.out.println("  Left offsets:");
-                for (int i = 0; i < cp.leftOffsets.size(); i++) {
-                    EastNorth p = cp.leftOffsets.get(i);
-                    System.out.println("    [" + i + "] e=" + p.east() + " n=" + p.north());
-                }
-                System.out.println("  Right offsets:");
-                for (int i = 0; i < cp.rightOffsets.size(); i++) {
-                    EastNorth p = cp.rightOffsets.get(i);
-                    System.out.println("    [" + i + "] e=" + p.east() + " n=" + p.north());
-                }
-            }
+            Way primaryWay = c.getPrimaryWay();
+            String name = primaryWay != null ? primaryWay.get("name") : "(unknown)";
+            System.out.printf("Corridor %d: %d ways, width=%.1fm, name=%s%n",
+                ci, c.getSourceWays().size(), c.getWidthMeters(), name);
         }
         System.out.println("=== Test 96 result polygons ===");
-        for (int pi = 0; pi < plan.getResultPolygons().size(); pi++) {
-            List<EastNorth> poly = plan.getResultPolygons().get(pi);
+        for (int pi = 0; pi < plan.getResultCoordinates().size(); pi++) {
+            List<EastNorth> poly = plan.getResultCoordinates().get(pi);
             System.out.println("Poly " + pi + " (" + poly.size() + " pts):");
             for (int i = 0; i < poly.size(); i++) {
                 EastNorth p = poly.get(i);
@@ -508,24 +498,14 @@ class PolygonBreakerHandmadeTest {
         System.out.println("=== Test " + testId + " corridors ===");
         for (int ci = 0; ci < plan.getCorridors().size(); ci++) {
             BreakPlan.RoadCorridor c = plan.getCorridors().get(ci);
-            for (int pi = 0; pi < c.getCrossingPairs().size(); pi++) {
-                BreakPlan.CrossingPair cp = c.getCrossingPairs().get(pi);
-                System.out.println("Corridor " + ci + " pair " + pi);
-                System.out.println("  Left offsets:");
-                for (int i = 0; i < cp.leftOffsets.size(); i++) {
-                    EastNorth p = cp.leftOffsets.get(i);
-                    System.out.println("    [" + i + "] e=" + p.east() + " n=" + p.north());
-                }
-                System.out.println("  Right offsets:");
-                for (int i = 0; i < cp.rightOffsets.size(); i++) {
-                    EastNorth p = cp.rightOffsets.get(i);
-                    System.out.println("    [" + i + "] e=" + p.east() + " n=" + p.north());
-                }
-            }
+            Way primaryWay = c.getPrimaryWay();
+            String name = primaryWay != null ? primaryWay.get("name") : "(unknown)";
+            System.out.printf("Corridor %d: %d ways, width=%.1fm, name=%s%n",
+                ci, c.getSourceWays().size(), c.getWidthMeters(), name);
         }
         System.out.println("=== Test " + testId + " result polygons ===");
-        for (int pi = 0; pi < plan.getResultPolygons().size(); pi++) {
-            List<EastNorth> poly = plan.getResultPolygons().get(pi);
+        for (int pi = 0; pi < plan.getResultCoordinates().size(); pi++) {
+            List<EastNorth> poly = plan.getResultCoordinates().get(pi);
             System.out.println("Poly " + pi + " (" + poly.size() + " pts):");
             for (int i = 0; i < poly.size(); i++) {
                 EastNorth p = poly.get(i);
@@ -752,8 +732,8 @@ class PolygonBreakerHandmadeTest {
 
         for (Node testNode : testNodes) {
             EastNorth pt = testNode.getEastNorth();
-            for (int pi = 0; pi < plan.getResultPolygons().size(); pi++) {
-                List<EastNorth> poly = plan.getResultPolygons().get(pi);
+            for (int pi = 0; pi < plan.getResultCoordinates().size(); pi++) {
+                List<EastNorth> poly = plan.getResultCoordinates().get(pi);
                 assertFalse(pointInPolygonEN(pt, poly),
                     "Test " + testId + ": test node " + testNode.getId()
                     + " should NOT be enclosed by result poly " + pi
@@ -776,7 +756,7 @@ class PolygonBreakerHandmadeTest {
             .collect(Collectors.toList());
         if (testNodes.isEmpty()) return;
 
-        List<List<EastNorth>> polys = plan.getResultPolygons();
+        List<List<EastNorth>> polys = plan.getResultCoordinates();
         // Track which polygons have at least one attesting node
         boolean[] polyAttested = new boolean[polys.size()];
 
@@ -817,7 +797,7 @@ class PolygonBreakerHandmadeTest {
             .collect(Collectors.toList());
         if (testNodes.isEmpty()) return;
 
-        List<List<EastNorth>> polys = plan.getResultPolygons();
+        List<List<EastNorth>> polys = plan.getResultCoordinates();
         for (Node testNode : testNodes) {
             int expectedCount = Integer.parseInt(testNode.get("_test_node_count"));
             EastNorth pt = testNode.getEastNorth();
@@ -923,7 +903,7 @@ class PolygonBreakerHandmadeTest {
         assertNotNull(target, "Test 103: should find polygon way");
         BreakPlan plan = analyzePrimitive(target);
         assertNotNull(plan, "Test 103: analyzer should offer to break this polygon");
-        System.out.println("Test 103: got " + plan.getResultPolygons().size() + " pieces");
+        System.out.println("Test 103: got " + plan.getResultCoordinates().size() + " pieces");
         dumpGeometry("103", plan);
     }
 
@@ -963,7 +943,7 @@ class PolygonBreakerHandmadeTest {
         assertNotNull(target, "Test 105: should find polygon way");
         BreakPlan plan = analyzePrimitive(target);
         if (plan != null) {
-            System.out.println("Test 105: got " + plan.getResultPolygons().size() + " pieces");
+            System.out.println("Test 105: got " + plan.getResultCoordinates().size() + " pieces");
             dumpGeometry("105", plan);
         } else {
             System.out.println("Test 105: analyze returned null (no break offered)");
@@ -1011,7 +991,7 @@ class PolygonBreakerHandmadeTest {
         assertNotNull(target, "Test 106: should find polygon way");
         BreakPlan plan = analyzePrimitive(target);
         if (plan != null) {
-            System.out.println("Test 106: got " + plan.getResultPolygons().size() + " pieces");
+            System.out.println("Test 106: got " + plan.getResultCoordinates().size() + " pieces");
             dumpGeometry("106", plan);
         } else {
             System.out.println("Test 106: analyze returned null (no break offered)");
