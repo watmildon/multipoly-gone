@@ -85,6 +85,35 @@ class GeometryUtils {
      * @return array of two EastNorth: [left, right] where left is to the left
      *         of the direction from lineStart→lineEnd
      */
+    /**
+     * Point-in-polygon test using ray casting. Handles closed polygons
+     * (where first == last point) by trimming the duplicate endpoint.
+     */
+    static boolean pointInsideOrOnPolygon(EastNorth point, List<EastNorth> polygon) {
+        int n = polygon.size();
+        if (n < 3) return false;
+
+        int last = n - 1;
+        if (isNear(polygon.get(0), polygon.get(last), 1e-6)) {
+            last = n - 2;
+        }
+
+        boolean inside = false;
+        double px = point.east();
+        double py = point.north();
+
+        for (int i = 0, j = last; i <= last; j = i++) {
+            double iy = polygon.get(i).north();
+            double jy = polygon.get(j).north();
+            if (((iy > py) != (jy > py))
+                && (px < (polygon.get(j).east() - polygon.get(i).east())
+                    * (py - iy) / (jy - iy) + polygon.get(i).east())) {
+                inside = !inside;
+            }
+        }
+        return inside;
+    }
+
     static EastNorth[] perpendicularOffsets(EastNorth lineStart, EastNorth lineEnd,
             EastNorth point, double offsetMeters) {
         double dx = lineEnd.east() - lineStart.east();

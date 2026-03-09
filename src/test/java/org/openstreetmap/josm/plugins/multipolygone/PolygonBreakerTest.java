@@ -103,7 +103,7 @@ class PolygonBreakerTest {
 
                 for (int pi = 0; pi < plan.getResultPolygons().size(); pi++) {
                     List<EastNorth> poly = plan.getResultPolygons().get(pi);
-                    assertFalse(PolygonBreaker.pointInsideOrOnPolygon(mid, poly),
+                    assertFalse(GeometryUtils.pointInsideOrOnPolygon(mid, poly),
                         "Road midpoint should NOT be inside sub-polygon " + pi
                         + "; road centerline must be excluded by offset");
                 }
@@ -374,7 +374,7 @@ class PolygonBreakerTest {
                 for (int pi = 0; pi < plan.getResultPolygons().size(); pi++) {
                     List<EastNorth> poly = plan.getResultPolygons().get(pi);
                     String name = road.get("name");
-                    assertFalse(PolygonBreaker.pointInsideOrOnPolygon(mid, poly),
+                    assertFalse(GeometryUtils.pointInsideOrOnPolygon(mid, poly),
                         "Road '" + (name != null ? name : "(unnamed)")
                         + "' seg " + i + " midpoint should NOT be inside sub-polygon "
                         + pi + "; road centerline must be excluded by offset");

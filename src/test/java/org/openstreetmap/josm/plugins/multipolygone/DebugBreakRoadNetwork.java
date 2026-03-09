@@ -104,7 +104,7 @@ class DebugBreakRoadNetwork {
                     EastNorth mid = new EastNorth(
                         (n1.east() + n2.east()) / 2,
                         (n1.north() + n2.north()) / 2);
-                    if (PolygonBreaker.pointInsideOrOnPolygon(mid, poly)) {
+                    if (GeometryUtils.pointInsideOrOnPolygon(mid, poly)) {
                         String name = road.get("name");
                         System.out.printf("    !! Road '%s' seg %d mid INSIDE this polygon%n",
                             name != null ? name : "(unnamed)", ri);
