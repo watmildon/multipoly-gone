@@ -19,6 +19,10 @@ import org.openstreetmap.josm.data.osm.OsmPrimitive;
 import org.openstreetmap.josm.data.osm.Relation;
 import org.openstreetmap.josm.data.osm.RelationMember;
 import org.openstreetmap.josm.data.osm.Way;
+import org.locationtech.jts.geom.Coordinate;
+import org.locationtech.jts.geom.GeometryFactory;
+import org.locationtech.jts.geom.LinearRing;
+import org.locationtech.jts.geom.Point;
 import org.openstreetmap.josm.data.projection.ProjectionRegistry;
 import org.openstreetmap.josm.tools.Geometry;
 import org.openstreetmap.josm.tools.Logging;
@@ -43,19 +47,26 @@ class PolygonBreakFixer {
 
         Logging.info("Multipoly-Gone: executing {0} commands for polygon break", commands.size());
 
-        // Execute all commands to populate the DataSet
+        // Execute all commands to populate the DataSet, then undo them
+        // so JOSM's UndoRedoHandler.add can replay the full sequence.
         for (Command cmd : commands) {
             cmd.executeCommand();
         }
-
-        // Undo them (JOSM's UndoRedoHandler.add will replay)
-        for (int i = commands.size() - 1; i >= 0; i--) {
-            commands.get(i).undoCommand();
+        try {
+            Command seq = SequenceCommand.wrapIfNeeded(
+                tr("Break polygon along roads"), commands);
+            // Undo before handing to UndoRedoHandler (it will replay)
+            for (int i = commands.size() - 1; i >= 0; i--) {
+                commands.get(i).undoCommand();
+            }
+            UndoRedoHandler.getInstance().add(seq);
+        } catch (RuntimeException e) {
+            // Ensure undo even if wrapping/adding fails
+            for (int i = commands.size() - 1; i >= 0; i--) {
+                commands.get(i).undoCommand();
+            }
+            throw e;
         }
-
-        Command cmd = SequenceCommand.wrapIfNeeded(
-            tr("Break polygon along roads"), commands);
-        UndoRedoHandler.getInstance().add(cmd);
     }
 
     /**
@@ -110,17 +121,18 @@ class PolygonBreakFixer {
                 outer.setKeys(originalTags);
             }
         } else {
-            // Assign each inner to the sub-polygon that contains it
-            // Execute pending AddCommands so nodes exist for containment checks
+            // Assign each inner to the sub-polygon that contains it.
+            // Temporarily execute pending AddCommands so nodes exist for containment checks.
             for (Command c : commands) {
                 c.executeCommand();
             }
-
-            List<List<Way>> innersPerOuter = assignInners(newOuterWays, innerWays);
-
-            // Undo the temporary execution
-            for (int i = commands.size() - 1; i >= 0; i--) {
-                commands.get(i).undoCommand();
+            List<List<Way>> innersPerOuter;
+            try {
+                innersPerOuter = assignInners(newOuterWays, innerWays);
+            } finally {
+                for (int i = commands.size() - 1; i >= 0; i--) {
+                    commands.get(i).undoCommand();
+                }
             }
 
             for (int oi = 0; oi < newOuterWays.size(); oi++) {
@@ -167,7 +179,8 @@ class PolygonBreakFixer {
 
     /**
      * Assigns inner ways to the outer sub-polygon that contains them.
-     * Uses the centroid of each inner ring for containment testing.
+     * Uses JTS {@code getInteriorPoint()} for containment testing, which
+     * is guaranteed to return a point inside even highly concave polygons.
      * Returns a list parallel to {@code outers}, each entry listing the
      * inner ways contained by that outer.
      */
@@ -180,8 +193,10 @@ class PolygonBreakFixer {
         for (Way inner : inners) {
             if (!inner.isClosed() || inner.getNodesCount() < 4) continue;
 
-            // Use centroid of inner for containment check
-            Node testNode = findInteriorPoint(inner);
+            EastNorth interiorPt = getInteriorPoint(inner);
+            if (interiorPt == null) continue;
+            Node testNode = new Node(
+                ProjectionRegistry.getProjection().eastNorth2latlon(interiorPt));
 
             for (int oi = 0; oi < outers.size(); oi++) {
                 Way outer = outers.get(oi);
@@ -194,22 +209,25 @@ class PolygonBreakFixer {
         return result;
     }
 
-    /**
-     * Finds a point guaranteed to be inside the polygon by using the
-     * centroid of the first triangle. Falls back to the first node.
-     */
-    private static Node findInteriorPoint(Way polygon) {
-        List<Node> nodes = polygon.getNodes();
-        if (nodes.size() < 4) return nodes.get(0);
+    private static final GeometryFactory GF = new GeometryFactory();
 
-        // Use centroid of polygon (average of all non-closure nodes)
-        double latSum = 0, lonSum = 0;
-        int count = nodes.size() - 1; // exclude closure node
-        for (int i = 0; i < count; i++) {
-            latSum += nodes.get(i).lat();
-            lonSum += nodes.get(i).lon();
+    /**
+     * Returns a point guaranteed to be inside the polygon using JTS.
+     * Works correctly for concave, U-shaped, and other complex polygons.
+     */
+    private static EastNorth getInteriorPoint(Way polygon) {
+        List<Node> nodes = polygon.getNodes();
+        Coordinate[] coords = new Coordinate[nodes.size()];
+        for (int i = 0; i < nodes.size(); i++) {
+            EastNorth en = nodes.get(i).getEastNorth();
+            coords[i] = new Coordinate(en.east(), en.north());
         }
-        Node centroid = new Node(new LatLon(latSum / count, lonSum / count));
-        return centroid;
+        try {
+            LinearRing ring = GF.createLinearRing(coords);
+            Point pt = GF.createPolygon(ring).getInteriorPoint();
+            return new EastNorth(pt.getX(), pt.getY());
+        } catch (Exception e) {
+            return null;
+        }
     }
 }

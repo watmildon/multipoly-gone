@@ -46,7 +46,7 @@ class BreakPlan {
     List<List<EastNorth>> getResultCoordinates() {
         return resultPolygons.stream()
             .map(rp -> rp.coordinates)
-            .collect(java.util.stream.Collectors.toList());
+            .toList();
     }
 
     /** Inner ways from the original multipolygon, empty for simple closed ways. */

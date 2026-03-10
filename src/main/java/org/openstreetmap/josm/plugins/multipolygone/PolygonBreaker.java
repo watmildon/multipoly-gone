@@ -113,7 +113,7 @@ class PolygonBreaker {
         List<MultipolyGonePreferences.BreakTagWidth> tagWidths =
             MultipolyGonePreferences.getBreakTagWidths();
 
-        List<RoadChain> roadChains = findAndChainRoads(polygonWay, ds, excludeWays, tagWidths);
+        List<RoadChain> roadChains = findAndChainRoads(polygonWay, jtsPolygon, ds, excludeWays, tagWidths);
         if (roadChains.isEmpty()) return null;
 
         // 4. Buffer each road chain and build corridors
@@ -122,7 +122,7 @@ class PolygonBreaker {
 
         for (RoadChain chain : roadChains) {
             double width = getChainWidth(chain, tagWidths);
-            double halfWidth = metersToProjectionUnits(width / 2.0, polygonWay);
+            double halfWidth = metersToProjectionUnits(width / 2.0);
 
             org.locationtech.jts.geom.LineString jtsLine = chainToJtsLineString(chain);
             if (jtsLine == null) continue;
@@ -221,11 +221,10 @@ class PolygonBreaker {
      * Finds highway ways that cross or lie inside the polygon and chains
      * connected ways into logical road polylines.
      */
-    private static List<RoadChain> findAndChainRoads(Way polygonWay, DataSet ds,
-                                                      Set<Way> excludeWays,
+    private static List<RoadChain> findAndChainRoads(Way polygonWay, Polygon jtsPolygon,
+                                                      DataSet ds, Set<Way> excludeWays,
                                                       List<MultipolyGonePreferences.BreakTagWidth> tagWidths) {
         BBox bbox = polygonWay.getBBox();
-        Polygon jtsPolygon = wayToJtsPolygon(polygonWay);
 
         // Find candidate ways matching any configured tag filter
         List<Way> candidates = new ArrayList<>();
@@ -472,33 +471,16 @@ class PolygonBreaker {
         return false;
     }
 
-    /** Converts meters to projection units, accounting for EPSG:4326 latitude scaling. */
-    private static double metersToProjectionUnits(double meters, Way refWay) {
+    /**
+     * Converts meters to projection units.
+     * For degree-based projections (EPSG:4326), the buffer will be slightly
+     * elliptical in real-world meters (wider N-S than E-W away from equator),
+     * but this is acceptable for road corridor widths.
+     */
+    private static double metersToProjectionUnits(double meters) {
         double metersPerUnit = ProjectionRegistry.getProjection().getMetersPerUnit();
         if (metersPerUnit < 1e-6) return meters; // already in meters
-
-        double units = meters / metersPerUnit;
-
-        // For degree-based projections, apply latitude correction
-        if (metersPerUnit > 10000) {
-            // Approximate latitude from the way's centroid
-            double latSum = 0;
-            int count = refWay.getNodesCount() - 1; // exclude closure
-            for (int i = 0; i < count; i++) {
-                latSum += refWay.getNode(i).getEastNorth().north();
-            }
-            double avgLat = latSum / count;
-            double cosLat = Math.cos(Math.toRadians(avgLat));
-            if (cosLat > 0.01) {
-                // For degree-based projections, the "units" value is already
-                // in degrees. The buffer will apply uniformly in coordinate space,
-                // so we use the north-south scale (1 degree ≈ 111km).
-                // No additional correction needed since JTS buffer works in
-                // coordinate units and the polygon is also in degrees.
-            }
-        }
-
-        return units;
+        return meters / metersPerUnit;
     }
 
     /** Meters per lane — US standard is 12 ft (3.66m); 3.5m is a conservative international default. */

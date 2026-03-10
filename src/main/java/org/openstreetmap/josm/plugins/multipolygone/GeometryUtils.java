@@ -75,17 +75,6 @@ class GeometryUtils {
     }
 
     /**
-     * Computes two points offset perpendicular to a line direction at a given point.
-     * The offset distance is in the same units as EastNorth (meters for most projections).
-     *
-     * @param lineStart start of the line segment defining direction
-     * @param lineEnd   end of the line segment defining direction
-     * @param point     the point to offset from
-     * @param offsetMeters offset distance (positive)
-     * @return array of two EastNorth: [left, right] where left is to the left
-     *         of the direction from lineStart→lineEnd
-     */
-    /**
      * Point-in-polygon test using ray casting. Handles closed polygons
      * (where first == last point) by trimming the duplicate endpoint.
      */
@@ -114,6 +103,16 @@ class GeometryUtils {
         return inside;
     }
 
+    /**
+     * Computes two points offset perpendicular to a line direction at a given point.
+     *
+     * @param lineStart start of the line segment defining direction
+     * @param lineEnd   end of the line segment defining direction
+     * @param point     the point to offset from
+     * @param offsetMeters offset distance in meters (positive)
+     * @return array of two EastNorth: [left, right] where left is to the left
+     *         of the direction from lineStart to lineEnd
+     */
     static EastNorth[] perpendicularOffsets(EastNorth lineStart, EastNorth lineEnd,
             EastNorth point, double offsetMeters) {
         double dx = lineEnd.east() - lineStart.east();

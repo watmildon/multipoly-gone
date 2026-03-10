@@ -370,7 +370,7 @@ class PolygonBreakerHandmadeTest {
 
     @Test
     void allMPTests_noCrossingWithRoads() {
-        for (String testId : new String[]{"98.1", "99.1", "99.2", "100.1", "101.1", "102.1", "105.1"}) {
+        for (String testId : new String[]{"98.1", "99.1", "99.2", "100.1", "101.1", "102.1", "105.1", "106.1"}) {
             Relation target = findRelationByTestId(testId);
             assertNotNull(target, "Test " + testId + ": should find relation");
             BreakPlan plan = analyzePrimitive(target);
@@ -392,7 +392,7 @@ class PolygonBreakerHandmadeTest {
 
     @Test
     void allMPTests_noOverlap() {
-        for (String testId : new String[]{"98.1", "99.1", "99.2", "100.1", "101.1", "102.1", "105.1"}) {
+        for (String testId : new String[]{"98.1", "99.1", "99.2", "100.1", "101.1", "102.1", "105.1", "106.1"}) {
             Relation target = findRelationByTestId(testId);
             assertNotNull(target, "Test " + testId + ": should find relation");
             BreakPlan plan = analyzePrimitive(target);
@@ -420,7 +420,8 @@ class PolygonBreakerHandmadeTest {
     @Test
     void mpTests_directionInvariant() {
         Object[][] cases = {
-            {"98.1", 2}, {"99.1", 2}, {"99.2", 2}, {"100.1", 4}, {"101.1", 6}
+            {"98.1", 2}, {"99.1", 2}, {"99.2", 2}, {"100.1", 4}, {"101.1", 6},
+            {"102.1", 4}, {"105.1", 3}, {"106.1", 4}
         };
         for (Object[] c : cases) {
             String testId = (String) c[0];
@@ -446,7 +447,7 @@ class PolygonBreakerHandmadeTest {
 
     @Test
     void allMPTests_noSpuriousAreas() {
-        for (String testId : new String[]{"98.1", "99.1", "99.2", "100.1", "101.1", "102.1", "105.1"}) {
+        for (String testId : new String[]{"98.1", "99.1", "99.2", "100.1", "101.1", "102.1", "105.1", "106.1"}) {
             Relation target = findRelationByTestId(testId);
             assertNotNull(target, "Test " + testId + ": should find relation");
             BreakPlan plan = analyzePrimitive(target);
@@ -466,32 +467,7 @@ class PolygonBreakerHandmadeTest {
         Way target = findWayByTestId("96");
         BreakPlan plan = analyzePrimitive(target);
         assertNotNull(plan);
-        System.out.println("=== Test 96 corridors ===");
-        for (int ci = 0; ci < plan.getCorridors().size(); ci++) {
-            BreakPlan.RoadCorridor c = plan.getCorridors().get(ci);
-            Way primaryWay = c.getPrimaryWay();
-            String name = primaryWay != null ? primaryWay.get("name") : "(unknown)";
-            System.out.printf("Corridor %d: %d ways, width=%.1fm, name=%s%n",
-                ci, c.getSourceWays().size(), c.getWidthMeters(), name);
-        }
-        System.out.println("=== Test 96 result polygons ===");
-        for (int pi = 0; pi < plan.getResultCoordinates().size(); pi++) {
-            List<EastNorth> poly = plan.getResultCoordinates().get(pi);
-            System.out.println("Poly " + pi + " (" + poly.size() + " pts):");
-            for (int i = 0; i < poly.size(); i++) {
-                EastNorth p = poly.get(i);
-                System.out.println("  [" + i + "] e=" + p.east() + " n=" + p.north());
-            }
-        }
-        System.out.println("=== Test 96 roads ===");
-        List<Way> roads = findHighwaysByTestId("96");
-        for (Way road : roads) {
-            System.out.println("Road " + road.getId() + ":");
-            for (int i = 0; i < road.getNodesCount(); i++) {
-                EastNorth p = road.getNode(i).getEastNorth();
-                System.out.println("  [" + i + "] e=" + p.east() + " n=" + p.north());
-            }
-        }
+        dumpGeometry("96", plan);
     }
 
     private void dumpGeometry(String testId, BreakPlan plan) {
