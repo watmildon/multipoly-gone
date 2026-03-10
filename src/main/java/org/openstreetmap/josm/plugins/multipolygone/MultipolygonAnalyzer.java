@@ -730,6 +730,15 @@ public class MultipolygonAnalyzer {
                             ? "1 inner ring chained"
                             : innerNeedsChaining.size() + " inner rings chained");
                     }
+                    // Replace untagged already-closed inner rings with tagged duplicate ways
+                    List<WayChainBuilder.Ring> bndInnerReusable =
+                        findReusableInnerRings(innerRings, outerWays, innerWays);
+                    if (!bndInnerReusable.isEmpty()) {
+                        ops.add(new FixOp(FixOpType.CONSOLIDATE_RINGS, bndInnerReusable, null));
+                        descParts.add(bndInnerReusable.size() == 1
+                            ? "1 inner reused"
+                            : bndInnerReusable.size() + " inners reused");
+                    }
                     // Merge abutting closed inner rings
                     List<ConsolidatedInnerGroup> bndInnerConsolidations =
                         mergeAdjoiningInnerRings(innerRings);
@@ -814,6 +823,15 @@ public class MultipolygonAnalyzer {
             descParts.add(total == 1
                 ? "1 ring chained"
                 : total + " rings chained");
+        }
+
+        // Replace untagged already-closed inner rings with tagged duplicate ways from the DataSet
+        List<WayChainBuilder.Ring> innerReusable = findReusableInnerRings(innerRings, outerWays, innerWays);
+        if (!innerReusable.isEmpty()) {
+            ops.add(new FixOp(FixOpType.CONSOLIDATE_RINGS, innerReusable, null));
+            descParts.add(innerReusable.size() == 1
+                ? "1 inner reused"
+                : innerReusable.size() + " inners reused");
         }
 
         // Merge abutting closed inner rings that share edges
@@ -1374,6 +1392,29 @@ public class MultipolygonAnalyzer {
         }
 
         return Optional.of(rings);
+    }
+
+    /**
+     * Finds already-closed inner rings whose source way has no own tags but where an
+     * identical-geometry way with own tags exists in the DataSet (not already a relation
+     * member). Such inners can be replaced by the tagged duplicate via CONSOLIDATE_RINGS.
+     */
+    private static List<WayChainBuilder.Ring> findReusableInnerRings(
+            List<WayChainBuilder.Ring> innerRings, List<Way> outerWays, List<Way> innerWays) {
+        Set<Way> relationWays = new HashSet<>(outerWays);
+        relationWays.addAll(innerWays);
+        List<WayChainBuilder.Ring> result = new ArrayList<>();
+        for (WayChainBuilder.Ring inner : innerRings) {
+            if (!inner.isAlreadyClosed()) continue;
+            Way sourceWay = inner.getSourceWays().get(0);
+            if (wayHasOwnTags(sourceWay)) continue;
+            Way match = MultipolygonFixer.findMatchingWayInDataSet(
+                inner.getNodes(), new HashSet<>(inner.getSourceWays()));
+            if (match != null && !relationWays.contains(match) && wayHasOwnTags(match)) {
+                result.add(inner);
+            }
+        }
+        return result;
     }
 
     /**

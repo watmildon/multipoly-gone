@@ -1644,6 +1644,64 @@ class MultipolygonFixerTest {
             "Previously untagged outer should now have natural=water");
     }
 
+    // --- Reuse inner: untagged inner with tagged duplicate way ---
+
+    @Test
+    void reuseInner_untaggedInnerWithTaggedDuplicate_replacesInner() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        FixPlan plan = findPlanByTestId(MultipolygonAnalyzer.findFixableRelations(ds), "137");
+        assertNotNull(plan, "Test case 137 should be fixable");
+
+        // Should have a CONSOLIDATE_RINGS op for the reuse
+        assertTrue(plan.getOperations().stream()
+                .anyMatch(op -> op.getType() == FixOpType.CONSOLIDATE_RINGS),
+            "Should have CONSOLIDATE_RINGS op for inner reuse");
+
+        Relation rel = plan.getRelation();
+        Way originalInner = rel.getMembers().stream()
+            .filter(m -> "inner".equals(m.getRole()) && m.isWay())
+            .map(RelationMember::getWay)
+            .findFirst().orElse(null);
+        assertNotNull(originalInner, "Should have an inner way");
+        assertFalse(originalInner.hasKey("natural"), "Original inner should be untagged");
+
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        // The original untagged inner should be deleted
+        assertTrue(originalInner.isDeleted(),
+            "Untagged inner should be deleted after reuse");
+
+        // The relation should now have the tagged duplicate as its inner
+        assertFalse(rel.isDeleted(), "Relation should survive");
+        Way newInner = rel.getMembers().stream()
+            .filter(m -> "inner".equals(m.getRole()) && m.isWay())
+            .map(RelationMember::getWay)
+            .findFirst().orElse(null);
+        assertNotNull(newInner, "Relation should still have an inner");
+        assertEquals("water", newInner.get("natural"),
+            "New inner should be the tagged duplicate with natural=water");
+    }
+
+    @Test
+    void reuseInner_bothTagged_noReuse() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "138");
+
+        // Test 138 has a tagged inner + tagged duplicate. The inner reuse
+        // should NOT fire because the inner already has own tags.
+        if (plan != null) {
+            // If it IS fixable, it should not have a CONSOLIDATE_RINGS op
+            // (since the inner is already closed and doesn't need chaining,
+            // and it has own tags so no reuse)
+            boolean hasConsolidateForReuse = plan.getOperations().stream()
+                .anyMatch(op -> op.getType() == FixOpType.CONSOLIDATE_RINGS);
+            assertFalse(hasConsolidateForReuse,
+                "Test 138 should not have CONSOLIDATE_RINGS — inner already tagged");
+        }
+        // Either way, no reuse should happen
+    }
+
     // --- Parent relation protection (issue #10) ---
 
     @Test
