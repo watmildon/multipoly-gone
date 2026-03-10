@@ -1589,6 +1589,61 @@ class MultipolygonFixerTest {
             "Merged ring should have 9 nodes (8 unique + 1 closing)");
     }
 
+    // --- Issue #16: don't create duplicate ways when outers already have the relation's tags ---
+
+    @Test
+    void outersAlreadyTagged_dissolve_noNewWaysCreated() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        FixPlan plan = findPlanByTestId(MultipolygonAnalyzer.findFixableRelations(ds), "133");
+        assertNotNull(plan, "Test case 133 should be fixable");
+
+        long wayCountBefore = ds.getWays().stream().filter(w -> !w.isDeleted()).count();
+
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        long wayCountAfter = ds.getWays().stream().filter(w -> !w.isDeleted()).count();
+        assertTrue(wayCountAfter <= wayCountBefore,
+            "No new ways should be created when outers already have the relation's tags. " +
+            "Before: " + wayCountBefore + ", After: " + wayCountAfter);
+        assertTrue(plan.getRelation().isDeleted(), "Relation should be deleted after dissolve");
+    }
+
+    @Test
+    void outersMixedTagging_dissolve_reusesTaggedOuter() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        FixPlan plan = findPlanByTestId(MultipolygonAnalyzer.findFixableRelations(ds), "134");
+        assertNotNull(plan, "Test case 134 should be fixable");
+
+        // Identify which outer already has natural=water and which doesn't
+        Relation rel = plan.getRelation();
+        Way taggedOuter = null;
+        Way untaggedOuter = null;
+        for (RelationMember m : rel.getMembers()) {
+            if ("outer".equals(m.getRole()) && m.isWay()) {
+                if ("water".equals(m.getWay().get("natural"))) {
+                    taggedOuter = m.getWay();
+                } else {
+                    untaggedOuter = m.getWay();
+                }
+            }
+        }
+        assertNotNull(taggedOuter, "Should have one outer with natural=water");
+        assertNotNull(untaggedOuter, "Should have one outer without natural=water");
+
+        long wayCountBefore = ds.getWays().stream().filter(w -> !w.isDeleted()).count();
+
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        long wayCountAfter = ds.getWays().stream().filter(w -> !w.isDeleted()).count();
+        assertTrue(wayCountAfter <= wayCountBefore,
+            "No new ways should be created for mixed tagging case. " +
+            "Before: " + wayCountBefore + ", After: " + wayCountAfter);
+        assertFalse(taggedOuter.isDeleted(), "Tagged outer should survive");
+        assertFalse(untaggedOuter.isDeleted(), "Untagged outer should survive (now tagged)");
+        assertEquals("water", untaggedOuter.get("natural"),
+            "Previously untagged outer should now have natural=water");
+    }
+
     // --- Parent relation protection (issue #10) ---
 
     @Test

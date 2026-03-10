@@ -123,10 +123,14 @@ public class MultipolygonFixer {
         } else if (ring.isAlreadyClosed()) {
             Way sourceWay = ring.getSourceWays().get(0);
             if (hasSignificantTags(sourceWay, insignificantTags)) {
-                Way newWay = new Way();
-                newWay.setNodes(ring.getNodes());
-                newWay.setKeys(tags);
-                commands.add(new AddCommand(ds, newWay));
+                if (wayAlreadyHasTags(sourceWay, tags)) {
+                    // Source way already has all the tags we'd transfer — reuse as-is (issue #16)
+                } else {
+                    Way newWay = new Way();
+                    newWay.setNodes(ring.getNodes());
+                    newWay.setKeys(tags);
+                    commands.add(new AddCommand(ds, newWay));
+                }
             } else {
                 for (Map.Entry<String, String> tag : tags.entrySet()) {
                     commands.add(new ChangePropertyCommand(sourceWay, tag.getKey(), tag.getValue()));
@@ -846,6 +850,19 @@ public class MultipolygonFixer {
             }
         }
         return false;
+    }
+
+    /**
+     * Returns true if the way already contains all the given tags with matching values.
+     */
+    private static boolean wayAlreadyHasTags(Way way, Map<String, String> tags) {
+        for (Map.Entry<String, String> entry : tags.entrySet()) {
+            String value = way.get(entry.getKey());
+            if (value == null || !value.equals(entry.getValue())) {
+                return false;
+            }
+        }
+        return true;
     }
 
     static boolean hasSignificantTags(Way way, Set<String> insignificantTags) {

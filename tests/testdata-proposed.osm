@@ -13677,4 +13677,85 @@
     <tag k='_test_notes' v='2 inners sharing edge in same direction (forward-match), like farmyard pattern' />
     <tag k='_test_expected' v='CONSOLIDATE_INNERS: merge 2 inners into 1 perimeter ring' />
   </relation>
+  <node id='-505433' action='modify' visible='true' lat='47.56500000000' lon='-122.48520000000' />
+  <node id='-505434' action='modify' visible='true' lat='47.56569282032' lon='-122.48560000000' />
+  <node id='-505435' action='modify' visible='true' lat='47.56569282032' lon='-122.48640000000' />
+  <node id='-505436' action='modify' visible='true' lat='47.56500000000' lon='-122.48680000000' />
+  <node id='-505437' action='modify' visible='true' lat='47.56430717968' lon='-122.48640000000' />
+  <node id='-505438' action='modify' visible='true' lat='47.56430717968' lon='-122.48560000000' />
+  <node id='-505440' action='modify' visible='true' lat='47.56500000000' lon='-122.48320000000' />
+  <node id='-505441' action='modify' visible='true' lat='47.56569282032' lon='-122.48360000000' />
+  <node id='-505442' action='modify' visible='true' lat='47.56569282032' lon='-122.48440000000' />
+  <node id='-505443' action='modify' visible='true' lat='47.56500000000' lon='-122.48480000000' />
+  <node id='-505444' action='modify' visible='true' lat='47.56430717968' lon='-122.48440000000' />
+  <node id='-505445' action='modify' visible='true' lat='47.56430717968' lon='-122.48360000000' />
+  <node id='-505448' action='modify' visible='true' lat='47.56500000000' lon='-122.48020000000' />
+  <node id='-505449' action='modify' visible='true' lat='47.56569282032' lon='-122.48060000000' />
+  <node id='-505450' action='modify' visible='true' lat='47.56569282032' lon='-122.48140000000' />
+  <node id='-505451' action='modify' visible='true' lat='47.56500000000' lon='-122.48180000000' />
+  <node id='-505452' action='modify' visible='true' lat='47.56430717968' lon='-122.48140000000' />
+  <node id='-505453' action='modify' visible='true' lat='47.56430717968' lon='-122.48060000000' />
+  <node id='-505455' action='modify' visible='true' lat='47.56500000000' lon='-122.47820000000' />
+  <node id='-505456' action='modify' visible='true' lat='47.56569282032' lon='-122.47860000000' />
+  <node id='-505457' action='modify' visible='true' lat='47.56569282032' lon='-122.47940000000' />
+  <node id='-505458' action='modify' visible='true' lat='47.56500000000' lon='-122.47980000000' />
+  <node id='-505459' action='modify' visible='true' lat='47.56430717968' lon='-122.47940000000' />
+  <node id='-505460' action='modify' visible='true' lat='47.56430717968' lon='-122.47860000000' />
+  <way id='-505439' action='modify' visible='true'>
+    <nd ref='-505433' />
+    <nd ref='-505434' />
+    <nd ref='-505435' />
+    <nd ref='-505436' />
+    <nd ref='-505437' />
+    <nd ref='-505438' />
+    <nd ref='-505433' />
+    <tag k='natural' v='wood' />
+  </way>
+  <way id='-505446' action='modify' visible='true'>
+    <nd ref='-505440' />
+    <nd ref='-505441' />
+    <nd ref='-505442' />
+    <nd ref='-505443' />
+    <nd ref='-505444' />
+    <nd ref='-505445' />
+    <nd ref='-505440' />
+    <tag k='natural' v='wood' />
+  </way>
+  <way id='-505454' action='modify' visible='true'>
+    <nd ref='-505448' />
+    <nd ref='-505449' />
+    <nd ref='-505450' />
+    <nd ref='-505451' />
+    <nd ref='-505452' />
+    <nd ref='-505453' />
+    <nd ref='-505448' />
+    <tag k='natural' v='water' />
+  </way>
+  <way id='-505461' action='modify' visible='true'>
+    <nd ref='-505455' />
+    <nd ref='-505456' />
+    <nd ref='-505457' />
+    <nd ref='-505458' />
+    <nd ref='-505459' />
+    <nd ref='-505460' />
+    <nd ref='-505455' />
+  </way>
+  <relation id='-505447' action='modify' visible='true'>
+    <member type='way' ref='-505439' role='outer' />
+    <member type='way' ref='-505446' role='outer' />
+    <tag k='type' v='multipolygon' />
+    <tag k='natural' v='wood' />
+    <tag k='_test_id' v='133' />
+    <tag k='_test_notes' v='2 closed outers already tagged same as relation — reuse, do not duplicate' />
+    <tag k='_test_expected' v='DISSOLVE: delete relation, outers already tagged (no new ways)' />
+  </relation>
+  <relation id='-505462' action='modify' visible='true'>
+    <member type='way' ref='-505454' role='outer' />
+    <member type='way' ref='-505461' role='outer' />
+    <tag k='type' v='multipolygon' />
+    <tag k='natural' v='water' />
+    <tag k='_test_id' v='134' />
+    <tag k='_test_notes' v='1 tagged outer (reuse) + 1 untagged outer (tag it) — mixed' />
+    <tag k='_test_expected' v='DISSOLVE: delete relation, tag untagged outer, reuse tagged outer' />
+  </relation>
 </osm>
