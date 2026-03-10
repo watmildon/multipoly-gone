@@ -1020,4 +1020,54 @@ class PolygonBreakerHandmadeTest {
         assertNoAreaAtTestNodes(plan, "106.1");
         assertAreaAtTestNodes(plan, "106.1");
     }
+
+    // -----------------------------------------------------------------------
+    // Test 107: Compound test — Gone (consolidate open outers) then Break
+    // The MP has 3 open outer ways (one tagged waterway=stream).
+    // Gone consolidates them into a closed way, preserving the tagged way.
+    // Then Break splits the resulting way by the highway=secondary.
+    // -----------------------------------------------------------------------
+
+    @Test
+    void test107_goneConsolidatesOpenOuters() {
+        DataSet localDs = JosmTestSetup.loadDataSet("unit-tests-break-polygon.osm");
+        Relation target = localDs.getRelations().stream()
+            .filter(r -> !r.isDeleted() && "107".equals(r.get("_test_id"))
+                && "multipolygon".equals(r.get("type")))
+            .findFirst().orElse(null);
+        assertNotNull(target, "Test 107: should find relation");
+
+        // Gone should not directly break — it should return null for break analysis
+        BreakPlan breakBefore = PolygonBreaker.analyze(target, localDs);
+        assertNull(breakBefore, "Test 107: break should not work on unconsolidated open outers");
+
+        // Run the multipolygon analyzer + fixer (Gone)
+        AnalysisResult result = MultipolygonAnalyzer.analyzeAll(localDs, null);
+        FixPlan gonePlan = result.getFixPlans().stream()
+            .filter(p -> "107".equals(p.getRelation().get("_test_id")))
+            .findFirst().orElse(null);
+        assertNotNull(gonePlan, "Test 107: Gone should find this relation fixable");
+        MultipolygonFixer.fixRelations(List.of(gonePlan));
+
+        // After Gone: relation should be dissolved, waterway=stream way preserved
+        assertTrue(target.isDeleted(), "Test 107: relation should be deleted after Gone");
+        Way streamWay = localDs.getWays().stream()
+            .filter(w -> !w.isDeleted() && "stream".equals(w.get("waterway")))
+            .findFirst().orElse(null);
+        assertNotNull(streamWay, "Test 107: waterway=stream way should be preserved");
+
+        // Find the consolidated closed way (natural=wood)
+        Way consolidatedWay = localDs.getWays().stream()
+            .filter(w -> !w.isDeleted() && w.isClosed() && "wood".equals(w.get("natural")))
+            .findFirst().orElse(null);
+        assertNotNull(consolidatedWay, "Test 107: should have a consolidated closed natural=wood way");
+
+        // Now Break should work on the consolidated way
+        BreakPlan breakPlan = PolygonBreaker.analyze(consolidatedWay, localDs);
+        assertNotNull(breakPlan, "Test 107: Break should work after Gone consolidation");
+        assertEquals(1, breakPlan.getCorridors().size(), "Test 107: should find 1 road corridor");
+        assertPlanPieces(breakPlan, 2, "107");
+        assertAllClosed(breakPlan, "107");
+        assertAllPositiveArea(breakPlan, "107");
+    }
 }

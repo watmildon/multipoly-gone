@@ -47,6 +47,7 @@ class PolygonBreaker {
      */
     static BreakPlan analyze(OsmPrimitive selected, DataSet ds) {
         if (selected instanceof Way way) {
+            if (way.isIncomplete() || way.isDeleted()) return null;
             if (!way.isClosed() || way.getNodesCount() < 4) return null;
             return analyzeClosedWay(way, way, ds, null);
         } else if (selected instanceof Relation rel) {
@@ -58,15 +59,15 @@ class PolygonBreaker {
     private static BreakPlan analyzeMultipolygon(Relation rel, DataSet ds) {
         String type = rel.get("type");
         if (!"multipolygon".equals(type) && !"boundary".equals(type)) return null;
+        if (rel.hasIncompleteMembers()) return null;
 
         // Find outer way(s) and inner way(s)
         List<Way> outerWays = new ArrayList<>();
         List<Way> innerWays = new ArrayList<>();
-        Set<Way> memberWays = new HashSet<>();
 
         for (RelationMember m : rel.getMembers()) {
             if (!(m.getMember() instanceof Way w)) continue;
-            memberWays.add(w);
+            if (w.isDeleted() || w.isIncomplete() || w.getNodesCount() < 2) return null;
             String role = m.getRole();
             if ("outer".equals(role) || role.isEmpty()) {
                 outerWays.add(w);
@@ -108,18 +109,19 @@ class PolygonBreaker {
             excludeWays.add(polygonWay);
         }
 
-        List<RoadChain> roadChains = findAndChainRoads(polygonWay, ds, excludeWays);
-        if (roadChains.isEmpty()) return null;
+        // 3. Get configured tag filters from preferences
+        List<MultipolyGonePreferences.BreakTagWidth> tagWidths =
+            MultipolyGonePreferences.getBreakTagWidths();
 
-        // 3. Get road widths from preferences
-        Map<String, Double> roadWidths = MultipolyGonePreferences.getRoadWidths();
+        List<RoadChain> roadChains = findAndChainRoads(polygonWay, ds, excludeWays, tagWidths);
+        if (roadChains.isEmpty()) return null;
 
         // 4. Buffer each road chain and build corridors
         List<Geometry> corridorGeometries = new ArrayList<>();
         List<BreakPlan.RoadCorridor> corridors = new ArrayList<>();
 
         for (RoadChain chain : roadChains) {
-            double width = getChainWidth(chain, roadWidths);
+            double width = getChainWidth(chain, tagWidths);
             double halfWidth = metersToProjectionUnits(width / 2.0, polygonWay);
 
             org.locationtech.jts.geom.LineString jtsLine = chainToJtsLineString(chain);
@@ -193,7 +195,7 @@ class PolygonBreaker {
         }
 
         // 10. Build description
-        String desc = tr("{0} road(s) split polygon into {1} pieces",
+        String desc = tr("{0} way(s) split polygon into {1} pieces",
             corridors.size(), resultPolygons.size());
 
         return new BreakPlan(source, corridors, resultPolygons,
@@ -220,15 +222,16 @@ class PolygonBreaker {
      * connected ways into logical road polylines.
      */
     private static List<RoadChain> findAndChainRoads(Way polygonWay, DataSet ds,
-                                                      Set<Way> excludeWays) {
+                                                      Set<Way> excludeWays,
+                                                      List<MultipolyGonePreferences.BreakTagWidth> tagWidths) {
         BBox bbox = polygonWay.getBBox();
         Polygon jtsPolygon = wayToJtsPolygon(polygonWay);
 
-        // Find candidate highway ways by bbox
+        // Find candidate ways matching any configured tag filter
         List<Way> candidates = new ArrayList<>();
         for (Way w : ds.searchWays(bbox)) {
             if (w.isDeleted() || w.getNodesCount() < 2) continue;
-            if (!w.hasKey("highway")) continue;
+            if (!matchesAnyTagFilter(w, tagWidths)) continue;
             if (excludeWays.contains(w)) continue;
             // Don't skip closed highway ways — internal ring roads need to be
             // included as dividers (they create cutouts inside the polygon)
@@ -498,18 +501,119 @@ class PolygonBreaker {
         return units;
     }
 
-    /** Determines the buffer width for a road chain based on highway type preferences. */
-    private static double getChainWidth(RoadChain chain, Map<String, Double> roadWidths) {
-        // Use the widest highway type in the chain
+    /** Meters per lane — US standard is 12 ft (3.66m); 3.5m is a conservative international default. */
+    static final double METERS_PER_LANE = 3.5;
+
+    /** Returns true if the way matches at least one configured tag filter. */
+    private static boolean matchesAnyTagFilter(Way w,
+                                                List<MultipolyGonePreferences.BreakTagWidth> tagWidths) {
+        for (MultipolyGonePreferences.BreakTagWidth tw : tagWidths) {
+            if (tw.matches(w)) return true;
+        }
+        return false;
+    }
+
+    /** Determines the buffer width for a road chain based on OSM tags or configured tag filters. */
+    private static double getChainWidth(RoadChain chain,
+                                         List<MultipolyGonePreferences.BreakTagWidth> tagWidths) {
+        // Use the widest way in the chain
         double maxWidth = 0;
         for (Way w : chain.sourceWays) {
-            String highway = w.get("highway");
-            if (highway != null && roadWidths.containsKey(highway)) {
-                maxWidth = Math.max(maxWidth, roadWidths.get(highway));
+            // 1. Explicit OSM "width" tag (most authoritative)
+            double wayWidth = parseWidthTag(w.get("width"));
+            if (wayWidth > 0) {
+                maxWidth = Math.max(maxWidth, wayWidth);
+                continue;
+            }
+            // 2. Estimate from "lanes" tag
+            wayWidth = estimateWidthFromLanes(w);
+            if (wayWidth > 0) {
+                maxWidth = Math.max(maxWidth, wayWidth);
+                continue;
+            }
+            // 3. Best matching tag filter width (use largest if multiple filters match)
+            double filterWidth = 0;
+            for (MultipolyGonePreferences.BreakTagWidth tw : tagWidths) {
+                if (tw.matches(w)) {
+                    filterWidth = Math.max(filterWidth, tw.widthMeters);
+                }
+            }
+            if (filterWidth > 0) {
+                maxWidth = Math.max(maxWidth, filterWidth);
             }
         }
-        // Default width if highway type not in preferences
+        // Default width if no width/lanes tag and no tag filter matched
         return maxWidth > 0 ? maxWidth : 3.5;
+    }
+
+    /**
+     * Estimates road width from OSM lane tags.
+     * Checks "lanes", then falls back to "lanes:forward" + "lanes:backward" + "lanes:both_ways".
+     * Returns 0 if no lane tags are present or parseable.
+     */
+    static double estimateWidthFromLanes(Way w) {
+        String lanesStr = w.get("lanes");
+        if (lanesStr != null) {
+            try {
+                int lanes = Integer.parseInt(lanesStr.trim());
+                if (lanes > 0) return lanes * METERS_PER_LANE;
+            } catch (NumberFormatException e) {
+                // fall through
+            }
+        }
+        // Try directional lane tags
+        int total = parseLaneCount(w.get("lanes:forward"))
+                  + parseLaneCount(w.get("lanes:backward"))
+                  + parseLaneCount(w.get("lanes:both_ways"));
+        return total > 0 ? total * METERS_PER_LANE : 0;
+    }
+
+    private static int parseLaneCount(String value) {
+        if (value == null) return 0;
+        try {
+            int n = Integer.parseInt(value.trim());
+            return n > 0 ? n : 0;
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    /**
+     * Parses an OSM "width" tag value into meters.
+     * Supports: plain numbers (meters), "X m", "X ft", "X'Y\"" (feet/inches).
+     * Returns 0 if the value is null or unparseable.
+     */
+    static double parseWidthTag(String value) {
+        if (value == null || value.isEmpty()) return 0;
+        String v = value.trim();
+
+        // Feet+inches format: 12'6" or 12'
+        if (v.contains("'")) {
+            try {
+                String[] parts = v.replace("\"", "").split("'");
+                double feet = Double.parseDouble(parts[0].trim());
+                double inches = parts.length > 1 && !parts[1].trim().isEmpty()
+                        ? Double.parseDouble(parts[1].trim()) : 0;
+                return (feet + inches / 12.0) * 0.3048;
+            } catch (NumberFormatException e) {
+                return 0;
+            }
+        }
+
+        // Strip unit suffix
+        double multiplier = 1.0;
+        if (v.endsWith("ft")) {
+            v = v.substring(0, v.length() - 2).trim();
+            multiplier = 0.3048;
+        } else if (v.endsWith("m")) {
+            v = v.substring(0, v.length() - 1).trim();
+        }
+
+        try {
+            return Double.parseDouble(v) * multiplier;
+        } catch (NumberFormatException e) {
+            return 0;
+        }
     }
 
     /** Extracts all Polygon geometries from a JTS Geometry (handles Multi/GeometryCollection). */

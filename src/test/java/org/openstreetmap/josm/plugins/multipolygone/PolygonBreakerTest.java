@@ -397,6 +397,98 @@ class PolygonBreakerTest {
             "Analyzer should not crash on relations created by PolygonBreakFixer");
     }
 
+    // -----------------------------------------------------------------------
+    // parseWidthTag unit tests
+    // -----------------------------------------------------------------------
+
+    @Test
+    void parseWidthTag_plainMeters() {
+        assertEquals(5.0, PolygonBreaker.parseWidthTag("5"), 1e-6);
+        assertEquals(3.5, PolygonBreaker.parseWidthTag("3.5"), 1e-6);
+        assertEquals(12.0, PolygonBreaker.parseWidthTag("12"), 1e-6);
+    }
+
+    @Test
+    void parseWidthTag_withMSuffix() {
+        assertEquals(5.0, PolygonBreaker.parseWidthTag("5 m"), 1e-6);
+        assertEquals(3.5, PolygonBreaker.parseWidthTag("3.5m"), 1e-6);
+    }
+
+    @Test
+    void parseWidthTag_feet() {
+        assertEquals(10 * 0.3048, PolygonBreaker.parseWidthTag("10 ft"), 1e-6);
+        assertEquals(20 * 0.3048, PolygonBreaker.parseWidthTag("20ft"), 1e-6);
+    }
+
+    @Test
+    void parseWidthTag_feetAndInches() {
+        // 12'6" = 12.5 feet
+        assertEquals(12.5 * 0.3048, PolygonBreaker.parseWidthTag("12'6\""), 1e-6);
+        // 10' (no inches)
+        assertEquals(10 * 0.3048, PolygonBreaker.parseWidthTag("10'"), 1e-6);
+    }
+
+    @Test
+    void parseWidthTag_nullAndInvalid() {
+        assertEquals(0, PolygonBreaker.parseWidthTag(null), 1e-6);
+        assertEquals(0, PolygonBreaker.parseWidthTag(""), 1e-6);
+        assertEquals(0, PolygonBreaker.parseWidthTag("abc"), 1e-6);
+    }
+
+    // -----------------------------------------------------------------------
+    // estimateWidthFromLanes unit tests
+    // -----------------------------------------------------------------------
+
+    private Way wayWithTags(String... keyValues) {
+        Way w = new Way();
+        for (int i = 0; i < keyValues.length; i += 2) {
+            w.put(keyValues[i], keyValues[i + 1]);
+        }
+        return w;
+    }
+
+    @Test
+    void estimateWidthFromLanes_simpleLanesTag() {
+        assertEquals(2 * 3.5, PolygonBreaker.estimateWidthFromLanes(
+            wayWithTags("lanes", "2")), 1e-6);
+        assertEquals(4 * 3.5, PolygonBreaker.estimateWidthFromLanes(
+            wayWithTags("lanes", "4")), 1e-6);
+    }
+
+    @Test
+    void estimateWidthFromLanes_directionalTags() {
+        // lanes:forward=2 + lanes:backward=1 = 3 lanes
+        assertEquals(3 * 3.5, PolygonBreaker.estimateWidthFromLanes(
+            wayWithTags("lanes:forward", "2", "lanes:backward", "1")), 1e-6);
+    }
+
+    @Test
+    void estimateWidthFromLanes_withBothWays() {
+        // lanes:forward=1 + lanes:backward=1 + lanes:both_ways=1 = 3 lanes
+        assertEquals(3 * 3.5, PolygonBreaker.estimateWidthFromLanes(
+            wayWithTags("lanes:forward", "1", "lanes:backward", "1",
+                        "lanes:both_ways", "1")), 1e-6);
+    }
+
+    @Test
+    void estimateWidthFromLanes_totalLanesTakesPrecedence() {
+        // "lanes" tag present — directional tags are ignored
+        Way w = wayWithTags("lanes", "2", "lanes:forward", "3", "lanes:backward", "3");
+        assertEquals(2 * 3.5, PolygonBreaker.estimateWidthFromLanes(w), 1e-6);
+    }
+
+    @Test
+    void estimateWidthFromLanes_noLaneTags() {
+        assertEquals(0, PolygonBreaker.estimateWidthFromLanes(
+            wayWithTags("highway", "residential")), 1e-6);
+    }
+
+    @Test
+    void estimateWidthFromLanes_invalidValue() {
+        assertEquals(0, PolygonBreaker.estimateWidthFromLanes(
+            wayWithTags("lanes", "abc")), 1e-6);
+    }
+
     /**
      * Computes signed area from EastNorth coordinates using shoelace formula.
      */

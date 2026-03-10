@@ -923,8 +923,71 @@ public class MultipolyGoneDialog extends ToggleDialog
             return;
         }
 
+        // Check if primitives being deleted need referrer downloads
+        if (shouldDownloadBeforeBreak(freshPlan, () -> {
+            // Re-analyze after download for freshness
+            BreakPlan postDownloadPlan = PolygonBreaker.analyze(
+                currentBreakPlan.getSource(), getDataSet());
+            if (postDownloadPlan != null) {
+                PolygonBreakFixer.execute(postDownloadPlan);
+            }
+            refresh();
+        })) {
+            return;
+        }
+
         PolygonBreakFixer.execute(freshPlan);
         refresh();
+    }
+
+    /**
+     * Finds primitives that the break operation will delete and checks if their
+     * referrers are downloaded. The break always deletes the source primitive,
+     * and for relations also deletes the outer way(s).
+     */
+    private boolean shouldDownloadBeforeBreak(BreakPlan plan, Runnable fixAction) {
+        Set<OsmPrimitive> needDownload = new java.util.LinkedHashSet<>();
+        OsmPrimitive source = plan.getSource();
+
+        if (!source.isReferrersDownloaded()) {
+            needDownload.add(source);
+        }
+        if (source instanceof Relation rel) {
+            for (RelationMember m : rel.getMembers()) {
+                if (m.isWay()
+                        && ("outer".equals(m.getRole()) || m.getRole().isEmpty())
+                        && !m.getWay().isReferrersDownloaded()) {
+                    needDownload.add(m.getWay());
+                }
+            }
+        }
+
+        if (needDownload.isEmpty()) {
+            return false;
+        }
+
+        String pref = Config.getPref().get(
+            MultipolyGonePreferences.PREF_DOWNLOAD_BEFORE_FIX, "prompt");
+
+        if ("never".equals(pref)) {
+            return false;
+        }
+
+        if ("always".equals(pref)) {
+            downloadThenFix(needDownload, fixAction);
+            return true;
+        }
+
+        // "prompt"
+        int choice = showDownloadPrompt(needDownload.size());
+        if (choice == 0) {
+            downloadThenFix(needDownload, fixAction);
+            return true;
+        }
+        if (choice == 1) {
+            return false;
+        }
+        return true; // Cancel
     }
 
     // -----------------------------------------------------------------------
@@ -1008,6 +1071,24 @@ public class MultipolyGoneDialog extends ToggleDialog
         }
     }
 
+    /**
+     * Finds the most relevant tag on a way for display purposes.
+     * Checks configured break tag filters first, then falls back to "highway".
+     */
+    private static String describePrimaryTag(Way w) {
+        List<MultipolyGonePreferences.BreakTagWidth> tagWidths =
+            MultipolyGonePreferences.getBreakTagWidths();
+        for (MultipolyGonePreferences.BreakTagWidth tw : tagWidths) {
+            if (tw.matches(w)) {
+                String val = w.get(tw.tagKey);
+                return tw.tagKey + "=" + (val != null ? val : "*");
+            }
+        }
+        // Fallback
+        String highway = w.get("highway");
+        return highway != null ? "highway=" + highway : "way";
+    }
+
     private static class RoadCorridorRenderer extends DefaultListCellRenderer {
         @Override
         public Component getListCellRendererComponent(JList<?> jlist, Object value,
@@ -1016,9 +1097,9 @@ public class MultipolyGoneDialog extends ToggleDialog
                 jlist, value, index, isSelected, cellHasFocus);
             if (value instanceof BreakPlan.RoadCorridor corridor) {
                 Way road = corridor.getPrimaryWay();
-                String highway = road != null ? road.get("highway") : "?";
+                String tagDesc = road != null ? describePrimaryTag(road) : "?";
                 String name = road != null ? road.get("name") : null;
-                String text = "highway=" + highway;
+                String text = tagDesc;
                 if (name != null) {
                     text = name + " (" + text + ")";
                 }

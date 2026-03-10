@@ -9,9 +9,7 @@ import java.awt.FlowLayout;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
-import java.util.Map;
 import java.util.Set;
 
 import javax.swing.BorderFactory;
@@ -51,7 +49,8 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
 
     public static final String PREF_ROAD_WIDTHS = "multipolygone.roadWidths";
     public static final String DEFAULT_ROAD_WIDTHS =
-        "motorway=12;trunk=10;primary=7;secondary=5;tertiary=4;residential=3.5;service=3";
+        "highway=motorway=12;highway=trunk=10;highway=primary=7;highway=secondary=5"
+        + ";highway=tertiary=4;highway=residential=3.5;highway=service=3";
 
     private DefaultTableModel identityTagsTableModel;
     private DefaultTableModel insignificantTagsTableModel;
@@ -83,25 +82,70 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
     }
 
     /**
-     * Parses the road widths preference into a map of highway type → width in meters.
+     * A configured tag filter with associated buffer width.
+     * If {@code tagValue} is null, matches any way with the given key (key=*).
+     * If {@code tagValue} is set, matches only key=value.
      */
-    static Map<String, Double> getRoadWidths() {
+    static class BreakTagWidth {
+        final String tagKey;
+        final String tagValue; // null means wildcard (any value)
+        final double widthMeters;
+
+        BreakTagWidth(String tagKey, String tagValue, double widthMeters) {
+            this.tagKey = tagKey;
+            this.tagValue = tagValue;
+            this.widthMeters = widthMeters;
+        }
+
+        /** Returns true if the given way matches this tag filter. */
+        boolean matches(org.openstreetmap.josm.data.osm.Way w) {
+            if (tagValue == null) {
+                return w.hasKey(tagKey);
+            }
+            return tagValue.equals(w.get(tagKey));
+        }
+
+        /** Returns the filter as a display string: "key=value" or "key". */
+        String filterString() {
+            return tagValue != null ? tagKey + "=" + tagValue : tagKey;
+        }
+    }
+
+    /**
+     * Parses the break-tag widths preference.
+     * Format: "key=value=width" for specific value match, "key=width" for wildcard match.
+     * The last "=" separates the width; everything before it is the tag filter.
+     */
+    static java.util.List<BreakTagWidth> getBreakTagWidths() {
         String pref = Config.getPref().get(PREF_ROAD_WIDTHS, DEFAULT_ROAD_WIDTHS);
-        Map<String, Double> widths = new LinkedHashMap<>();
+        java.util.List<BreakTagWidth> result = new java.util.ArrayList<>();
         for (String entry : pref.split(";")) {
             String trimmed = entry.trim();
             if (trimmed.isEmpty()) continue;
-            String[] parts = trimmed.split("=", 2);
-            if (parts.length == 2) {
-                try {
-                    widths.put(parts[0].trim(), Double.parseDouble(parts[1].trim()));
-                } catch (NumberFormatException e) {
-                    // skip malformed entries
+            int lastEq = trimmed.lastIndexOf('=');
+            if (lastEq <= 0) continue;
+            String filter = trimmed.substring(0, lastEq).trim();
+            String widthStr = trimmed.substring(lastEq + 1).trim();
+            try {
+                double width = Double.parseDouble(widthStr);
+                int eqIdx = filter.indexOf('=');
+                if (eqIdx > 0) {
+                    // key=value format
+                    result.add(new BreakTagWidth(
+                        filter.substring(0, eqIdx).trim(),
+                        filter.substring(eqIdx + 1).trim(),
+                        width));
+                } else {
+                    // key-only (wildcard) format
+                    result.add(new BreakTagWidth(filter, null, width));
                 }
+            } catch (NumberFormatException e) {
+                // skip malformed entries
             }
         }
-        return widths;
+        return result;
     }
+
 
     private static Set<String> parseTagSet(String pref) {
         Set<String> tags = new LinkedHashSet<>();
@@ -332,15 +376,17 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
         gbc.gridy = row++;
         gbc.gridwidth = 4;
         JLabel roadWidthsInfo = new JLabel(
-            tr("Road types and widths (meters) used for polygon splitting"));
+            tr("Tag filters and widths (meters) for polygon splitting"));
         roadWidthsInfo.setToolTipText(
-            tr("When splitting a polygon along a road, the polygon boundary is offset "
-               + "from the road centerline by half the configured width."));
+            tr("<html>Ways matching these tag filters are used as split lines.<br>"
+               + "Use <b>key=value</b> (e.g. highway=motorway) to match a specific tag,<br>"
+               + "or <b>key</b> alone (e.g. waterway) to match any value of that key.<br>"
+               + "The polygon boundary is offset by half the configured width.</html>"));
         breakPanel.add(roadWidthsInfo, gbc);
         gbc.gridwidth = 1;
 
         roadWidthsTableModel = new DefaultTableModel(
-                new String[]{tr("Highway type"), tr("Width (m)")}, 0) {
+                new String[]{tr("Tag filter"), tr("Width (m)")}, 0) {
             @Override
             public Class<?> getColumnClass(int columnIndex) {
                 return String.class;
@@ -351,9 +397,11 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
         for (String entry : currentRoadWidths.split(";")) {
             String trimmed = entry.trim();
             if (trimmed.isEmpty()) continue;
-            String[] parts = trimmed.split("=", 2);
-            if (parts.length == 2) {
-                roadWidthsTableModel.addRow(new Object[]{parts[0].trim(), parts[1].trim()});
+            int lastEq = trimmed.lastIndexOf('=');
+            if (lastEq > 0) {
+                roadWidthsTableModel.addRow(new Object[]{
+                    trimmed.substring(0, lastEq).trim(),
+                    trimmed.substring(lastEq + 1).trim()});
             }
         }
 
@@ -483,14 +531,14 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
         String[] downloadValues = {"prompt", "always", "never"};
         Config.getPref().put(PREF_DOWNLOAD_BEFORE_FIX, downloadValues[downloadBeforeFixCombo.getSelectedIndex()]);
 
-        // Serialize road widths table
+        // Serialize break-tag widths table
         StringBuilder roadWidths = new StringBuilder();
         for (int i = 0; i < roadWidthsTableModel.getRowCount(); i++) {
-            String type = ((String) roadWidthsTableModel.getValueAt(i, 0)).trim();
+            String filter = ((String) roadWidthsTableModel.getValueAt(i, 0)).trim();
             String width = ((String) roadWidthsTableModel.getValueAt(i, 1)).trim();
-            if (type.isEmpty() || width.isEmpty()) continue;
+            if (filter.isEmpty() || width.isEmpty()) continue;
             if (roadWidths.length() > 0) roadWidths.append(';');
-            roadWidths.append(type).append('=').append(width);
+            roadWidths.append(filter).append('=').append(width);
         }
         Config.getPref().put(PREF_ROAD_WIDTHS, roadWidths.toString());
 

@@ -585,6 +585,22 @@
     <tag k='_test_node_count' v='5' />
     <tag k='_test_note' v='An area should be created here' />
   </node>
+  <node id='-501411' action='modify' visible='true' lat='35.45787422338' lon='-106.08008624817' />
+  <node id='-501412' action='modify' visible='true' lat='35.45852015763' lon='-106.05962669517' />
+  <node id='-501413' action='modify' visible='true' lat='35.44172418192' lon='-106.0581992845' />
+  <node id='-501414' action='modify' visible='true' lat='35.44172418192' lon='-106.07929324224' />
+  <node id='-501439' action='modify' visible='true' lat='35.4463828877' lon='-106.08469399569' />
+  <node id='-501440' action='modify' visible='true' lat='35.4506768017' lon='-106.07039512898' />
+  <node id='-501441' action='modify' visible='true' lat='35.44715946359' lon='-106.06428306439' />
+  <node id='-501442' action='modify' visible='true' lat='35.45163604905' lon='-106.05161034331' />
+  <node id='-501482' action='modify' visible='true' lat='35.45350883235' lon='-106.06932972323'>
+    <tag k='_test_id' v='107' />
+    <tag k='_test_note' v='An area should be created here' />
+  </node>
+  <node id='-501487' action='modify' visible='true' lat='35.44560630433' lon='-106.06871290937'>
+    <tag k='_test_id' v='107' />
+    <tag k='_test_note' v='An area should be created here' />
+  </node>
   <way id='-883356' action='modify' visible='true'>
     <nd ref='-501096' />
     <nd ref='-501097' />
@@ -1176,6 +1192,28 @@
     <tag k='_test_object_to_break' v='yes' />
     <tag k='landuse' v='grass' />
   </way>
+  <way id='-883457' action='modify' visible='true'>
+    <nd ref='-501411' />
+    <nd ref='-501412' />
+    <tag k='waterway' v='stream' />
+  </way>
+  <way id='-883458' action='modify' visible='true'>
+    <nd ref='-501412' />
+    <nd ref='-501413' />
+  </way>
+  <way id='-883459' action='modify' visible='true'>
+    <nd ref='-501413' />
+    <nd ref='-501414' />
+    <nd ref='-501411' />
+  </way>
+  <way id='-883534' action='modify' visible='true'>
+    <nd ref='-501439' />
+    <nd ref='-501440' />
+    <nd ref='-501441' />
+    <nd ref='-501442' />
+    <tag k='_test_id' v='107' />
+    <tag k='highway' v='secondary' />
+  </way>
   <relation id='-501061' action='modify' visible='true'>
     <member type='way' ref='-883368' role='outer' />
     <member type='way' ref='-883373' role='inner' />
@@ -1246,6 +1284,15 @@
     <tag k='_test_note' v='A square area with a hole in the north west corner split into four pieces including 2 central cut outs caused by internal rings.' />
     <tag k='_test_object_to_break' v='yes' />
     <tag k='landuse' v='grass' />
+    <tag k='type' v='multipolygon' />
+  </relation>
+  <relation id='-501071' action='modify' visible='true'>
+    <member type='way' ref='-883458' role='outer' />
+    <member type='way' ref='-883459' role='outer' />
+    <member type='way' ref='-883457' role='outer' />
+    <tag k='_test_id' v='107' />
+    <tag k='_test_note' v='A square MP made up of open ways. it will need to be simplified via the &quot;gone&quot; command and then it can be broken into two parts by the highway=secondary that runs through it.' />
+    <tag k='natural' v='wood' />
     <tag k='type' v='multipolygon' />
   </relation>
 </osm>
