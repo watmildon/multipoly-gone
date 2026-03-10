@@ -162,7 +162,7 @@ class PolygonBreaker {
         List<Polygon> resultJtsPolygons = extractPolygons(difference);
         if (resultJtsPolygons.size() < 2) return null; // no actual split
 
-        // 8. Convert to BreakPlan with node reuse
+        // 8. Convert to BreakPlan with node reuse and arc simplification
         List<Node> originalNodes = polygonWay.getNodes();
         List<BreakPlan.ResultPolygon> resultPolygons = new ArrayList<>();
 

@@ -26,6 +26,9 @@ repositories {
 }
 
 dependencies {
+    packIntoJar 'org.locationtech.jts:jts-core:1.20.0'
+    // Also add as implementation so IDEs see JTS on the classpath
+    implementation 'org.locationtech.jts:jts-core:1.20.0'
     testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
 }
 

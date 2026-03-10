@@ -801,17 +801,22 @@ class PolygonBreakerHandmadeTest {
         for (Node testNode : testNodes) {
             int expectedCount = Integer.parseInt(testNode.get("_test_node_count"));
             EastNorth pt = testNode.getEastNorth();
+            boolean found = false;
             for (int pi = 0; pi < polys.size(); pi++) {
                 if (pointInPolygonEN(pt, polys.get(pi))) {
                     int actualCount = polys.get(pi).size() - 1; // unique nodes (exclude closing duplicate)
-                    if (expectedCount != actualCount) {
-                        System.out.println("WARN: Test " + testId + ": node " + testNode.getId()
+                    assertEquals(expectedCount, actualCount,
+                        "Test " + testId + ": node " + testNode.getId()
                             + " expects " + expectedCount + " nodes in containing poly " + pi
                             + " but found " + actualCount);
-                    }
+                    found = true;
                     break;
                 }
             }
+            assertTrue(found,
+                "Test " + testId + ": node " + testNode.getId()
+                    + " with _test_node_count=" + expectedCount
+                    + " is not inside any result polygon");
         }
     }
 
