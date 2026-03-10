@@ -892,4 +892,40 @@ class AnalyzerFixerIntegrationTest {
                 .map(p -> String.valueOf(p.getRelation().getUniqueId()))
                 .toList());
     }
+
+    // ---- Issue #16: don't create duplicate ways when outers already have the relation's tags ----
+
+    @Test
+    void outersSameTagging_dissolve_doesNotCreateDuplicateWays() {
+        DataSet ds = JosmTestSetup.loadDataSet("regression/real-data-outers-same-tagging-as-dissolved.osm");
+        long wayCountBefore = ds.getWays().stream().filter(w -> !w.isDeleted()).count();
+
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        assertFalse(plans.isEmpty(), "Should find fixable relation");
+
+        MultipolygonFixer.fixRelations(plans);
+
+        // The three outer ways already had landuse=farmland — no new ways should be created
+        long wayCountAfter = ds.getWays().stream().filter(w -> !w.isDeleted()).count();
+        assertTrue(wayCountAfter <= wayCountBefore,
+            "No new ways should be created when outers already have the relation's tags. " +
+            "Before: " + wayCountBefore + ", After: " + wayCountAfter);
+    }
+
+    @Test
+    void outersSameTagging_dissolve_waysRetainTags() {
+        DataSet ds = JosmTestSetup.loadDataSet("regression/real-data-outers-same-tagging-as-dissolved.osm");
+
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        MultipolygonFixer.fixRelations(plans);
+
+        // All three original ways should still exist and have landuse=farmland
+        for (long wayId : new long[]{330681296, 1449431095, 1449431096}) {
+            Way way = (Way) ds.getPrimitiveById(wayId, org.openstreetmap.josm.data.osm.OsmPrimitiveType.WAY);
+            assertNotNull(way, "Way " + wayId + " should still exist");
+            assertFalse(way.isDeleted(), "Way " + wayId + " should not be deleted");
+            assertEquals("farmland", way.get("landuse"),
+                "Way " + wayId + " should retain landuse=farmland");
+        }
+    }
 }

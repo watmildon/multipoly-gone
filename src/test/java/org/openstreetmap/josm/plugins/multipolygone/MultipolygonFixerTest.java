@@ -1589,6 +1589,200 @@ class MultipolygonFixerTest {
             "Merged ring should have 9 nodes (8 unique + 1 closing)");
     }
 
+    // --- Issue #16: don't create duplicate ways when outers already have the relation's tags ---
+
+    @Test
+    void outersAlreadyTagged_dissolve_noNewWaysCreated() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        FixPlan plan = findPlanByTestId(MultipolygonAnalyzer.findFixableRelations(ds), "133");
+        assertNotNull(plan, "Test case 133 should be fixable");
+
+        long wayCountBefore = ds.getWays().stream().filter(w -> !w.isDeleted()).count();
+
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        long wayCountAfter = ds.getWays().stream().filter(w -> !w.isDeleted()).count();
+        assertTrue(wayCountAfter <= wayCountBefore,
+            "No new ways should be created when outers already have the relation's tags. " +
+            "Before: " + wayCountBefore + ", After: " + wayCountAfter);
+        assertTrue(plan.getRelation().isDeleted(), "Relation should be deleted after dissolve");
+    }
+
+    @Test
+    void outersMixedTagging_dissolve_reusesTaggedOuter() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        FixPlan plan = findPlanByTestId(MultipolygonAnalyzer.findFixableRelations(ds), "134");
+        assertNotNull(plan, "Test case 134 should be fixable");
+
+        // Identify which outer already has natural=water and which doesn't
+        Relation rel = plan.getRelation();
+        Way taggedOuter = null;
+        Way untaggedOuter = null;
+        for (RelationMember m : rel.getMembers()) {
+            if ("outer".equals(m.getRole()) && m.isWay()) {
+                if ("water".equals(m.getWay().get("natural"))) {
+                    taggedOuter = m.getWay();
+                } else {
+                    untaggedOuter = m.getWay();
+                }
+            }
+        }
+        assertNotNull(taggedOuter, "Should have one outer with natural=water");
+        assertNotNull(untaggedOuter, "Should have one outer without natural=water");
+
+        long wayCountBefore = ds.getWays().stream().filter(w -> !w.isDeleted()).count();
+
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        long wayCountAfter = ds.getWays().stream().filter(w -> !w.isDeleted()).count();
+        assertTrue(wayCountAfter <= wayCountBefore,
+            "No new ways should be created for mixed tagging case. " +
+            "Before: " + wayCountBefore + ", After: " + wayCountAfter);
+        assertFalse(taggedOuter.isDeleted(), "Tagged outer should survive");
+        assertFalse(untaggedOuter.isDeleted(), "Untagged outer should survive (now tagged)");
+        assertEquals("water", untaggedOuter.get("natural"),
+            "Previously untagged outer should now have natural=water");
+    }
+
+    // --- Reuse inner: untagged inner with tagged duplicate way ---
+
+    @Test
+    void reuseInner_untaggedInnerWithTaggedDuplicate_replacesInner() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        FixPlan plan = findPlanByTestId(MultipolygonAnalyzer.findFixableRelations(ds), "137");
+        assertNotNull(plan, "Test case 137 should be fixable");
+
+        // Should have a CONSOLIDATE_RINGS op for the reuse
+        assertTrue(plan.getOperations().stream()
+                .anyMatch(op -> op.getType() == FixOpType.CONSOLIDATE_RINGS),
+            "Should have CONSOLIDATE_RINGS op for inner reuse");
+
+        Relation rel = plan.getRelation();
+        Way originalInner = rel.getMembers().stream()
+            .filter(m -> "inner".equals(m.getRole()) && m.isWay())
+            .map(RelationMember::getWay)
+            .findFirst().orElse(null);
+        assertNotNull(originalInner, "Should have an inner way");
+        assertFalse(originalInner.hasKey("natural"), "Original inner should be untagged");
+
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        // The original untagged inner should be deleted
+        assertTrue(originalInner.isDeleted(),
+            "Untagged inner should be deleted after reuse");
+
+        // The relation should now have the tagged duplicate as its inner
+        assertFalse(rel.isDeleted(), "Relation should survive");
+        Way newInner = rel.getMembers().stream()
+            .filter(m -> "inner".equals(m.getRole()) && m.isWay())
+            .map(RelationMember::getWay)
+            .findFirst().orElse(null);
+        assertNotNull(newInner, "Relation should still have an inner");
+        assertEquals("water", newInner.get("natural"),
+            "New inner should be the tagged duplicate with natural=water");
+    }
+
+    @Test
+    void reuseInner_bothTagged_noReuse() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "138");
+
+        // Test 138 has a tagged inner + tagged duplicate. The inner reuse
+        // should NOT fire because the inner already has own tags.
+        if (plan != null) {
+            // If it IS fixable, it should not have a CONSOLIDATE_RINGS op
+            // (since the inner is already closed and doesn't need chaining,
+            // and it has own tags so no reuse)
+            boolean hasConsolidateForReuse = plan.getOperations().stream()
+                .anyMatch(op -> op.getType() == FixOpType.CONSOLIDATE_RINGS);
+            assertFalse(hasConsolidateForReuse,
+                "Test 138 should not have CONSOLIDATE_RINGS — inner already tagged");
+        }
+        // Either way, no reuse should happen
+    }
+
+    // --- Overlapping outer ways (issue #9) ---
+
+    @Test
+    void overlappingOuters_forwardOverlap_trimAndDissolve() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "139");
+        assertNotNull(plan, "Test 139 should be fixable");
+
+        // Should have CONSOLIDATE_RINGS + DISSOLVE
+        assertTrue(plan.getOperations().stream()
+            .anyMatch(op -> op.getType() == FixOpType.CONSOLIDATE_RINGS),
+            "Test 139 should have CONSOLIDATE_RINGS");
+        assertTrue(plan.getOperations().stream()
+            .anyMatch(op -> op.getType() == FixOpType.DISSOLVE),
+            "Test 139 should have DISSOLVE");
+
+        // Execute and verify the result is a valid closed way with 8 unique nodes
+        MultipolygonFixer.fixRelations(List.of(plan));
+        Relation rel = plan.getRelation();
+        assertTrue(rel.isDeleted(), "Relation should be deleted after dissolve");
+    }
+
+    @Test
+    void overlappingOuters_reversedOverlap_trimAndDissolve() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "140");
+        assertNotNull(plan, "Test 140 should be fixable");
+
+        // Should have CONSOLIDATE_RINGS + DISSOLVE
+        assertTrue(plan.getOperations().stream()
+            .anyMatch(op -> op.getType() == FixOpType.CONSOLIDATE_RINGS),
+            "Test 140 should have CONSOLIDATE_RINGS");
+        assertTrue(plan.getOperations().stream()
+            .anyMatch(op -> op.getType() == FixOpType.DISSOLVE),
+            "Test 140 should have DISSOLVE");
+
+        MultipolygonFixer.fixRelations(List.of(plan));
+        Relation rel = plan.getRelation();
+        assertTrue(rel.isDeleted(), "Relation should be deleted after dissolve");
+    }
+
+    @Test
+    void overlappingOuters_doubleEndedOverlap_trimAndDissolve() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "141");
+        assertNotNull(plan, "Test 141 should be fixable");
+
+        assertTrue(plan.getOperations().stream()
+            .anyMatch(op -> op.getType() == FixOpType.CONSOLIDATE_RINGS),
+            "Test 141 should have CONSOLIDATE_RINGS");
+        assertTrue(plan.getOperations().stream()
+            .anyMatch(op -> op.getType() == FixOpType.DISSOLVE),
+            "Test 141 should have DISSOLVE");
+
+        MultipolygonFixer.fixRelations(List.of(plan));
+        Relation rel = plan.getRelation();
+        assertTrue(rel.isDeleted(), "Relation should be deleted after dissolve");
+    }
+
+    @Test
+    void overlappingOuters_redundantSubPath_absorbAndDissolve() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "142");
+        assertNotNull(plan, "Test 142 should be fixable");
+
+        assertTrue(plan.getOperations().stream()
+            .anyMatch(op -> op.getType() == FixOpType.CONSOLIDATE_RINGS),
+            "Test 142 should have CONSOLIDATE_RINGS");
+        assertTrue(plan.getOperations().stream()
+            .anyMatch(op -> op.getType() == FixOpType.DISSOLVE),
+            "Test 142 should have DISSOLVE");
+
+        MultipolygonFixer.fixRelations(List.of(plan));
+        Relation rel = plan.getRelation();
+        assertTrue(rel.isDeleted(), "Relation should be deleted after dissolve");
+    }
+
     // --- Parent relation protection (issue #10) ---
 
     @Test

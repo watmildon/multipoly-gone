@@ -18,7 +18,9 @@ import org.openstreetmap.josm.data.osm.Relation;
 import org.openstreetmap.josm.data.osm.RelationMember;
 import org.openstreetmap.josm.data.osm.Way;
 import org.openstreetmap.josm.spi.preferences.Config;
-import org.openstreetmap.josm.tools.Geometry;
+import org.locationtech.jts.geom.Coordinate;
+import org.locationtech.jts.geom.GeometryFactory;
+import org.openstreetmap.josm.data.coor.EastNorth;
 import org.openstreetmap.josm.tools.Logging;
 
 public class MultipolygonAnalyzer {
@@ -442,7 +444,7 @@ public class MultipolygonAnalyzer {
                     List<WayChainBuilder.Ring> rings = outerRingsPerComp.get(c);
                     if (rings == null) continue;
                     for (WayChainBuilder.Ring ring : rings) {
-                        if (Geometry.nodeInsidePolygon(testNode, ring.getNodes())) {
+                        if (nodeInsidePolygon(testNode, ring.getNodes())) {
                             bestComp = c;
                             break;
                         }
@@ -728,6 +730,15 @@ public class MultipolygonAnalyzer {
                             ? "1 inner ring chained"
                             : innerNeedsChaining.size() + " inner rings chained");
                     }
+                    // Replace untagged already-closed inner rings with tagged duplicate ways
+                    List<WayChainBuilder.Ring> bndInnerReusable =
+                        findReusableInnerRings(innerRings, outerWays, innerWays);
+                    if (!bndInnerReusable.isEmpty()) {
+                        ops.add(new FixOp(FixOpType.CONSOLIDATE_RINGS, bndInnerReusable, null));
+                        descParts.add(bndInnerReusable.size() == 1
+                            ? "1 inner reused"
+                            : bndInnerReusable.size() + " inners reused");
+                    }
                     // Merge abutting closed inner rings
                     List<ConsolidatedInnerGroup> bndInnerConsolidations =
                         mergeAdjoiningInnerRings(innerRings);
@@ -812,6 +823,15 @@ public class MultipolygonAnalyzer {
             descParts.add(total == 1
                 ? "1 ring chained"
                 : total + " rings chained");
+        }
+
+        // Replace untagged already-closed inner rings with tagged duplicate ways from the DataSet
+        List<WayChainBuilder.Ring> innerReusable = findReusableInnerRings(innerRings, outerWays, innerWays);
+        if (!innerReusable.isEmpty()) {
+            ops.add(new FixOp(FixOpType.CONSOLIDATE_RINGS, innerReusable, null));
+            descParts.add(innerReusable.size() == 1
+                ? "1 inner reused"
+                : innerReusable.size() + " inners reused");
         }
 
         // Merge abutting closed inner rings that share edges
@@ -941,15 +961,18 @@ public class MultipolygonAnalyzer {
             uf.makeSet(w);
         }
 
-        // Map each endpoint node to all ways that touch it
-        Map<Node, List<Way>> endpointWays = new HashMap<>();
+        // Map each node (endpoint or interior) to all ways that contain it.
+        // This ensures overlapping ways that share interior nodes (issue #9)
+        // are grouped into the same component.
+        Map<Node, List<Way>> nodeToWays = new HashMap<>();
         for (Way way : allWays) {
-            endpointWays.computeIfAbsent(way.firstNode(), k -> new ArrayList<>()).add(way);
-            endpointWays.computeIfAbsent(way.lastNode(), k -> new ArrayList<>()).add(way);
+            for (Node node : way.getNodes()) {
+                nodeToWays.computeIfAbsent(node, k -> new ArrayList<>()).add(way);
+            }
         }
 
-        // Union all ways sharing an endpoint
-        for (List<Way> group : endpointWays.values()) {
+        // Union all ways sharing any node
+        for (List<Way> group : nodeToWays.values()) {
             for (int i = 1; i < group.size(); i++) {
                 uf.union(group.get(0), group.get(i));
             }
@@ -1375,6 +1398,29 @@ public class MultipolygonAnalyzer {
     }
 
     /**
+     * Finds already-closed inner rings whose source way has no own tags but where an
+     * identical-geometry way with own tags exists in the DataSet (not already a relation
+     * member). Such inners can be replaced by the tagged duplicate via CONSOLIDATE_RINGS.
+     */
+    private static List<WayChainBuilder.Ring> findReusableInnerRings(
+            List<WayChainBuilder.Ring> innerRings, List<Way> outerWays, List<Way> innerWays) {
+        Set<Way> relationWays = new HashSet<>(outerWays);
+        relationWays.addAll(innerWays);
+        List<WayChainBuilder.Ring> result = new ArrayList<>();
+        for (WayChainBuilder.Ring inner : innerRings) {
+            if (!inner.isAlreadyClosed()) continue;
+            Way sourceWay = inner.getSourceWays().get(0);
+            if (wayHasOwnTags(sourceWay)) continue;
+            Way match = MultipolygonFixer.findMatchingWayInDataSet(
+                inner.getNodes(), new HashSet<>(inner.getSourceWays()));
+            if (match != null && !relationWays.contains(match) && wayHasOwnTags(match)) {
+                result.add(inner);
+            }
+        }
+        return result;
+    }
+
+    /**
      * Finds inner rings that share a contiguous edge (>= 2 consecutive nodes) with any
      * outer ring and have their own significant tags. Such inners can be extracted from
      * the relation as standalone ways.
@@ -1449,7 +1495,7 @@ public class MultipolygonAnalyzer {
                 if (ringNodeSet.contains(testNode)) {
                     continue;
                 }
-                if (Geometry.nodeInsidePolygon(testNode, ring.getNodes())) {
+                if (nodeInsidePolygon(testNode, ring.getNodes())) {
                     return ring;
                 }
                 break; // Not inside this ring
@@ -1476,7 +1522,7 @@ public class MultipolygonAnalyzer {
                     if (containerNodes.contains(testNode)) {
                         continue;
                     }
-                    if (Geometry.nodeInsidePolygon(testNode, container.getNodes())) {
+                    if (nodeInsidePolygon(testNode, container.getNodes())) {
                         return true;
                     }
                     break;
@@ -1538,10 +1584,24 @@ public class MultipolygonAnalyzer {
             if (bNodes.contains(testNode)) {
                 continue;
             }
-            return Geometry.nodeInsidePolygon(testNode, b.getNodes());
+            return nodeInsidePolygon(testNode, b.getNodes());
         }
         // All nodes of A are shared with B — treat as not inside
         return false;
+    }
+
+    private static final GeometryFactory JTS_GF = new GeometryFactory();
+
+    /**
+     * JTS-based point-in-polygon test. Replacement for JOSM's Geometry.nodeInsidePolygon.
+     */
+    private static boolean nodeInsidePolygon(Node testNode, List<Node> polygonNodes) {
+        EastNorth en = testNode.getEastNorth();
+        if (en == null) return false;
+        org.locationtech.jts.geom.Point point = JTS_GF.createPoint(
+                new Coordinate(en.east(), en.north()));
+        org.locationtech.jts.geom.Polygon polygon = GeometryUtils.nodesToJtsPolygon(polygonNodes);
+        return polygon.contains(point);
     }
 
     static String getPrimaryTag(Relation relation) {

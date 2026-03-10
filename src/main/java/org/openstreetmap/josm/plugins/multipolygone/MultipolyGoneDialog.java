@@ -21,11 +21,13 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import javax.swing.AbstractAction;
+import javax.swing.BoxLayout;
 import javax.swing.DefaultListCellRenderer;
 import javax.swing.DefaultListModel;
 import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JOptionPane;
+import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTabbedPane;
 import javax.swing.JTree;
@@ -77,6 +79,13 @@ public class MultipolyGoneDialog extends ToggleDialog
     private final AbstractAction goneAction;
     private final AbstractAction allGoneAction;
     private final AbstractAction downloadRefsAction;
+    private final AbstractAction breakAction;
+
+    // Break Polygon tab state
+    private final JLabel breakStatusLabel;
+    private final DefaultListModel<BreakPlan.RoadCorridor> breakRoadListModel;
+    private final JList<BreakPlan.RoadCorridor> breakRoadList;
+    private BreakPlan currentBreakPlan;
 
     /** Guard to prevent selection feedback loop (list click -> map select -> list select -> ...) */
     private boolean updatingSelection;
@@ -171,10 +180,25 @@ public class MultipolyGoneDialog extends ToggleDialog
             }
         });
 
+        // --- Break Polygon tab (Tab 3) ---
+        breakStatusLabel = new JLabel(tr("Select a closed way or multipolygon"));
+        breakRoadListModel = new DefaultListModel<>();
+        breakRoadList = new JList<>(breakRoadListModel);
+        breakRoadList.setCellRenderer(new RoadCorridorRenderer());
+
+        JPanel breakPanel = new JPanel();
+        breakPanel.setLayout(new BoxLayout(breakPanel, BoxLayout.Y_AXIS));
+        breakStatusLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        breakPanel.add(breakStatusLabel);
+        JScrollPane breakScrollPane = new JScrollPane(breakRoadList);
+        breakScrollPane.setAlignmentX(Component.LEFT_ALIGNMENT);
+        breakPanel.add(breakScrollPane);
+
         // --- Tabbed pane ---
         tabbedPane = new JTabbedPane();
         tabbedPane.addTab(tr("Fixable"), new JScrollPane(list));
         tabbedPane.addTab(tr("Skipped"), new JScrollPane(skippedTree));
+        tabbedPane.addTab(tr("Break Polygon"), breakPanel);
         tabbedPane.addChangeListener(e -> updateButtonState());
 
         // --- Actions ---
@@ -211,11 +235,20 @@ public class MultipolyGoneDialog extends ToggleDialog
         downloadRefsAction.putValue(AbstractAction.SHORT_DESCRIPTION, tr("Download Refs"));
         new ImageProvider("download").getResource().attachImageIcon(downloadRefsAction, true);
 
+        breakAction = new AbstractAction(tr("Break")) {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                executeBreak();
+            }
+        };
+        new ImageProvider("dialogs", "fix").getResource().attachImageIcon(breakAction, true);
+
         createLayout(tabbedPane, false, Arrays.asList(
             new SideButton(refreshAction),
             new SideButton(goneAction),
             new SideButton(allGoneAction),
-            new SideButton(downloadRefsAction)
+            new SideButton(downloadRefsAction),
+            new SideButton(breakAction)
         ));
     }
 
@@ -670,16 +703,20 @@ public class MultipolyGoneDialog extends ToggleDialog
     }
 
     private void updateButtonState() {
-        boolean onFixableTab = tabbedPane.getSelectedIndex() == 0;
+        int selectedTab = tabbedPane.getSelectedIndex();
+        boolean onFixableTab = selectedTab == 0;
+        boolean onBreakTab = selectedTab == 2;
         boolean hasFixableItems = !listModel.isEmpty();
+
         goneAction.setEnabled(onFixableTab && hasFixableItems);
         allGoneAction.setEnabled(onFixableTab && hasFixableItems);
+        breakAction.setEnabled(onBreakTab && currentBreakPlan != null);
 
         boolean hasDownloadableSkips = currentSkipResults.stream()
             .anyMatch(sr -> sr.getReason() == SkipReason.INCOMPLETE_MEMBERS
                 || sr.getReason() == SkipReason.DELETED_OR_INCOMPLETE_WAY);
         downloadRefsAction.setEnabled(
-            (onFixableTab && hasFixableItems) || (!onFixableTab && hasDownloadableSkips));
+            (onFixableTab && hasFixableItems) || (!onFixableTab && !onBreakTab && hasDownloadableSkips));
     }
 
     @Override
@@ -789,6 +826,9 @@ public class MultipolyGoneDialog extends ToggleDialog
 
             // Sync skipped tree selection (no tab switching)
             syncSkippedTreeSelection(selectedRelations);
+
+            // Update Break Polygon tab analysis
+            updateBreakAnalysis(selected);
         } finally {
             updatingSelection = false;
         }
@@ -814,6 +854,143 @@ public class MultipolyGoneDialog extends ToggleDialog
             }
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Break Polygon tab logic
+    // -----------------------------------------------------------------------
+
+    /**
+     * Updates the Break Polygon tab based on the current map selection.
+     */
+    private void updateBreakAnalysis(Collection<? extends OsmPrimitive> selected) {
+        breakRoadListModel.clear();
+        currentBreakPlan = null;
+
+        DataSet ds = getDataSet();
+        if (ds == null || selected.isEmpty()) {
+            breakStatusLabel.setText(tr("Select a closed way or multipolygon"));
+            updateButtonState();
+            return;
+        }
+
+        // Find a single suitable primitive from the selection
+        OsmPrimitive target = null;
+        for (OsmPrimitive prim : selected) {
+            if (prim instanceof Way way && way.isClosed() && way.getNodesCount() >= 4) {
+                target = way;
+                break;
+            }
+            if (prim instanceof Relation rel
+                && ("multipolygon".equals(rel.get("type")) || "boundary".equals(rel.get("type")))) {
+                target = rel;
+                break;
+            }
+        }
+
+        if (target == null) {
+            breakStatusLabel.setText(tr("Select a closed way or multipolygon"));
+            updateButtonState();
+            return;
+        }
+
+        BreakPlan plan = PolygonBreaker.analyze(target, ds);
+        if (plan == null) {
+            breakStatusLabel.setText(tr("No intersecting roads found"));
+            updateButtonState();
+            return;
+        }
+
+        currentBreakPlan = plan;
+        breakStatusLabel.setText(plan.getDescription());
+        for (BreakPlan.RoadCorridor corridor : plan.getCorridors()) {
+            breakRoadListModel.addElement(corridor);
+        }
+        updateButtonState();
+    }
+
+    private void executeBreak() {
+        if (currentBreakPlan == null) return;
+
+        // Re-analyze to get fresh plan
+        DataSet ds = getDataSet();
+        if (ds == null) return;
+        BreakPlan freshPlan = PolygonBreaker.analyze(currentBreakPlan.getSource(), ds);
+        if (freshPlan == null) {
+            currentBreakPlan = null;
+            breakStatusLabel.setText(tr("No intersecting roads found"));
+            breakRoadListModel.clear();
+            updateButtonState();
+            return;
+        }
+
+        // Check if primitives being deleted need referrer downloads
+        if (shouldDownloadBeforeBreak(freshPlan, () -> {
+            // Re-analyze after download for freshness
+            BreakPlan postDownloadPlan = PolygonBreaker.analyze(
+                currentBreakPlan.getSource(), getDataSet());
+            if (postDownloadPlan != null) {
+                PolygonBreakFixer.execute(postDownloadPlan);
+            }
+            refresh();
+        })) {
+            return;
+        }
+
+        PolygonBreakFixer.execute(freshPlan);
+        refresh();
+    }
+
+    /**
+     * Finds primitives that the break operation will delete and checks if their
+     * referrers are downloaded. The break always deletes the source primitive,
+     * and for relations also deletes the outer way(s).
+     */
+    private boolean shouldDownloadBeforeBreak(BreakPlan plan, Runnable fixAction) {
+        Set<OsmPrimitive> needDownload = new java.util.LinkedHashSet<>();
+        OsmPrimitive source = plan.getSource();
+
+        if (!source.isReferrersDownloaded()) {
+            needDownload.add(source);
+        }
+        if (source instanceof Relation rel) {
+            for (RelationMember m : rel.getMembers()) {
+                if (m.isWay()
+                        && ("outer".equals(m.getRole()) || m.getRole().isEmpty())
+                        && !m.getWay().isReferrersDownloaded()) {
+                    needDownload.add(m.getWay());
+                }
+            }
+        }
+
+        if (needDownload.isEmpty()) {
+            return false;
+        }
+
+        String pref = Config.getPref().get(
+            MultipolyGonePreferences.PREF_DOWNLOAD_BEFORE_FIX, "prompt");
+
+        if ("never".equals(pref)) {
+            return false;
+        }
+
+        if ("always".equals(pref)) {
+            downloadThenFix(needDownload, fixAction);
+            return true;
+        }
+
+        // "prompt"
+        int choice = showDownloadPrompt(needDownload.size());
+        if (choice == 0) {
+            downloadThenFix(needDownload, fixAction);
+            return true;
+        }
+        if (choice == 1) {
+            return false;
+        }
+        return true; // Cancel
+    }
+
+    // -----------------------------------------------------------------------
 
     /**
      * Extracts the operation description from a FixPlan, stripping the trailing
@@ -889,6 +1066,46 @@ public class MultipolyGoneDialog extends ToggleDialog
                 String opDesc = getOperationDescription(fr);
                 label.setText(relLabel + " \u2192 " + opDesc);
                 label.setIcon(ImageProvider.getPadded(fr.getRelation(), ICON_SIZE));
+            }
+            return label;
+        }
+    }
+
+    /**
+     * Finds the most relevant tag on a way for display purposes.
+     * Checks configured break tag filters first, then falls back to "highway".
+     */
+    private static String describePrimaryTag(Way w) {
+        List<MultipolyGonePreferences.BreakTagWidth> tagWidths =
+            MultipolyGonePreferences.getBreakTagWidths();
+        for (MultipolyGonePreferences.BreakTagWidth tw : tagWidths) {
+            if (tw.matches(w)) {
+                String val = w.get(tw.tagKey);
+                return tw.tagKey + "=" + (val != null ? val : "*");
+            }
+        }
+        // Fallback
+        String highway = w.get("highway");
+        return highway != null ? "highway=" + highway : "way";
+    }
+
+    private static class RoadCorridorRenderer extends DefaultListCellRenderer {
+        @Override
+        public Component getListCellRendererComponent(JList<?> jlist, Object value,
+                int index, boolean isSelected, boolean cellHasFocus) {
+            JLabel label = (JLabel) super.getListCellRendererComponent(
+                jlist, value, index, isSelected, cellHasFocus);
+            if (value instanceof BreakPlan.RoadCorridor corridor) {
+                Way road = corridor.getPrimaryWay();
+                String tagDesc = road != null ? describePrimaryTag(road) : "?";
+                String name = road != null ? road.get("name") : null;
+                String text = tagDesc;
+                if (name != null) {
+                    text = name + " (" + text + ")";
+                }
+                text += " \u2014 " + corridor.getWidthMeters() + "m wide, "
+                    + corridor.getSourceWays().size() + " way(s)";
+                label.setText(text);
             }
             return label;
         }
