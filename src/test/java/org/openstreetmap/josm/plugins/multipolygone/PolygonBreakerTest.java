@@ -13,6 +13,7 @@ import org.openstreetmap.josm.data.coor.EastNorth;
 import org.openstreetmap.josm.data.osm.DataSet;
 import org.openstreetmap.josm.data.osm.Relation;
 import org.openstreetmap.josm.data.osm.Way;
+import org.openstreetmap.josm.data.projection.ProjectionRegistry;
 
 class PolygonBreakerTest {
 
@@ -395,6 +396,166 @@ class PolygonBreakerTest {
         // The analyzer should gracefully handle newly created relations
         assertDoesNotThrow(() -> MultipolygonAnalyzer.analyzeAll(ds, null),
             "Analyzer should not crash on relations created by PolygonBreakFixer");
+    }
+
+    // -----------------------------------------------------------------------
+    // Width accuracy tests (issue #19)
+    // -----------------------------------------------------------------------
+
+    /**
+     * Verifies that a road with width=40 produces a corridor gap that is
+     * approximately 40m wide, not 20m (the reported bug in issue #19).
+     *
+     * The test polygon is at lat ~56.66 (Latvia), matching the bug report.
+     * At this latitude, Mercator distortion is significant: cos(56.66°) ≈ 0.55,
+     * so if the code doesn't account for projection distortion, the gap will
+     * be roughly half the expected width.
+     */
+    @Test
+    void width40Road_corridorGapShouldBe40Meters() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-break-width.osm");
+        Way polygon = findBreakTarget(ds, "width40");
+        assertNotNull(polygon, "Should find width40 test case");
+
+        BreakPlan plan = PolygonBreaker.analyze(polygon, ds);
+        assertNotNull(plan, "Should produce a break plan");
+        assertEquals(1, plan.getCorridors().size(), "Should find 1 corridor");
+        assertEquals(40.0, plan.getCorridors().get(0).getWidthMeters(), 1e-6,
+            "Corridor should report 40m width");
+        assertEquals(2, plan.getResultCoordinates().size(),
+            "One road should split the polygon into 2 pieces");
+
+        // The road runs horizontally at lat 56.660.
+        // The polygon extends from lat 56.658 to 56.662.
+        // With a 40m gap, each piece should have its edge ~20m from the road centerline.
+        //
+        // Measure the gap: find the closest points between the two result polygons
+        // along the latitude axis (perpendicular to the E-W road).
+
+        List<EastNorth> piece1 = plan.getResultCoordinates().get(0);
+        List<EastNorth> piece2 = plan.getResultCoordinates().get(1);
+
+        // Find the northernmost point of the southern piece and
+        // the southernmost point of the northern piece.
+        // In EPSG:4326, north = lat = EastNorth.north().
+        // Road centerline is at lat 56.660.
+
+        // Separate pieces into north and south of the road
+        List<EastNorth> southPiece, northPiece;
+        double centroid1N = piece1.stream().mapToDouble(EastNorth::north).average().orElse(0);
+        double centroid2N = piece2.stream().mapToDouble(EastNorth::north).average().orElse(0);
+        if (centroid1N < centroid2N) {
+            southPiece = piece1;
+            northPiece = piece2;
+        } else {
+            southPiece = piece2;
+            northPiece = piece1;
+        }
+
+        // Find the edge of each piece closest to the road centerline.
+        // The south piece's max latitude (closest edge to road):
+        double southEdge = southPiece.stream()
+            .mapToDouble(EastNorth::north).max().orElse(0);
+        // The north piece's min latitude (closest edge to road):
+        double northEdge = northPiece.stream()
+            .mapToDouble(EastNorth::north).min().orElse(0);
+
+        // Gap in projection units (degrees for EPSG:4326)
+        double gapDegrees = northEdge - southEdge;
+        assertTrue(gapDegrees > 0, "North edge should be north of south edge");
+
+        // Convert gap to meters.
+        // At EPSG:4326: 1 degree latitude ≈ 111,320 meters
+        double metersPerDegree = org.openstreetmap.josm.data.projection.ProjectionRegistry
+            .getProjection().getMetersPerUnit();
+        double gapMeters = gapDegrees * metersPerDegree;
+
+        // The gap should be approximately 40m (within 20% tolerance for
+        // buffer geometry approximation and curved endcaps)
+        String msg = String.format(
+            "Gap should be ~40m, got %.1fm (%.6f degrees). "
+            + "If ~20m, the width/2 bug is present (issue #19).",
+            gapMeters, gapDegrees);
+        assertTrue(gapMeters > 32.0, msg);  // At least 80% of 40m
+        assertTrue(gapMeters < 48.0, msg);  // At most 120% of 40m
+    }
+
+    /**
+     * Reproduces issue #19: under EPSG:3857 (Web Mercator, JOSM's default),
+     * metersToProjectionUnits returns meters/1.0 = meters, but Mercator
+     * projection units are only equal to meters at the equator. At lat 56.66°,
+     * 1 Mercator unit in the E-W direction ≈ cos(56.66°) ≈ 0.55 real meters.
+     *
+     * For a N-S gap (latitude direction), Mercator stretches coordinates by
+     * 1/cos(lat), so the gap in projection units needs to be larger than the
+     * real-world meters to produce the correct physical distance.
+     *
+     * This test switches to EPSG:3857, runs the same analysis, and checks
+     * the gap. It should fail until the bug is fixed.
+     */
+    @Test
+    void width40Road_corridorGapShouldBe40Meters_mercator() {
+        // Switch to EPSG:3857 (Web Mercator) — JOSM's default projection
+        org.openstreetmap.josm.data.projection.Projection oldProj =
+            ProjectionRegistry.getProjection();
+        try {
+            ProjectionRegistry.setProjection(
+                org.openstreetmap.josm.data.projection.Projections
+                    .getProjectionByCode("EPSG:3857"));
+
+            DataSet ds = JosmTestSetup.loadDataSet("testdata-break-width.osm");
+            Way polygon = findBreakTarget(ds, "width40");
+            assertNotNull(polygon, "Should find width40 test case");
+
+            BreakPlan plan = PolygonBreaker.analyze(polygon, ds);
+            assertNotNull(plan, "Should produce a break plan");
+            assertEquals(2, plan.getResultCoordinates().size(),
+                "One road should split the polygon into 2 pieces");
+
+            List<EastNorth> piece1 = plan.getResultCoordinates().get(0);
+            List<EastNorth> piece2 = plan.getResultCoordinates().get(1);
+
+            // Separate pieces into north and south
+            List<EastNorth> southPiece, northPiece;
+            double centroid1N = piece1.stream().mapToDouble(EastNorth::north).average().orElse(0);
+            double centroid2N = piece2.stream().mapToDouble(EastNorth::north).average().orElse(0);
+            if (centroid1N < centroid2N) {
+                southPiece = piece1;
+                northPiece = piece2;
+            } else {
+                southPiece = piece2;
+                northPiece = piece1;
+            }
+
+            double southEdge = southPiece.stream()
+                .mapToDouble(EastNorth::north).max().orElse(0);
+            double northEdge = northPiece.stream()
+                .mapToDouble(EastNorth::north).min().orElse(0);
+
+            // In EPSG:3857, EastNorth is in meters (at equator scale).
+            // To get real-world distance from Mercator northing difference,
+            // we need: realMeters = mercatorDiff * cos(lat)
+            // where lat is the latitude at the measurement point.
+            double gapMercator = northEdge - southEdge;
+            assertTrue(gapMercator > 0, "North edge should be north of south edge");
+
+            // Convert Mercator northing gap to real-world meters.
+            // The derivative of Mercator northing w.r.t. latitude is R/cos(lat),
+            // so: delta_lat (radians) = delta_y_mercator * cos(lat) / R
+            // and: delta_meters = delta_lat * R = delta_y_mercator * cos(lat)
+            double latRadians = Math.toRadians(56.660);
+            double gapMeters = gapMercator * Math.cos(latRadians);
+
+            String msg = String.format(
+                "Gap should be ~40m, got %.1fm (%.1f Mercator units). "
+                + "If ~20m, the Mercator distortion bug is present (issue #19).",
+                gapMeters, gapMercator);
+            assertTrue(gapMeters > 32.0, msg);  // At least 80% of 40m
+            assertTrue(gapMeters < 48.0, msg);  // At most 120% of 40m
+        } finally {
+            // Restore original projection
+            ProjectionRegistry.setProjection(oldProj);
+        }
     }
 
     // -----------------------------------------------------------------------

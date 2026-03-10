@@ -117,12 +117,15 @@ class PolygonBreaker {
         if (roadChains.isEmpty()) return null;
 
         // 4. Buffer each road chain and build corridors
+        // Compute representative latitude for projection distortion correction
+        double centroidLat = polygonWay.getBBox().getCenter().lat();
+
         List<Geometry> corridorGeometries = new ArrayList<>();
         List<BreakPlan.RoadCorridor> corridors = new ArrayList<>();
 
         for (RoadChain chain : roadChains) {
             double width = getChainWidth(chain, tagWidths);
-            double halfWidth = metersToProjectionUnits(width / 2.0);
+            double halfWidth = metersToProjectionUnits(width / 2.0, centroidLat);
 
             org.locationtech.jts.geom.LineString jtsLine = chainToJtsLineString(chain);
             if (jtsLine == null) continue;
@@ -472,14 +475,29 @@ class PolygonBreaker {
     }
 
     /**
-     * Converts meters to projection units.
-     * For degree-based projections (EPSG:4326), the buffer will be slightly
-     * elliptical in real-world meters (wider N-S than E-W away from equator),
-     * but this is acceptable for road corridor widths.
+     * Converts meters to projection units, accounting for projection distortion
+     * at the given latitude.
+     *
+     * For EPSG:4326 (degrees): divides by ~111,320 m/degree.
+     * For EPSG:3857 (Web Mercator): divides by cos(lat) because Mercator
+     * stretches coordinates by 1/cos(lat) away from the equator.
+     *
+     * @param meters   distance in real-world meters
+     * @param latDeg   latitude in degrees (used for Mercator correction)
      */
-    private static double metersToProjectionUnits(double meters) {
+    private static double metersToProjectionUnits(double meters, double latDeg) {
         double metersPerUnit = ProjectionRegistry.getProjection().getMetersPerUnit();
         if (metersPerUnit < 1e-6) return meters; // already in meters
+        if (metersPerUnit < 10) {
+            // Metric projection (e.g., EPSG:3857 where metersPerUnit ≈ 1.0).
+            // Mercator projection units equal meters only at the equator;
+            // at other latitudes, 1 proj unit = cos(lat) real meters.
+            double cosLat = Math.cos(Math.toRadians(latDeg));
+            if (cosLat > 0.01) {
+                return meters / cosLat;
+            }
+        }
+        // Degree-based projection (e.g., EPSG:4326)
         return meters / metersPerUnit;
     }
 
