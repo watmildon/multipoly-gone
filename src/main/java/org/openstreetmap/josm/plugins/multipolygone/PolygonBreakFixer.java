@@ -24,7 +24,6 @@ import org.locationtech.jts.geom.GeometryFactory;
 import org.locationtech.jts.geom.LinearRing;
 import org.locationtech.jts.geom.Point;
 import org.openstreetmap.josm.data.projection.ProjectionRegistry;
-import org.openstreetmap.josm.tools.Geometry;
 import org.openstreetmap.josm.tools.Logging;
 
 /**
@@ -200,7 +199,9 @@ class PolygonBreakFixer {
 
             for (int oi = 0; oi < outers.size(); oi++) {
                 Way outer = outers.get(oi);
-                if (Geometry.nodeInsidePolygon(testNode, outer.getNodes())) {
+                EastNorth testEN = testNode.getEastNorth();
+                org.locationtech.jts.geom.Polygon jtsPoly = GeometryUtils.nodesToJtsPolygon(outer.getNodes());
+                if (testEN != null && jtsPoly.contains(GF.createPoint(new Coordinate(testEN.east(), testEN.north())))) {
                     result.get(oi).add(inner);
                     break;
                 }

@@ -18,7 +18,9 @@ import org.openstreetmap.josm.data.osm.Relation;
 import org.openstreetmap.josm.data.osm.RelationMember;
 import org.openstreetmap.josm.data.osm.Way;
 import org.openstreetmap.josm.spi.preferences.Config;
-import org.openstreetmap.josm.tools.Geometry;
+import org.locationtech.jts.geom.Coordinate;
+import org.locationtech.jts.geom.GeometryFactory;
+import org.openstreetmap.josm.data.coor.EastNorth;
 import org.openstreetmap.josm.tools.Logging;
 
 public class MultipolygonAnalyzer {
@@ -442,7 +444,7 @@ public class MultipolygonAnalyzer {
                     List<WayChainBuilder.Ring> rings = outerRingsPerComp.get(c);
                     if (rings == null) continue;
                     for (WayChainBuilder.Ring ring : rings) {
-                        if (Geometry.nodeInsidePolygon(testNode, ring.getNodes())) {
+                        if (nodeInsidePolygon(testNode, ring.getNodes())) {
                             bestComp = c;
                             break;
                         }
@@ -1449,7 +1451,7 @@ public class MultipolygonAnalyzer {
                 if (ringNodeSet.contains(testNode)) {
                     continue;
                 }
-                if (Geometry.nodeInsidePolygon(testNode, ring.getNodes())) {
+                if (nodeInsidePolygon(testNode, ring.getNodes())) {
                     return ring;
                 }
                 break; // Not inside this ring
@@ -1476,7 +1478,7 @@ public class MultipolygonAnalyzer {
                     if (containerNodes.contains(testNode)) {
                         continue;
                     }
-                    if (Geometry.nodeInsidePolygon(testNode, container.getNodes())) {
+                    if (nodeInsidePolygon(testNode, container.getNodes())) {
                         return true;
                     }
                     break;
@@ -1538,10 +1540,24 @@ public class MultipolygonAnalyzer {
             if (bNodes.contains(testNode)) {
                 continue;
             }
-            return Geometry.nodeInsidePolygon(testNode, b.getNodes());
+            return nodeInsidePolygon(testNode, b.getNodes());
         }
         // All nodes of A are shared with B — treat as not inside
         return false;
+    }
+
+    private static final GeometryFactory JTS_GF = new GeometryFactory();
+
+    /**
+     * JTS-based point-in-polygon test. Replacement for JOSM's Geometry.nodeInsidePolygon.
+     */
+    private static boolean nodeInsidePolygon(Node testNode, List<Node> polygonNodes) {
+        EastNorth en = testNode.getEastNorth();
+        if (en == null) return false;
+        org.locationtech.jts.geom.Point point = JTS_GF.createPoint(
+                new Coordinate(en.east(), en.north()));
+        org.locationtech.jts.geom.Polygon polygon = GeometryUtils.nodesToJtsPolygon(polygonNodes);
+        return polygon.contains(point);
     }
 
     static String getPrimaryTag(Relation relation) {
