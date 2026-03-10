@@ -1702,6 +1702,87 @@ class MultipolygonFixerTest {
         // Either way, no reuse should happen
     }
 
+    // --- Overlapping outer ways (issue #9) ---
+
+    @Test
+    void overlappingOuters_forwardOverlap_trimAndDissolve() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "139");
+        assertNotNull(plan, "Test 139 should be fixable");
+
+        // Should have CONSOLIDATE_RINGS + DISSOLVE
+        assertTrue(plan.getOperations().stream()
+            .anyMatch(op -> op.getType() == FixOpType.CONSOLIDATE_RINGS),
+            "Test 139 should have CONSOLIDATE_RINGS");
+        assertTrue(plan.getOperations().stream()
+            .anyMatch(op -> op.getType() == FixOpType.DISSOLVE),
+            "Test 139 should have DISSOLVE");
+
+        // Execute and verify the result is a valid closed way with 8 unique nodes
+        MultipolygonFixer.fixRelations(List.of(plan));
+        Relation rel = plan.getRelation();
+        assertTrue(rel.isDeleted(), "Relation should be deleted after dissolve");
+    }
+
+    @Test
+    void overlappingOuters_reversedOverlap_trimAndDissolve() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "140");
+        assertNotNull(plan, "Test 140 should be fixable");
+
+        // Should have CONSOLIDATE_RINGS + DISSOLVE
+        assertTrue(plan.getOperations().stream()
+            .anyMatch(op -> op.getType() == FixOpType.CONSOLIDATE_RINGS),
+            "Test 140 should have CONSOLIDATE_RINGS");
+        assertTrue(plan.getOperations().stream()
+            .anyMatch(op -> op.getType() == FixOpType.DISSOLVE),
+            "Test 140 should have DISSOLVE");
+
+        MultipolygonFixer.fixRelations(List.of(plan));
+        Relation rel = plan.getRelation();
+        assertTrue(rel.isDeleted(), "Relation should be deleted after dissolve");
+    }
+
+    @Test
+    void overlappingOuters_doubleEndedOverlap_trimAndDissolve() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "141");
+        assertNotNull(plan, "Test 141 should be fixable");
+
+        assertTrue(plan.getOperations().stream()
+            .anyMatch(op -> op.getType() == FixOpType.CONSOLIDATE_RINGS),
+            "Test 141 should have CONSOLIDATE_RINGS");
+        assertTrue(plan.getOperations().stream()
+            .anyMatch(op -> op.getType() == FixOpType.DISSOLVE),
+            "Test 141 should have DISSOLVE");
+
+        MultipolygonFixer.fixRelations(List.of(plan));
+        Relation rel = plan.getRelation();
+        assertTrue(rel.isDeleted(), "Relation should be deleted after dissolve");
+    }
+
+    @Test
+    void overlappingOuters_redundantSubPath_absorbAndDissolve() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "142");
+        assertNotNull(plan, "Test 142 should be fixable");
+
+        assertTrue(plan.getOperations().stream()
+            .anyMatch(op -> op.getType() == FixOpType.CONSOLIDATE_RINGS),
+            "Test 142 should have CONSOLIDATE_RINGS");
+        assertTrue(plan.getOperations().stream()
+            .anyMatch(op -> op.getType() == FixOpType.DISSOLVE),
+            "Test 142 should have DISSOLVE");
+
+        MultipolygonFixer.fixRelations(List.of(plan));
+        Relation rel = plan.getRelation();
+        assertTrue(rel.isDeleted(), "Relation should be deleted after dissolve");
+    }
+
     // --- Parent relation protection (issue #10) ---
 
     @Test

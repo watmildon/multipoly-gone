@@ -68,15 +68,29 @@ public class WayChainBuilder {
             return Optional.of(rings);
         }
 
+        // Remove open ways that are entirely contained within an existing closed ring.
+        // Such ways are redundant sub-paths (e.g., open way [A,B] within closed [A,B,C,D,A]).
+        // Absorbed ways are added to the ring's sourceWays for cleanup by the fixer.
+        if (!rings.isEmpty()) {
+            openWays = absorbRedundantOpenWays(openWays, rings);
+            if (openWays.isEmpty()) {
+                return Optional.of(rings);
+            }
+        }
+
         // Sort open ways by ID for deterministic traversal order at junctions
         openWays.sort(Comparator.comparingLong(Way::getUniqueId));
 
+        // Trim overlapping segments between ways that share interior nodes
+        Map<Way, List<Node>> trimmedNodes = trimOverlappingSegments(openWays);
+
         // Group open ways by connectivity into separate chains
-        // Build endpoint graph
+        // Build endpoint graph (using trimmed node lists where applicable)
         Map<Node, List<WayEndpoint>> endpointMap = new HashMap<>();
         for (Way way : openWays) {
-            Node first = way.firstNode();
-            Node last = way.lastNode();
+            List<Node> nodes = getEffectiveNodes(way, trimmedNodes);
+            Node first = nodes.get(0);
+            Node last = nodes.get(nodes.size() - 1);
             endpointMap.computeIfAbsent(first, k -> new ArrayList<>()).add(new WayEndpoint(way, false));
             endpointMap.computeIfAbsent(last, k -> new ArrayList<>()).add(new WayEndpoint(way, true));
         }
@@ -106,9 +120,10 @@ public class WayChainBuilder {
 
             usedWays.add(startWay);
             ringSourceWays.add(startWay);
-            ringNodes.addAll(startWay.getNodes());
-            Node tail = startWay.lastNode();
-            Node startNode = startWay.firstNode();
+            List<Node> startNodes = getEffectiveNodes(startWay, trimmedNodes);
+            ringNodes.addAll(startNodes);
+            Node tail = startNodes.get(startNodes.size() - 1);
+            Node startNode = startNodes.get(0);
 
             while (!tail.equals(startNode)) {
                 List<WayEndpoint> endpoints = endpointMap.get(tail);
@@ -129,18 +144,18 @@ public class WayChainBuilder {
 
                 usedWays.add(next.way);
                 ringSourceWays.add(next.way);
-                List<Node> nextNodes = next.way.getNodes();
+                List<Node> nextNodes = getEffectiveNodes(next.way, trimmedNodes);
 
                 if (next.isLastNode) {
                     for (int i = nextNodes.size() - 2; i >= 0; i--) {
                         ringNodes.add(nextNodes.get(i));
                     }
-                    tail = next.way.firstNode();
+                    tail = nextNodes.get(0);
                 } else {
                     for (int i = 1; i < nextNodes.size(); i++) {
                         ringNodes.add(nextNodes.get(i));
                     }
-                    tail = next.way.lastNode();
+                    tail = nextNodes.get(nextNodes.size() - 1);
                 }
             }
 
@@ -309,19 +324,21 @@ public class WayChainBuilder {
             return new PartialRingsResult(rings, new ArrayList<>());
         }
 
-        // Group open ways into connected components by shared endpoints
+        // Group open ways into connected components by shared nodes
+        // (including interior nodes, to handle overlapping ways per issue #9)
         UnionFind<Way> uf = new UnionFind<>();
         for (Way w : openWays) {
             uf.makeSet(w);
         }
 
-        Map<Node, List<Way>> endpointToWays = new HashMap<>();
+        Map<Node, List<Way>> nodeToWays = new HashMap<>();
         for (Way way : openWays) {
-            endpointToWays.computeIfAbsent(way.firstNode(), k -> new ArrayList<>()).add(way);
-            endpointToWays.computeIfAbsent(way.lastNode(), k -> new ArrayList<>()).add(way);
+            for (Node node : way.getNodes()) {
+                nodeToWays.computeIfAbsent(node, k -> new ArrayList<>()).add(way);
+            }
         }
 
-        for (List<Way> group : endpointToWays.values()) {
+        for (List<Way> group : nodeToWays.values()) {
             for (int i = 1; i < group.size(); i++) {
                 uf.union(group.get(0), group.get(i));
             }
@@ -340,6 +357,202 @@ public class WayChainBuilder {
         }
 
         return new PartialRingsResult(rings, leftover);
+    }
+
+    /**
+     * Removes open ways whose nodes are entirely contained as a contiguous
+     * sub-sequence within an existing closed ring. Such ways are redundant
+     * and are absorbed into the ring's sourceWays for cleanup.
+     *
+     * Returns the remaining open ways (those not absorbed).
+     */
+    private static List<Way> absorbRedundantOpenWays(List<Way> openWays, List<Ring> rings) {
+        List<Way> remaining = new ArrayList<>();
+        for (Way openWay : openWays) {
+            Ring absorbingRing = null;
+            List<Node> openNodes = openWay.getNodes();
+            for (Ring ring : rings) {
+                if (isContiguousSubsequence(openNodes, ring.getNodes())) {
+                    absorbingRing = ring;
+                    break;
+                }
+            }
+            if (absorbingRing != null) {
+                // Add the redundant way to the ring's source ways for cleanup.
+                // sourceWays may be immutable (List.of), so replace the ring.
+                List<Way> newSources = new ArrayList<>(absorbingRing.sourceWays);
+                newSources.add(openWay);
+                int idx = rings.indexOf(absorbingRing);
+                Ring newRing = new Ring(absorbingRing.nodes, newSources);
+                rings.set(idx, newRing);
+                absorbingRing = newRing;
+            } else {
+                remaining.add(openWay);
+            }
+        }
+        return remaining;
+    }
+
+    /**
+     * Checks if 'sub' appears as a contiguous sub-sequence within 'seq'.
+     * Also checks the reversed sub-sequence. For closed rings (where
+     * seq[0] == seq[last]), handles wrap-around at the closure point.
+     */
+    private static boolean isContiguousSubsequence(List<Node> sub, List<Node> seq) {
+        if (sub.size() > seq.size()) return false;
+        if (sub.isEmpty()) return true;
+
+        // For closed rings, the logical ring is seq[0..n-2] with wrap-around
+        boolean isClosed = seq.size() >= 2 && seq.get(0).equals(seq.get(seq.size() - 1));
+        int ringLen = isClosed ? seq.size() - 1 : seq.size();
+
+        // Check forward and reversed
+        return isSubsequenceInRing(sub, seq, ringLen)
+                || isSubsequenceInRing(reversed(sub), seq, ringLen);
+    }
+
+    private static boolean isSubsequenceInRing(List<Node> sub, List<Node> seq, int ringLen) {
+        for (int start = 0; start < ringLen; start++) {
+            if (seq.get(start).equals(sub.get(0))) {
+                boolean match = true;
+                for (int j = 1; j < sub.size(); j++) {
+                    if (!seq.get((start + j) % ringLen).equals(sub.get(j))) {
+                        match = false;
+                        break;
+                    }
+                }
+                if (match) return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Detects and trims overlapping node runs between pairs of open ways.
+     * When two open ways share a contiguous run of nodes at their boundaries
+     * (e.g., way A = [1,2,3,4] and way B = [3,4,5,6,1]), the shared segment
+     * is trimmed from one way so they connect at a single shared endpoint.
+     *
+     * Returns a map from Way to trimmed node list. Ways that don't need trimming
+     * are not included in the map.
+     */
+    static Map<Way, List<Node>> trimOverlappingSegments(List<Way> openWays) {
+        Map<Way, List<Node>> trimmed = new HashMap<>();
+
+        // Find pairs of ways that share overlapping boundary segments
+        Set<Way> processed = new HashSet<>();
+        for (Way wayA : openWays) {
+            List<Node> nodesA = getEffectiveNodes(wayA, trimmed);
+            for (Way wayB : openWays) {
+                if (wayA == wayB || processed.contains(wayB)) continue;
+
+                List<Node> nodesB = getEffectiveNodes(wayB, trimmed);
+                trimPairOverlap(wayA, nodesA, wayB, nodesB, trimmed);
+            }
+            processed.add(wayA);
+        }
+
+        return trimmed;
+    }
+
+    private static List<Node> getEffectiveNodes(Way way, Map<Way, List<Node>> trimmed) {
+        List<Node> t = trimmed.get(way);
+        return t != null ? t : way.getNodes();
+    }
+
+    /**
+     * Checks if two ways share a contiguous run of nodes at their boundaries
+     * and trims the overlap from one of them.
+     *
+     * Handles four overlap patterns:
+     * - A's suffix overlaps B's prefix (same direction)
+     * - A's suffix overlaps B's suffix (reversed)
+     * - A's prefix overlaps B's prefix (reversed)
+     * - A's prefix overlaps B's suffix (same direction)
+     */
+    /**
+     * Checks if two ways share contiguous node runs at their boundaries
+     * and trims the overlap from B. Handles double-ended overlaps where
+     * both ends of B overlap with A simultaneously.
+     */
+    private static void trimPairOverlap(Way wayA, List<Node> nodesA,
+            Way wayB, List<Node> nodesB, Map<Way, List<Node>> trimmed) {
+
+        List<Node> nodesARev = reversed(nodesA);
+
+        // Determine how many nodes to trim from B's prefix and suffix.
+        // There are two independent overlap sites: A's suffix vs B's start,
+        // and A's prefix vs B's end. Check both and apply together.
+        int trimFromStart = 0;
+        int trimFromEnd = 0;
+
+        // A's suffix overlaps B's prefix (forward): A=[..X,Y,Z] B=[X,Y,Z,..]
+        int overlap = suffixPrefixOverlap(nodesA, nodesB);
+        if (overlap >= 2) {
+            trimFromStart = overlap - 1;
+        }
+
+        // A's prefix overlaps B's suffix: check via reversed(A) suffix vs reversed(B) prefix
+        List<Node> nodesBRev = reversed(nodesB);
+        overlap = suffixPrefixOverlap(nodesARev, nodesBRev);
+        if (overlap >= 2) {
+            trimFromEnd = overlap - 1;
+        }
+
+        // If no forward overlaps found, try the two reversed patterns
+        if (trimFromStart == 0 && trimFromEnd == 0) {
+            // A's suffix overlaps B's suffix (B reversed): A=[..X,Y,Z] B=[..,Z,Y,X]
+            overlap = suffixPrefixOverlap(nodesA, nodesBRev);
+            if (overlap >= 2) {
+                trimFromEnd = overlap - 1;
+            }
+
+            // A's prefix overlaps B's prefix (B reversed): A=[X,Y,Z,..] B=[Z,Y,X,..]
+            overlap = suffixPrefixOverlap(nodesARev, nodesB);
+            if (overlap >= 2) {
+                trimFromStart = overlap - 1;
+            }
+        }
+
+        if (trimFromStart == 0 && trimFromEnd == 0) {
+            return;
+        }
+
+        // Ensure we don't trim B down to fewer than 2 nodes
+        int remaining = nodesB.size() - trimFromStart - trimFromEnd;
+        if (remaining < 2) {
+            return;
+        }
+
+        trimmed.put(wayB, new ArrayList<>(
+                nodesB.subList(trimFromStart, nodesB.size() - trimFromEnd)));
+    }
+
+    /**
+     * Returns the length of the longest suffix of 'a' that equals a prefix of 'b'.
+     * E.g., a=[1,2,3,4], b=[3,4,5,6] → returns 2 (the shared [3,4]).
+     */
+    private static int suffixPrefixOverlap(List<Node> a, List<Node> b) {
+        int maxOverlap = Math.min(a.size(), b.size());
+        for (int len = maxOverlap; len >= 2; len--) {
+            boolean match = true;
+            for (int i = 0; i < len; i++) {
+                if (!a.get(a.size() - len + i).equals(b.get(i))) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match) return len;
+        }
+        return 0;
+    }
+
+    private static List<Node> reversed(List<Node> nodes) {
+        List<Node> rev = new ArrayList<>(nodes.size());
+        for (int i = nodes.size() - 1; i >= 0; i--) {
+            rev.add(nodes.get(i));
+        }
+        return rev;
     }
 
     private static class WayEndpoint {

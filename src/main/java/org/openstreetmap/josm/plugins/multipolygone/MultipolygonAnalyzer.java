@@ -961,15 +961,18 @@ public class MultipolygonAnalyzer {
             uf.makeSet(w);
         }
 
-        // Map each endpoint node to all ways that touch it
-        Map<Node, List<Way>> endpointWays = new HashMap<>();
+        // Map each node (endpoint or interior) to all ways that contain it.
+        // This ensures overlapping ways that share interior nodes (issue #9)
+        // are grouped into the same component.
+        Map<Node, List<Way>> nodeToWays = new HashMap<>();
         for (Way way : allWays) {
-            endpointWays.computeIfAbsent(way.firstNode(), k -> new ArrayList<>()).add(way);
-            endpointWays.computeIfAbsent(way.lastNode(), k -> new ArrayList<>()).add(way);
+            for (Node node : way.getNodes()) {
+                nodeToWays.computeIfAbsent(node, k -> new ArrayList<>()).add(way);
+            }
         }
 
-        // Union all ways sharing an endpoint
-        for (List<Way> group : endpointWays.values()) {
+        // Union all ways sharing any node
+        for (List<Way> group : nodeToWays.values()) {
             for (int i = 1; i < group.size(); i++) {
                 uf.union(group.get(0), group.get(i));
             }
