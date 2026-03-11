@@ -1783,6 +1783,43 @@ class MultipolygonFixerTest {
         assertTrue(rel.isDeleted(), "Relation should be deleted after dissolve");
     }
 
+    // --- Test case 143: Post-consolidation split ---
+    // 1 closed outer + 3 open outers that chain into a second ring, each ring has an inner.
+    // Pre-consolidation, all open outers share endpoints (1 connected component).
+    // Post-consolidation, the 2 rings are disconnected → SPLIT_RELATION.
+    @Test
+    void testCase143_postConsolidationSplit() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "143");
+        assertNotNull(plan, "Test 143 should be fixable");
+
+        // Should have SPLIT_RELATION (which embeds CONSOLIDATE_RINGS in a sub-component)
+        assertTrue(plan.getOperations().stream()
+            .anyMatch(op -> op.getType() == FixOpType.SPLIT_RELATION),
+            "Test 143 should have SPLIT_RELATION");
+
+        // The split should have 2 components
+        FixOp splitOp = plan.getOperations().stream()
+            .filter(op -> op.getType() == FixOpType.SPLIT_RELATION)
+            .findFirst().orElseThrow();
+        assertEquals(2, splitOp.getComponents().size(),
+            "Test 143 split should have 2 components");
+
+        // Execute and verify
+        Relation rel = plan.getRelation();
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        // Both components are 1 outer + 1 inner (non-touching) → retained as sub-relations
+        // Original relation should survive (as one of the sub-relations)
+        // At least 2 multipolygon relations should exist
+        long mpCount = ds.getRelations().stream()
+            .filter(r -> !r.isDeleted() && "multipolygon".equals(r.get("type")))
+            .count();
+        assertTrue(mpCount >= 2,
+            "After split, at least 2 multipolygon relations should exist, got " + mpCount);
+    }
+
     // --- Parent relation protection (issue #10) ---
 
     @Test

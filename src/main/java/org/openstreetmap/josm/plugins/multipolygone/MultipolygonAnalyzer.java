@@ -281,9 +281,29 @@ public class MultipolygonAnalyzer {
         // Single connected outer group (or identity-protected/boundary):
         // use the single-relation path.
         SkipReason[] singleSkip = new SkipReason[1];
-        FixPlan singleResult = analyzeSingleRelation(relation, outerWays, innerWays,
+        ComponentResult singleComp = analyzeComponent(outerWays, innerWays,
             identityProtected, isBoundary, parentProtected, singleSkip);
-        if (singleResult != null) {
+        if (singleComp != null) {
+            // Post-consolidation split check: after consolidation closes open ways
+            // into rings, previously-connected outers may become disconnected components.
+            // If so, split into sub-relations now instead of requiring a second pass.
+            if (!singleComp.dissolvesCompletely() && !identityProtected && !parentProtected
+                    && singleComp.getRetainedOuterRings() != null
+                    && singleComp.getRetainedOuterRings().size() > 1) {
+                AnalyzeOutcome splitOutcome = tryPostConsolidationSplit(
+                    relation, singleComp, innerWaySet, rng);
+                if (splitOutcome != null) {
+                    return splitOutcome;
+                }
+            }
+
+            // No split needed — wrap as a single-relation plan
+            String primaryTag = getPrimaryTag(relation);
+            String desc = singleComp.getDescription().isEmpty()
+                ? primaryTag
+                : singleComp.getDescription() + " (" + primaryTag + ")";
+            FixPlan singleResult = new FixPlan(relation, singleComp.getOperations(), desc, isBoundary);
+            singleResult.validate();
             return AnalyzeOutcome.fix(singleResult);
         }
 
@@ -526,6 +546,122 @@ public class MultipolygonAnalyzer {
 
         List<FixOp> ops = new ArrayList<>();
         ops.add(new FixOp(FixOpType.SPLIT_RELATION, results));
+        FixPlan plan = new FixPlan(relation, ops, desc);
+        plan.validate();
+        return AnalyzeOutcome.fix(plan);
+    }
+
+    /**
+     * After analyzeComponent consolidates open ways into closed rings, the resulting
+     * outer rings may form disconnected groups — each with its own inners. This method
+     * detects that case and re-routes to a SPLIT_RELATION plan so the split happens
+     * in one click instead of requiring a second pass.
+     *
+     * @return a SPLIT_RELATION outcome, or null if no split is possible/worthwhile
+     */
+    private static AnalyzeOutcome tryPostConsolidationSplit(
+            Relation relation, ComponentResult singleComp, Set<Way> innerWaySet, Random rng) {
+        List<WayChainBuilder.Ring> outerRings = singleComp.getRetainedOuterRings();
+
+        // Check if the outer rings form disconnected node groups
+        // Build a Union-Find on rings based on shared nodes
+        Map<Node, List<WayChainBuilder.Ring>> nodeToRings = new HashMap<>();
+        for (WayChainBuilder.Ring ring : outerRings) {
+            for (Node node : ring.getNodes()) {
+                nodeToRings.computeIfAbsent(node, k -> new ArrayList<>()).add(ring);
+            }
+        }
+
+        UnionFind<WayChainBuilder.Ring> uf = new UnionFind<>();
+        for (WayChainBuilder.Ring ring : outerRings) {
+            uf.makeSet(ring);
+        }
+        for (List<WayChainBuilder.Ring> group : nodeToRings.values()) {
+            for (int i = 1; i < group.size(); i++) {
+                uf.union(group.get(0), group.get(i));
+            }
+        }
+
+        List<Set<WayChainBuilder.Ring>> ringComponents = uf.components();
+        if (ringComponents.size() <= 1) {
+            return null; // all outers are connected — no split possible
+        }
+
+        // Outer rings form multiple disconnected groups.
+        // Assign inner rings to their containing outer ring component.
+        List<WayChainBuilder.Ring> innerRings = singleComp.getRetainedInnerRings();
+        if (innerRings == null) {
+            innerRings = new ArrayList<>();
+        }
+
+        // Build component index per outer ring
+        Map<WayChainBuilder.Ring, Integer> ringToCompIndex = new HashMap<>();
+        for (int i = 0; i < ringComponents.size(); i++) {
+            for (WayChainBuilder.Ring ring : ringComponents.get(i)) {
+                ringToCompIndex.put(ring, i);
+            }
+        }
+
+        // Map each inner to its containing outer's component
+        List<List<WayChainBuilder.Ring>> innersPerComp = new ArrayList<>();
+        for (int i = 0; i < ringComponents.size(); i++) {
+            innersPerComp.add(new ArrayList<>());
+        }
+        for (WayChainBuilder.Ring innerRing : innerRings) {
+            WayChainBuilder.Ring containing = findContainingRing(innerRing, outerRings);
+            if (containing != null) {
+                Integer compIdx = ringToCompIndex.get(containing);
+                if (compIdx != null) {
+                    innersPerComp.get(compIdx).add(innerRing);
+                }
+            }
+        }
+
+        // Build sub-ComponentResults for each ring component.
+        // Each sub-component is re-analyzed independently through the full pipeline,
+        // so consolidation ops are re-discovered from the original source ways.
+        List<ComponentResult> subResults = new ArrayList<>();
+        int dissolvedCount = 0;
+        int retainedCount = 0;
+
+        for (int i = 0; i < ringComponents.size(); i++) {
+            Set<WayChainBuilder.Ring> compRings = ringComponents.get(i);
+            List<WayChainBuilder.Ring> compInners = innersPerComp.get(i);
+
+            // Collect source ways for this ring component's outers
+            List<Way> compOuterWays = new ArrayList<>();
+            for (WayChainBuilder.Ring ring : compRings) {
+                compOuterWays.addAll(ring.getSourceWays());
+            }
+            List<Way> compInnerWays = new ArrayList<>();
+            for (WayChainBuilder.Ring ring : compInners) {
+                compInnerWays.addAll(ring.getSourceWays());
+            }
+
+            // Analyze each sub-component independently through the full pipeline
+            ComponentResult cr = analyzeComponent(compOuterWays, compInnerWays,
+                false, false, false, null);
+            if (cr == null && !compInnerWays.isEmpty()) {
+                // Not simplifiable but still needs its own sub-relation
+                cr = new ComponentResult(compOuterWays, compInnerWays, new ArrayList<>(), false,
+                    null, null, "retained as sub-relation");
+            }
+            subResults.add(cr);
+            if (cr != null) {
+                if (cr.dissolvesCompletely()) {
+                    dissolvedCount++;
+                } else {
+                    retainedCount++;
+                }
+            }
+        }
+
+        String primaryTag = getPrimaryTag(relation);
+        String desc = String.format("split %d components (%d extracted, %d retained) (%s)",
+            ringComponents.size(), dissolvedCount, retainedCount, primaryTag);
+
+        List<FixOp> ops = new ArrayList<>();
+        ops.add(new FixOp(FixOpType.SPLIT_RELATION, subResults));
         FixPlan plan = new FixPlan(relation, ops, desc);
         plan.validate();
         return AnalyzeOutcome.fix(plan);

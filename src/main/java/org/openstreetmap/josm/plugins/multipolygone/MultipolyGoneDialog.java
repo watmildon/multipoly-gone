@@ -895,7 +895,7 @@ public class MultipolyGoneDialog extends ToggleDialog
 
         BreakPlan plan = PolygonBreaker.analyze(target, ds);
         if (plan == null) {
-            breakStatusLabel.setText(tr("No intersecting roads found"));
+            breakStatusLabel.setText(tr("No matching intersecting ways found"));
             updateButtonState();
             return;
         }
@@ -917,7 +917,7 @@ public class MultipolyGoneDialog extends ToggleDialog
         BreakPlan freshPlan = PolygonBreaker.analyze(currentBreakPlan.getSource(), ds);
         if (freshPlan == null) {
             currentBreakPlan = null;
-            breakStatusLabel.setText(tr("No intersecting roads found"));
+            breakStatusLabel.setText(tr("No matching intersecting ways found"));
             breakRoadListModel.clear();
             updateButtonState();
             return;

@@ -581,7 +581,7 @@
   <node id='12022511226' visible='true' version='1' lat='31.4670345' lon='-81.3409562' />
   <node id='12022511227' visible='true' version='1' lat='31.4672061' lon='-81.340916' />
   <node id='12022511228' visible='true' version='1' lat='31.4673308' lon='-81.3410233' />
-  <way id='-547177' visible='true'>
+  <way id='-1' visible='true'>
     <nd ref='10132958463' />
     <nd ref='10132958605' />
     <nd ref='352444302' />
@@ -1193,7 +1193,7 @@
     <tag k='place' v='island' />
   </way>
   <relation id='14554990' visible='true' version='4'>
-    <member type='way' ref='-547177' role='outer' />
+    <member type='way' ref='-1' role='outer' />
     <member type='way' ref='1092757246' role='inner' />
     <tag k='_test_note' v='MP with an inner, that cuts a full piece out of the edge of the MP' />
     <tag k='natural' v='wetland' />

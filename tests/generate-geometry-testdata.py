@@ -1588,7 +1588,7 @@ def escape_xml(s):
 
 
 def write_osm(filename):
-    with open(filename, 'w', encoding='utf-8') as f:
+    with open(filename, 'w', encoding='utf-8', newline='\n') as f:
         f.write("<?xml version='1.0' encoding='UTF-8'?>\n")
         f.write("<osm version='0.6' generator='multipoly-gone geometry test generator'>\n")
 

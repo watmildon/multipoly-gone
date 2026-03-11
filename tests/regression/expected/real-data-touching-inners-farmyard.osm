@@ -17,7 +17,7 @@
   <node id='13272772304' visible='true' version='1' lat='45.8837013' lon='-119.196085' />
   <node id='13272772305' visible='true' version='1' lat='45.881629' lon='-119.1990619' />
   <node id='13272772306' visible='true' version='1' lat='45.8822073' lon='-119.1994081' />
-  <way id='-551824' visible='true'>
+  <way id='-1' visible='true'>
     <nd ref='13272772296' />
     <nd ref='13272772297' />
     <nd ref='13272772294' />
@@ -62,7 +62,7 @@
   </way>
   <relation id='19778806' visible='true' version='1'>
     <member type='way' ref='1446570849' role='outer' />
-    <member type='way' ref='-551824' role='inner' />
+    <member type='way' ref='-1' role='inner' />
     <tag k='landuse' v='meadow' />
     <tag k='type' v='multipolygon' />
   </relation>

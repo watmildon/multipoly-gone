@@ -19026,7 +19026,7 @@
   <node id='13532372300' visible='true' version='1' lat='45.8874731' lon='-119.4970909' />
   <node id='13532383901' visible='true' version='1' lat='45.8875011' lon='-119.4969739' />
   <node id='13532383902' visible='true' version='1' lat='45.8876307' lon='-119.4970379' />
-  <way id='-544224' visible='true'>
+  <way id='-1' visible='true'>
     <nd ref='13248941227' />
     <nd ref='13248941228' />
     <nd ref='13248941229' />
@@ -19726,7 +19726,7 @@
     <tag k='name' v='Irrigon Wildlife Area' />
     <tag k='operator' v='Oregon Department of Fish and Wildlife' />
   </way>
-  <way id='-544225' visible='true'>
+  <way id='-2' visible='true'>
     <nd ref='13362765051' />
     <nd ref='13362764937' />
     <nd ref='13362764938' />
@@ -51451,7 +51451,7 @@
   </relation>
   <relation id='19935916' visible='true' version='1'>
     <member type='way' ref='1457035590' role='outer' />
-    <member type='way' ref='-544225' role='inner' />
+    <member type='way' ref='-2' role='inner' />
     <member type='way' ref='1457035579' role='inner' />
     <tag k='landuse' v='meadow' />
     <tag k='type' v='multipolygon' />

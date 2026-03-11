@@ -4,25 +4,25 @@
   <!-- Test B1: Boundary with all closed outer ways + label node    -->
   <!-- Expected: NOT fixable (all ways already closed)              -->
   <!-- ============================================================ -->
-  <node id='-500001' action='modify' visible='true' lat='48.00' lon='-122.00' />
-  <node id='-500002' action='modify' visible='true' lat='48.01' lon='-122.00' />
-  <node id='-500003' action='modify' visible='true' lat='48.01' lon='-121.99' />
-  <node id='-500004' action='modify' visible='true' lat='48.00' lon='-121.99' />
+  <node id='-1' action='modify' visible='true' lat='48.00' lon='-122.00' />
+  <node id='-2' action='modify' visible='true' lat='48.01' lon='-122.00' />
+  <node id='-3' action='modify' visible='true' lat='48.01' lon='-121.99' />
+  <node id='-4' action='modify' visible='true' lat='48.00' lon='-121.99' />
   <!-- Label node for B1 -->
-  <node id='-500005' action='modify' visible='true' lat='48.005' lon='-121.995'>
+  <node id='-5' action='modify' visible='true' lat='48.005' lon='-121.995'>
     <tag k='place' v='locality' />
     <tag k='name' v='B1 Label' />
   </node>
-  <way id='-500010' action='modify' visible='true'>
-    <nd ref='-500001' />
-    <nd ref='-500002' />
-    <nd ref='-500003' />
-    <nd ref='-500004' />
-    <nd ref='-500001' />
+  <way id='-6' action='modify' visible='true'>
+    <nd ref='-1' />
+    <nd ref='-2' />
+    <nd ref='-3' />
+    <nd ref='-4' />
+    <nd ref='-1' />
   </way>
-  <relation id='-500100' action='modify' visible='true'>
-    <member type='way' ref='-500010' role='outer' />
-    <member type='node' ref='-500005' role='label' />
+  <relation id='-7' action='modify' visible='true'>
+    <member type='way' ref='-6' role='outer' />
+    <member type='node' ref='-5' role='label' />
     <tag k='_test_id' v='B1' />
     <tag k='type' v='boundary' />
     <tag k='boundary' v='administrative' />
@@ -34,23 +34,23 @@
   <!-- Test B2: Boundary with 2 open outer ways forming 1 ring     -->
   <!-- Expected: CONSOLIDATE_RINGS                                  -->
   <!-- ============================================================ -->
-  <node id='-500101' action='modify' visible='true' lat='48.02' lon='-122.00' />
-  <node id='-500102' action='modify' visible='true' lat='48.03' lon='-122.00' />
-  <node id='-500103' action='modify' visible='true' lat='48.03' lon='-121.99' />
-  <node id='-500104' action='modify' visible='true' lat='48.02' lon='-121.99' />
-  <way id='-500110' action='modify' visible='true'>
-    <nd ref='-500101' />
-    <nd ref='-500102' />
-    <nd ref='-500103' />
+  <node id='-8' action='modify' visible='true' lat='48.02' lon='-122.00' />
+  <node id='-9' action='modify' visible='true' lat='48.03' lon='-122.00' />
+  <node id='-10' action='modify' visible='true' lat='48.03' lon='-121.99' />
+  <node id='-11' action='modify' visible='true' lat='48.02' lon='-121.99' />
+  <way id='-12' action='modify' visible='true'>
+    <nd ref='-8' />
+    <nd ref='-9' />
+    <nd ref='-10' />
   </way>
-  <way id='-500111' action='modify' visible='true'>
-    <nd ref='-500103' />
-    <nd ref='-500104' />
-    <nd ref='-500101' />
+  <way id='-13' action='modify' visible='true'>
+    <nd ref='-10' />
+    <nd ref='-11' />
+    <nd ref='-8' />
   </way>
-  <relation id='-500200' action='modify' visible='true'>
-    <member type='way' ref='-500110' role='outer' />
-    <member type='way' ref='-500111' role='outer' />
+  <relation id='-14' action='modify' visible='true'>
+    <member type='way' ref='-12' role='outer' />
+    <member type='way' ref='-13' role='outer' />
     <tag k='_test_id' v='B2' />
     <tag k='type' v='boundary' />
     <tag k='boundary' v='administrative' />
@@ -62,39 +62,39 @@
   <!-- Test B3: Boundary with 3 open outers + label + admin_centre  -->
   <!-- Expected: CONSOLIDATE_RINGS, non-Way members preserved       -->
   <!-- ============================================================ -->
-  <node id='-500201' action='modify' visible='true' lat='48.04' lon='-122.00' />
-  <node id='-500202' action='modify' visible='true' lat='48.05' lon='-122.00' />
-  <node id='-500203' action='modify' visible='true' lat='48.05' lon='-121.99' />
-  <node id='-500204' action='modify' visible='true' lat='48.04' lon='-121.99' />
+  <node id='-15' action='modify' visible='true' lat='48.04' lon='-122.00' />
+  <node id='-16' action='modify' visible='true' lat='48.05' lon='-122.00' />
+  <node id='-17' action='modify' visible='true' lat='48.05' lon='-121.99' />
+  <node id='-18' action='modify' visible='true' lat='48.04' lon='-121.99' />
   <!-- Label node for B3 -->
-  <node id='-500205' action='modify' visible='true' lat='48.045' lon='-121.995'>
+  <node id='-19' action='modify' visible='true' lat='48.045' lon='-121.995'>
     <tag k='place' v='locality' />
     <tag k='name' v='B3 Label' />
   </node>
   <!-- Admin centre node for B3 -->
-  <node id='-500206' action='modify' visible='true' lat='48.046' lon='-121.996'>
+  <node id='-20' action='modify' visible='true' lat='48.046' lon='-121.996'>
     <tag k='place' v='town' />
     <tag k='name' v='B3 Admin Centre' />
   </node>
-  <way id='-500210' action='modify' visible='true'>
-    <nd ref='-500201' />
-    <nd ref='-500202' />
+  <way id='-21' action='modify' visible='true'>
+    <nd ref='-15' />
+    <nd ref='-16' />
   </way>
-  <way id='-500211' action='modify' visible='true'>
-    <nd ref='-500202' />
-    <nd ref='-500203' />
+  <way id='-22' action='modify' visible='true'>
+    <nd ref='-16' />
+    <nd ref='-17' />
   </way>
-  <way id='-500212' action='modify' visible='true'>
-    <nd ref='-500203' />
-    <nd ref='-500204' />
-    <nd ref='-500201' />
+  <way id='-23' action='modify' visible='true'>
+    <nd ref='-17' />
+    <nd ref='-18' />
+    <nd ref='-15' />
   </way>
-  <relation id='-500300' action='modify' visible='true'>
-    <member type='way' ref='-500210' role='outer' />
-    <member type='way' ref='-500211' role='outer' />
-    <member type='way' ref='-500212' role='outer' />
-    <member type='node' ref='-500205' role='label' />
-    <member type='node' ref='-500206' role='admin_centre' />
+  <relation id='-24' action='modify' visible='true'>
+    <member type='way' ref='-21' role='outer' />
+    <member type='way' ref='-22' role='outer' />
+    <member type='way' ref='-23' role='outer' />
+    <member type='node' ref='-19' role='label' />
+    <member type='node' ref='-20' role='admin_centre' />
     <tag k='_test_id' v='B3' />
     <tag k='type' v='boundary' />
     <tag k='boundary' v='administrative' />
@@ -107,28 +107,28 @@
   <!--          ring (bowtie)                                       -->
   <!-- Expected: CONSOLIDATE + DECOMPOSE                            -->
   <!-- ============================================================ -->
-  <node id='-500301' action='modify' visible='true' lat='48.06' lon='-122.00' />
-  <node id='-500302' action='modify' visible='true' lat='48.07' lon='-121.99' />
-  <node id='-500303' action='modify' visible='true' lat='48.07' lon='-122.00' />
-  <node id='-500304' action='modify' visible='true' lat='48.06' lon='-121.99' />
+  <node id='-25' action='modify' visible='true' lat='48.06' lon='-122.00' />
+  <node id='-26' action='modify' visible='true' lat='48.07' lon='-121.99' />
+  <node id='-27' action='modify' visible='true' lat='48.07' lon='-122.00' />
+  <node id='-28' action='modify' visible='true' lat='48.06' lon='-121.99' />
   <!-- Bowtie: ways trace 1->2->3->4->1, crossing at center -->
-  <way id='-500310' action='modify' visible='true'>
-    <nd ref='-500301' />
-    <nd ref='-500302' />
+  <way id='-29' action='modify' visible='true'>
+    <nd ref='-25' />
+    <nd ref='-26' />
   </way>
-  <way id='-500311' action='modify' visible='true'>
-    <nd ref='-500302' />
-    <nd ref='-500303' />
-    <nd ref='-500304' />
+  <way id='-30' action='modify' visible='true'>
+    <nd ref='-26' />
+    <nd ref='-27' />
+    <nd ref='-28' />
   </way>
-  <way id='-500312' action='modify' visible='true'>
-    <nd ref='-500304' />
-    <nd ref='-500301' />
+  <way id='-31' action='modify' visible='true'>
+    <nd ref='-28' />
+    <nd ref='-25' />
   </way>
-  <relation id='-500400' action='modify' visible='true'>
-    <member type='way' ref='-500310' role='outer' />
-    <member type='way' ref='-500311' role='outer' />
-    <member type='way' ref='-500312' role='outer' />
+  <relation id='-32' action='modify' visible='true'>
+    <member type='way' ref='-29' role='outer' />
+    <member type='way' ref='-30' role='outer' />
+    <member type='way' ref='-31' role='outer' />
     <tag k='_test_id' v='B4' />
     <tag k='type' v='boundary' />
     <tag k='boundary' v='administrative' />
@@ -140,42 +140,42 @@
   <!-- Test B5: Boundary with open inner ways needing consolidation -->
   <!-- Expected: CONSOLIDATE_RINGS (both outer and inner)           -->
   <!-- ============================================================ -->
-  <node id='-500401' action='modify' visible='true' lat='48.08' lon='-122.00' />
-  <node id='-500402' action='modify' visible='true' lat='48.09' lon='-122.00' />
-  <node id='-500403' action='modify' visible='true' lat='48.09' lon='-121.99' />
-  <node id='-500404' action='modify' visible='true' lat='48.08' lon='-121.99' />
+  <node id='-33' action='modify' visible='true' lat='48.08' lon='-122.00' />
+  <node id='-34' action='modify' visible='true' lat='48.09' lon='-122.00' />
+  <node id='-35' action='modify' visible='true' lat='48.09' lon='-121.99' />
+  <node id='-36' action='modify' visible='true' lat='48.08' lon='-121.99' />
   <!-- Inner hole nodes -->
-  <node id='-500405' action='modify' visible='true' lat='48.083' lon='-121.998' />
-  <node id='-500406' action='modify' visible='true' lat='48.087' lon='-121.998' />
-  <node id='-500407' action='modify' visible='true' lat='48.087' lon='-121.992' />
-  <node id='-500408' action='modify' visible='true' lat='48.083' lon='-121.992' />
+  <node id='-37' action='modify' visible='true' lat='48.083' lon='-121.998' />
+  <node id='-38' action='modify' visible='true' lat='48.087' lon='-121.998' />
+  <node id='-39' action='modify' visible='true' lat='48.087' lon='-121.992' />
+  <node id='-40' action='modify' visible='true' lat='48.083' lon='-121.992' />
   <!-- Outer: 2 open ways -->
-  <way id='-500410' action='modify' visible='true'>
-    <nd ref='-500401' />
-    <nd ref='-500402' />
-    <nd ref='-500403' />
+  <way id='-41' action='modify' visible='true'>
+    <nd ref='-33' />
+    <nd ref='-34' />
+    <nd ref='-35' />
   </way>
-  <way id='-500411' action='modify' visible='true'>
-    <nd ref='-500403' />
-    <nd ref='-500404' />
-    <nd ref='-500401' />
+  <way id='-42' action='modify' visible='true'>
+    <nd ref='-35' />
+    <nd ref='-36' />
+    <nd ref='-33' />
   </way>
   <!-- Inner: 2 open ways -->
-  <way id='-500412' action='modify' visible='true'>
-    <nd ref='-500405' />
-    <nd ref='-500406' />
-    <nd ref='-500407' />
+  <way id='-43' action='modify' visible='true'>
+    <nd ref='-37' />
+    <nd ref='-38' />
+    <nd ref='-39' />
   </way>
-  <way id='-500413' action='modify' visible='true'>
-    <nd ref='-500407' />
-    <nd ref='-500408' />
-    <nd ref='-500405' />
+  <way id='-44' action='modify' visible='true'>
+    <nd ref='-39' />
+    <nd ref='-40' />
+    <nd ref='-37' />
   </way>
-  <relation id='-500500' action='modify' visible='true'>
-    <member type='way' ref='-500410' role='outer' />
-    <member type='way' ref='-500411' role='outer' />
-    <member type='way' ref='-500412' role='inner' />
-    <member type='way' ref='-500413' role='inner' />
+  <relation id='-45' action='modify' visible='true'>
+    <member type='way' ref='-41' role='outer' />
+    <member type='way' ref='-42' role='outer' />
+    <member type='way' ref='-43' role='inner' />
+    <member type='way' ref='-44' role='inner' />
     <tag k='_test_id' v='B5' />
     <tag k='type' v='boundary' />
     <tag k='boundary' v='administrative' />
@@ -187,31 +187,31 @@
   <!-- Test B6: Boundary with 1 outer + 1 inner, both closed       -->
   <!-- Expected: NOT fixable (nothing to consolidate)               -->
   <!-- ============================================================ -->
-  <node id='-500501' action='modify' visible='true' lat='48.10' lon='-122.00' />
-  <node id='-500502' action='modify' visible='true' lat='48.11' lon='-122.00' />
-  <node id='-500503' action='modify' visible='true' lat='48.11' lon='-121.99' />
-  <node id='-500504' action='modify' visible='true' lat='48.10' lon='-121.99' />
-  <node id='-500505' action='modify' visible='true' lat='48.103' lon='-121.998' />
-  <node id='-500506' action='modify' visible='true' lat='48.107' lon='-121.998' />
-  <node id='-500507' action='modify' visible='true' lat='48.107' lon='-121.992' />
-  <node id='-500508' action='modify' visible='true' lat='48.103' lon='-121.992' />
-  <way id='-500510' action='modify' visible='true'>
-    <nd ref='-500501' />
-    <nd ref='-500502' />
-    <nd ref='-500503' />
-    <nd ref='-500504' />
-    <nd ref='-500501' />
+  <node id='-46' action='modify' visible='true' lat='48.10' lon='-122.00' />
+  <node id='-47' action='modify' visible='true' lat='48.11' lon='-122.00' />
+  <node id='-48' action='modify' visible='true' lat='48.11' lon='-121.99' />
+  <node id='-49' action='modify' visible='true' lat='48.10' lon='-121.99' />
+  <node id='-50' action='modify' visible='true' lat='48.103' lon='-121.998' />
+  <node id='-51' action='modify' visible='true' lat='48.107' lon='-121.998' />
+  <node id='-52' action='modify' visible='true' lat='48.107' lon='-121.992' />
+  <node id='-53' action='modify' visible='true' lat='48.103' lon='-121.992' />
+  <way id='-54' action='modify' visible='true'>
+    <nd ref='-46' />
+    <nd ref='-47' />
+    <nd ref='-48' />
+    <nd ref='-49' />
+    <nd ref='-46' />
   </way>
-  <way id='-500511' action='modify' visible='true'>
-    <nd ref='-500505' />
-    <nd ref='-500506' />
-    <nd ref='-500507' />
-    <nd ref='-500508' />
-    <nd ref='-500505' />
+  <way id='-55' action='modify' visible='true'>
+    <nd ref='-50' />
+    <nd ref='-51' />
+    <nd ref='-52' />
+    <nd ref='-53' />
+    <nd ref='-50' />
   </way>
-  <relation id='-500600' action='modify' visible='true'>
-    <member type='way' ref='-500510' role='outer' />
-    <member type='way' ref='-500511' role='inner' />
+  <relation id='-56' action='modify' visible='true'>
+    <member type='way' ref='-54' role='outer' />
+    <member type='way' ref='-55' role='inner' />
     <tag k='_test_id' v='B6' />
     <tag k='type' v='boundary' />
     <tag k='boundary' v='administrative' />

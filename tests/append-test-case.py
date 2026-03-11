@@ -26,8 +26,10 @@ class AppendContext:
         self.ways = []        # (id, node_ids, tags_dict)
         self.relations = []   # (id, members, tags_dict)
 
-        with open(osm_file, 'r', encoding='utf-8') as f:
+        with open(osm_file, 'r', encoding='utf-8', newline='') as f:
             content = f.read()
+        # Normalize to LF so we don't introduce CRLF on Windows
+        content = content.replace('\r\n', '\n')
 
         # Find max negative ID magnitude across all primitives
         all_ids = [int(m) for m in re.findall(r"id='-(\d+)'", content)]
@@ -175,7 +177,7 @@ class AppendContext:
 
         new_xml = '\n'.join(lines)
 
-        with open(self.osm_file, 'w', encoding='utf-8') as f:
+        with open(self.osm_file, 'w', encoding='utf-8', newline='\n') as f:
             f.write(self._content)
             f.write('\n')
             f.write(new_xml)

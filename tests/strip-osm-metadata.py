@@ -22,8 +22,9 @@ SKIP_FILES = ['testdata.osm']
 
 
 def strip_file(filepath):
-    with open(filepath, 'r', encoding='utf-8') as f:
+    with open(filepath, 'r', encoding='utf-8', newline='') as f:
         content = f.read()
+    content = content.replace('\r\n', '\n')
 
     original_size = len(content)
 
@@ -36,7 +37,7 @@ def strip_file(filepath):
 
     new_size = len(content)
     if new_size < original_size:
-        with open(filepath, 'w', encoding='utf-8') as f:
+        with open(filepath, 'w', encoding='utf-8', newline='\n') as f:
             f.write(content)
         print(f'  {filepath}: {original_size:,} -> {new_size:,} bytes ({100 - new_size*100//original_size}% smaller)')
     else:

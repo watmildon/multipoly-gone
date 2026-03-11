@@ -5,28 +5,28 @@
        Located at lat 56.66 (Latvia) to match the reported bug location. -->
 
   <!-- Square polygon corners (approx 500m x 500m at lat 56.66) -->
-  <node id='-100' visible='true' lat='56.658' lon='23.750' />
-  <node id='-101' visible='true' lat='56.658' lon='23.760' />
-  <node id='-102' visible='true' lat='56.662' lon='23.760' />
-  <node id='-103' visible='true' lat='56.662' lon='23.750' />
+  <node id='-1' visible='true' lat='56.658' lon='23.750' />
+  <node id='-2' visible='true' lat='56.658' lon='23.760' />
+  <node id='-3' visible='true' lat='56.662' lon='23.760' />
+  <node id='-4' visible='true' lat='56.662' lon='23.750' />
 
   <!-- Road endpoints: horizontal road crossing the polygon east-west at lat 56.660 -->
-  <node id='-200' visible='true' lat='56.660' lon='23.748' />
-  <node id='-201' visible='true' lat='56.660' lon='23.762' />
+  <node id='-5' visible='true' lat='56.660' lon='23.748' />
+  <node id='-6' visible='true' lat='56.660' lon='23.762' />
 
-  <way id='-10' visible='true'>
-    <nd ref='-100' />
-    <nd ref='-101' />
-    <nd ref='-102' />
-    <nd ref='-103' />
-    <nd ref='-100' />
+  <way id='-7' visible='true'>
+    <nd ref='-1' />
+    <nd ref='-2' />
+    <nd ref='-3' />
+    <nd ref='-4' />
+    <nd ref='-1' />
     <tag k='_test_break' v='width40' />
     <tag k='natural' v='wood' />
   </way>
 
-  <way id='-20' visible='true'>
-    <nd ref='-200' />
-    <nd ref='-201' />
+  <way id='-8' visible='true'>
+    <nd ref='-5' />
+    <nd ref='-6' />
     <tag k='highway' v='secondary' />
     <tag k='width' v='40' />
   </way>

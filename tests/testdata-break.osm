@@ -1,44 +1,44 @@
 <?xml version='1.0' encoding='UTF-8'?>
 <osm version='0.6' generator='JOSM'>
-  <node id='-37553' action='modify' visible='true' lat='41.61026051297' lon='-84.04232027292' />
-  <node id='-37554' action='modify' visible='true' lat='41.61024446952' lon='-84.0447235322' />
-  <node id='-37555' action='modify' visible='true' lat='41.61180066624' lon='-84.04613973856' />
-  <node id='-37556' action='modify' visible='true' lat='41.61184879544' lon='-84.04901506662' />
-  <node id='-37557' action='modify' visible='true' lat='41.61244238592' lon='-84.0499592042' />
-  <node id='-37558' action='modify' visible='true' lat='41.61821757573' lon='-84.04777052164' />
-  <node id='-37559' action='modify' visible='true' lat='41.62371956719' lon='-84.04905798197' />
-  <node id='-37560' action='modify' visible='true' lat='41.63080890476' lon='-84.04933693171' />
-  <node id='-37561' action='modify' visible='true' lat='41.63084098144' lon='-84.04423000574' />
-  <node id='-37564' action='modify' visible='true' lat='41.61783853457' lon='-84.04400392593' />
-  <node id='-37565' action='modify' visible='true' lat='41.61784420612' lon='-84.0423273243' />
-  <node id='-37566' action='modify' visible='true' lat='41.6179288205' lon='-84.04885412335' />
-  <node id='-37567' action='modify' visible='true' lat='41.61791277895' lon='-84.04076458097' />
-  <node id='-37569' action='modify' visible='true' lat='41.62707116506' lon='-84.04976962239' />
-  <node id='-37570' action='modify' visible='true' lat='41.6271392139' lon='-84.04327563597' />
-  <way id='-883130' action='modify' visible='true'>
-    <nd ref='-37553' />
-    <nd ref='-37554' />
-    <nd ref='-37555' />
-    <nd ref='-37556' />
-    <nd ref='-37557' />
-    <nd ref='-37558' />
-    <nd ref='-37559' />
-    <nd ref='-37560' />
-    <nd ref='-37561' />
-    <nd ref='-37564' />
-    <nd ref='-37565' />
-    <nd ref='-37553' />
+  <node id='-1' action='modify' visible='true' lat='41.61026051297' lon='-84.04232027292' />
+  <node id='-2' action='modify' visible='true' lat='41.61024446952' lon='-84.0447235322' />
+  <node id='-3' action='modify' visible='true' lat='41.61180066624' lon='-84.04613973856' />
+  <node id='-4' action='modify' visible='true' lat='41.61184879544' lon='-84.04901506662' />
+  <node id='-5' action='modify' visible='true' lat='41.61244238592' lon='-84.0499592042' />
+  <node id='-6' action='modify' visible='true' lat='41.61821757573' lon='-84.04777052164' />
+  <node id='-7' action='modify' visible='true' lat='41.62371956719' lon='-84.04905798197' />
+  <node id='-8' action='modify' visible='true' lat='41.63080890476' lon='-84.04933693171' />
+  <node id='-9' action='modify' visible='true' lat='41.63084098144' lon='-84.04423000574' />
+  <node id='-10' action='modify' visible='true' lat='41.61783853457' lon='-84.04400392593' />
+  <node id='-11' action='modify' visible='true' lat='41.61784420612' lon='-84.0423273243' />
+  <node id='-12' action='modify' visible='true' lat='41.6179288205' lon='-84.04885412335' />
+  <node id='-13' action='modify' visible='true' lat='41.61791277895' lon='-84.04076458097' />
+  <node id='-14' action='modify' visible='true' lat='41.62707116506' lon='-84.04976962239' />
+  <node id='-15' action='modify' visible='true' lat='41.6271392139' lon='-84.04327563597' />
+  <way id='-16' action='modify' visible='true'>
+    <nd ref='-1' />
+    <nd ref='-2' />
+    <nd ref='-3' />
+    <nd ref='-4' />
+    <nd ref='-5' />
+    <nd ref='-6' />
+    <nd ref='-7' />
+    <nd ref='-8' />
+    <nd ref='-9' />
+    <nd ref='-10' />
+    <nd ref='-11' />
+    <nd ref='-1' />
     <tag k='_test_break' v='forest1' />
     <tag k='natural' v='wood' />
   </way>
-  <way id='-883173' action='modify' visible='true'>
-    <nd ref='-37566' />
-    <nd ref='-37567' />
+  <way id='-17' action='modify' visible='true'>
+    <nd ref='-12' />
+    <nd ref='-13' />
     <tag k='highway' v='primary' />
   </way>
-  <way id='-883199' action='modify' visible='true'>
-    <nd ref='-37569' />
-    <nd ref='-37570' />
+  <way id='-18' action='modify' visible='true'>
+    <nd ref='-14' />
+    <nd ref='-15' />
     <tag k='highway' v='primary' />
   </way>
 </osm>

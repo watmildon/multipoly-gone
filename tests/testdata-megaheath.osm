@@ -2268,7 +2268,7 @@
   <node id='13421581675' visible='true' version='1' lat='46.9962089' lon='-119.6255314' />
   <node id='13421581676' visible='true' version='1' lat='46.9963344' lon='-119.625673' />
   <node id='13421581677' visible='true' version='1' lat='46.9964407' lon='-119.6258853' />
-  <way id='-21713' visible='true'>
+  <way id='-1' visible='true'>
     <nd ref='13395666428' />
     <nd ref='13395666429' />
     <nd ref='13395666430' />
@@ -2759,7 +2759,7 @@
     <nd ref='13395666427' />
     <nd ref='13395666428' />
   </way>
-  <way id='-21734' visible='true'>
+  <way id='-2' visible='true'>
     <nd ref='13389571542' />
     <nd ref='13389571554' />
     <nd ref='13389571555' />
@@ -3229,7 +3229,7 @@
     <nd ref='13389571541' />
     <nd ref='13389571542' />
   </way>
-  <way id='-21735' visible='true'>
+  <way id='-3' visible='true'>
     <nd ref='13395461529' />
     <nd ref='13395461575' />
     <nd ref='13395461576' />
@@ -3277,7 +3277,7 @@
     <nd ref='13395461534' />
     <nd ref='13395461529' />
   </way>
-  <way id='-21736' visible='true'>
+  <way id='-4' visible='true'>
     <nd ref='13395461467' />
     <nd ref='13395461473' />
     <nd ref='13395461472' />
@@ -3322,7 +3322,7 @@
     <nd ref='13395461512' />
     <nd ref='13395461467' />
   </way>
-  <way id='-21739' visible='true'>
+  <way id='-5' visible='true'>
     <nd ref='13394451153' />
     <nd ref='13394451175' />
     <nd ref='13394451176' />
@@ -3492,7 +3492,7 @@
     <nd ref='13394451152' />
     <nd ref='13394451153' />
   </way>
-  <way id='-21744' visible='true'>
+  <way id='-6' visible='true'>
     <nd ref='13401835446' />
     <nd ref='13401835447' />
     <nd ref='13401835448' />
@@ -3592,7 +3592,7 @@
     <nd ref='13401835521' />
     <nd ref='13401835446' />
   </way>
-  <way id='-21746' visible='true'>
+  <way id='-7' visible='true'>
     <nd ref='13401835395' />
     <nd ref='13401835396' />
     <nd ref='13401835397' />
@@ -3859,7 +3859,7 @@
     <nd ref='13401835394' />
     <nd ref='13401835395' />
   </way>
-  <way id='-21755' visible='true'>
+  <way id='-8' visible='true'>
     <nd ref='13394451830' />
     <nd ref='13394451831' />
     <nd ref='13394451832' />
@@ -4170,7 +4170,7 @@
     <nd ref='13394451807' />
     <nd ref='13394451830' />
   </way>
-  <way id='-21756' visible='true'>
+  <way id='-9' visible='true'>
     <nd ref='13395461220' />
     <nd ref='13395461282' />
     <nd ref='13395461283' />
@@ -4637,28 +4637,28 @@
     <tag k='natural' v='scrub' />
   </way>
   <relation id='19980748' visible='true' version='8'>
-    <member type='way' ref='-21734' role='outer' />
-    <member type='way' ref='-21739' role='outer' />
+    <member type='way' ref='-2' role='outer' />
+    <member type='way' ref='-5' role='outer' />
     <member type='way' ref='1460418412' role='inner' />
-    <member type='way' ref='-21756' role='inner' />
-    <member type='way' ref='-21755' role='outer' />
+    <member type='way' ref='-9' role='inner' />
+    <member type='way' ref='-8' role='outer' />
     <member type='way' ref='1460418456' role='inner' />
     <member type='way' ref='1460537463' role='inner' />
     <member type='way' ref='1460537468' role='inner' />
-    <member type='way' ref='-21736' role='inner' />
-    <member type='way' ref='-21735' role='inner' />
+    <member type='way' ref='-4' role='inner' />
+    <member type='way' ref='-3' role='inner' />
     <member type='way' ref='1460537481' role='inner' />
     <member type='way' ref='1460537483' role='inner' />
     <member type='way' ref='1460537482' role='inner' />
-    <member type='way' ref='-21713' role='outer' />
+    <member type='way' ref='-1' role='outer' />
     <member type='way' ref='1460557972' role='outer' />
     <member type='way' ref='1460557977' role='inner' />
     <member type='way' ref='1460557975' role='inner' />
     <member type='way' ref='1460557976' role='inner' />
     <member type='way' ref='1460557980' role='inner' />
-    <member type='way' ref='-21746' role='outer' />
+    <member type='way' ref='-7' role='outer' />
     <member type='way' ref='1461322237' role='inner' />
-    <member type='way' ref='-21744' role='outer' />
+    <member type='way' ref='-6' role='outer' />
     <member type='way' ref='1461322243' role='inner' />
     <member type='way' ref='1463179450' role='inner' />
     <member type='way' ref='1463179449' role='inner' />

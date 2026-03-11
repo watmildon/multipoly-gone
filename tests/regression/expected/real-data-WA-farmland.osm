@@ -23046,7 +23046,7 @@
   <node id='13346567086' visible='true' version='1' lat='46.4609949' lon='-119.0295844' />
   <node id='13346567087' visible='true' version='1' lat='46.4605756' lon='-119.0288271' />
   <node id='13346567088' visible='true' version='1' lat='46.4601611' lon='-119.0282112' />
-  <way id='-540338' visible='true'>
+  <way id='-1' visible='true'>
     <nd ref='7157815607' />
     <nd ref='7157815606' />
     <nd ref='7157815605' />
@@ -23544,7 +23544,7 @@
     <nd ref='7157815608' />
     <nd ref='7157815607' />
   </way>
-  <way id='-540339' visible='true'>
+  <way id='-2' visible='true'>
     <nd ref='9714926409' />
     <nd ref='9714926410' />
     <nd ref='9714926411' />
@@ -23751,7 +23751,7 @@
     <nd ref='9715156394' />
     <nd ref='9714926409' />
   </way>
-  <way id='-540340' visible='true'>
+  <way id='-3' visible='true'>
     <nd ref='9715156452' />
     <nd ref='9715156453' />
     <nd ref='9715156454' />
@@ -23772,7 +23772,7 @@
     <nd ref='9715156452' />
     <tag k='natural' v='heath' />
   </way>
-  <way id='-540341' visible='true'>
+  <way id='-4' visible='true'>
     <nd ref='9715156550' />
     <nd ref='9715156551' />
     <nd ref='9715156552' />
@@ -23788,7 +23788,7 @@
     <nd ref='9715156550' />
     <tag k='natural' v='heath' />
   </way>
-  <way id='-540342' visible='true'>
+  <way id='-5' visible='true'>
     <nd ref='9715156560' />
     <nd ref='9715156561' />
     <nd ref='9715156562' />
@@ -23807,7 +23807,7 @@
     <nd ref='9715156560' />
     <tag k='natural' v='heath' />
   </way>
-  <way id='-540343' visible='true'>
+  <way id='-6' visible='true'>
     <nd ref='9791087896' />
     <nd ref='9791087956' />
     <nd ref='9791087955' />
@@ -23856,7 +23856,7 @@
     <nd ref='9791087896' />
     <tag k='natural' v='heath' />
   </way>
-  <way id='-540344' visible='true'>
+  <way id='-7' visible='true'>
     <nd ref='3039607528' />
     <nd ref='3039581133' />
     <nd ref='7157802723' />
@@ -23982,7 +23982,7 @@
     <nd ref='9715156849' />
     <nd ref='3039607528' />
   </way>
-  <way id='-540345' visible='true'>
+  <way id='-8' visible='true'>
     <nd ref='9765526508' />
     <nd ref='9765526507' />
     <nd ref='9765526506' />
@@ -24330,7 +24330,7 @@
     <nd ref='9765526509' />
     <nd ref='9765526508' />
   </way>
-  <way id='-540346' visible='true'>
+  <way id='-9' visible='true'>
     <nd ref='9765526648' />
     <nd ref='9765526649' />
     <nd ref='9765526650' />
@@ -24391,7 +24391,7 @@
     <nd ref='9765526648' />
     <tag k='natural' v='heath' />
   </way>
-  <way id='-540347' visible='true'>
+  <way id='-10' visible='true'>
     <nd ref='9765526636' />
     <nd ref='9765526670' />
     <nd ref='9765526671' />
@@ -24415,7 +24415,7 @@
     <nd ref='9765526636' />
     <tag k='natural' v='heath' />
   </way>
-  <way id='-540348' visible='true'>
+  <way id='-11' visible='true'>
     <nd ref='9765777761' />
     <nd ref='9765777754' />
     <nd ref='9765777757' />
@@ -24436,7 +24436,7 @@
     <nd ref='9765777761' />
     <tag k='natural' v='heath' />
   </way>
-  <way id='-540349' visible='true'>
+  <way id='-12' visible='true'>
     <nd ref='9773857997' />
     <nd ref='9773858057' />
     <nd ref='9773857998' />
@@ -24476,7 +24476,7 @@
     <nd ref='9773857997' />
     <tag k='natural' v='heath' />
   </way>
-  <way id='-540350' visible='true'>
+  <way id='-13' visible='true'>
     <nd ref='9765778119' />
     <nd ref='9765778118' />
     <nd ref='9765778117' />
@@ -24493,7 +24493,7 @@
     <nd ref='9765778120' />
     <nd ref='9765778119' />
   </way>
-  <way id='-540351' visible='true'>
+  <way id='-14' visible='true'>
     <nd ref='9765526508' />
     <nd ref='9765526509' />
     <nd ref='9765526510' />
@@ -24597,7 +24597,7 @@
     <nd ref='9765526607' />
     <nd ref='9765526508' />
   </way>
-  <way id='-540352' visible='true'>
+  <way id='-15' visible='true'>
     <nd ref='9765526643' />
     <nd ref='9765526691' />
     <nd ref='9765526690' />
@@ -24668,7 +24668,7 @@
     <tag k='natural' v='wetland' />
     <tag k='wetland' v='marsh' />
   </way>
-  <way id='-540353' visible='true'>
+  <way id='-16' visible='true'>
     <nd ref='9765777761' />
     <nd ref='9765777754' />
     <nd ref='9765777755' />
@@ -24677,7 +24677,7 @@
     <nd ref='9765777760' />
     <nd ref='9765777761' />
   </way>
-  <way id='-540354' visible='true'>
+  <way id='-17' visible='true'>
     <nd ref='9767646461' />
     <nd ref='9767646462' />
     <nd ref='9767646463' />
@@ -24892,7 +24892,7 @@
     <nd ref='9767647972' />
     <nd ref='9767646461' />
   </way>
-  <way id='-540355' visible='true'>
+  <way id='-18' visible='true'>
     <nd ref='9767647831' />
     <nd ref='9767647832' />
     <nd ref='9767647865' />
@@ -24932,7 +24932,7 @@
     <tag k='natural' v='wetland' />
     <tag k='wetland' v='wet_meadow' />
   </way>
-  <way id='-540356' visible='true'>
+  <way id='-19' visible='true'>
     <nd ref='9767647870' />
     <nd ref='9767647871' />
     <nd ref='9767647872' />
@@ -24971,7 +24971,7 @@
     <tag k='natural' v='wetland' />
     <tag k='wetland' v='wet_meadow' />
   </way>
-  <way id='-540357' visible='true'>
+  <way id='-20' visible='true'>
     <nd ref='9773858020' />
     <nd ref='9773858021' />
     <nd ref='9773858022' />
@@ -25022,7 +25022,7 @@
     <tag k='natural' v='wetland' />
     <tag k='wetland' v='marsh' />
   </way>
-  <way id='-540358' visible='true'>
+  <way id='-21' visible='true'>
     <nd ref='9773858039' />
     <nd ref='9773858040' />
     <nd ref='9773858041' />
@@ -25052,7 +25052,7 @@
     <tag k='natural' v='wetland' />
     <tag k='wetland' v='marsh' />
   </way>
-  <way id='-540359' visible='true'>
+  <way id='-22' visible='true'>
     <nd ref='3041953646' />
     <nd ref='9773873141' />
     <nd ref='9773873140' />
@@ -25388,7 +25388,7 @@
     <nd ref='3041953653' />
     <nd ref='3041953646' />
   </way>
-  <way id='-540360' visible='true'>
+  <way id='-23' visible='true'>
     <nd ref='9773873208' />
     <nd ref='9773873209' />
     <nd ref='9773873210' />
@@ -25559,7 +25559,7 @@
     <nd ref='9773873330' />
     <nd ref='9773873208' />
   </way>
-  <way id='-540361' visible='true'>
+  <way id='-24' visible='true'>
     <nd ref='3041953607' />
     <nd ref='3041953641' />
     <nd ref='3041953559' />
@@ -25706,7 +25706,7 @@
     <tag k='water' v='pond' />
     <tag k='wikidata' v='Q49300616' />
   </way>
-  <way id='-540362' visible='true'>
+  <way id='-25' visible='true'>
     <nd ref='3041953607' />
     <nd ref='3041953641' />
     <nd ref='3041953559' />
@@ -26028,7 +26028,7 @@
     <nd ref='9773873142' />
     <nd ref='3041953607' />
   </way>
-  <way id='-540363' visible='true'>
+  <way id='-26' visible='true'>
     <nd ref='9791087896' />
     <nd ref='9791087897' />
     <nd ref='9791087898' />
@@ -54135,26 +54135,26 @@
     <nd ref='13346567057' />
     <tag k='landuse' v='farmland' />
   </way>
-  <relation id='-516759' visible='true'>
+  <relation id='-27' visible='true'>
     <member type='way' ref='1066226154' role='outer' />
     <member type='way' ref='1066226153' role='inner' />
     <tag k='landuse' v='grass' />
     <tag k='type' v='multipolygon' />
   </relation>
-  <relation id='-516760' visible='true'>
+  <relation id='-28' visible='true'>
     <member type='way' ref='1066226160' role='outer' />
     <member type='way' ref='1066226159' role='inner' />
     <tag k='landuse' v='grass' />
     <tag k='type' v='multipolygon' />
   </relation>
-  <relation id='-516776' visible='true'>
-    <member type='way' ref='-540339' role='outer' />
+  <relation id='-29' visible='true'>
+    <member type='way' ref='-2' role='outer' />
     <member type='way' ref='1057316322' role='inner' />
     <member type='way' ref='1057316323' role='inner' />
     <tag k='natural' v='heath' />
     <tag k='type' v='multipolygon' />
   </relation>
-  <relation id='-516777' visible='true'>
+  <relation id='-30' visible='true'>
     <member type='way' ref='1063057397' role='outer' />
     <member type='way' ref='766116488' role='inner' />
     <member type='way' ref='1063057399' role='inner' />
@@ -54162,14 +54162,14 @@
     <tag k='natural' v='heath' />
     <tag k='type' v='multipolygon' />
   </relation>
-  <relation id='-516778' visible='true'>
+  <relation id='-31' visible='true'>
     <member type='way' ref='1063333852' role='outer' />
     <member type='way' ref='1063333853' role='inner' />
     <tag k='natural' v='heath' />
     <tag k='type' v='multipolygon' />
   </relation>
-  <relation id='-516779' visible='true'>
-    <member type='way' ref='-540360' role='outer' />
+  <relation id='-32' visible='true'>
+    <member type='way' ref='-23' role='outer' />
     <member type='way' ref='1064200990' role='inner' />
     <member type='way' ref='766116250' role='inner' />
     <tag k='natural' v='heath' />
@@ -54191,10 +54191,10 @@
     <tag k='wikidata' v='Q113126638' />
   </relation>
   <relation id='14106207' visible='true' version='3'>
-    <member type='way' ref='-540338' role='outer' />
+    <member type='way' ref='-1' role='outer' />
     <member type='way' ref='299871834' role='inner' />
     <member type='way' ref='299871833' role='inner' />
-    <member type='way' ref='-540344' role='inner' />
+    <member type='way' ref='-7' role='inner' />
     <member type='way' ref='1057316344' role='inner' />
     <member type='way' ref='299871837' role='inner' />
     <member type='way' ref='299871831' role='inner' />
@@ -54209,9 +54209,9 @@
     <tag k='type' v='multipolygon' />
   </relation>
   <relation id='14175974' visible='true' version='4'>
-    <member type='way' ref='-540345' role='outer' />
+    <member type='way' ref='-8' role='outer' />
     <member type='way' ref='1063087559' role='inner' />
-    <member type='way' ref='-540350' role='inner' />
+    <member type='way' ref='-13' role='inner' />
     <member type='way' ref='1063087570' role='inner' />
     <member type='way' ref='1063087571' role='inner' />
     <member type='way' ref='1063087572' role='inner' />
@@ -54220,7 +54220,7 @@
     <tag k='type' v='multipolygon' />
   </relation>
   <relation id='14175975' visible='true' version='1'>
-    <member type='way' ref='-540351' role='outer' />
+    <member type='way' ref='-14' role='outer' />
     <member type='way' ref='766116251' role='inner' />
     <member type='way' ref='766116244' role='inner' />
     <member type='way' ref='766116245' role='inner' />
@@ -54233,13 +54233,13 @@
     <tag k='wetland' v='marsh' />
   </relation>
   <relation id='14176264' visible='true' version='1'>
-    <member type='way' ref='-540353' role='outer' />
+    <member type='way' ref='-16' role='outer' />
     <member type='way' ref='1063087528' role='inner' />
     <tag k='landuse' v='grass' />
     <tag k='type' v='multipolygon' />
   </relation>
   <relation id='14179357' visible='true' version='1'>
-    <member type='way' ref='-540354' role='outer' />
+    <member type='way' ref='-17' role='outer' />
     <member type='way' ref='1063333848' role='inner' />
     <member type='way' ref='1063333849' role='inner' />
     <member type='way' ref='1063333850' role='inner' />
@@ -54247,14 +54247,14 @@
     <tag k='type' v='multipolygon' />
   </relation>
   <relation id='14187719' visible='true' version='4'>
-    <member type='way' ref='-540359' role='outer' />
+    <member type='way' ref='-22' role='outer' />
     <member type='way' ref='1064200993' role='inner' />
     <member type='way' ref='1064426299' role='inner' />
     <tag k='natural' v='heath' />
     <tag k='type' v='multipolygon' />
   </relation>
   <relation id='14187721' visible='true' version='1'>
-    <member type='way' ref='-540362' role='outer' />
+    <member type='way' ref='-25' role='outer' />
     <member type='way' ref='766116243' role='inner' />
     <tag k='natural' v='wetland' />
     <tag k='type' v='multipolygon' />
@@ -54281,7 +54281,7 @@
     <tag k='type' v='multipolygon' />
   </relation>
   <relation id='14212820' visible='true' version='1'>
-    <member type='way' ref='-540363' role='outer' />
+    <member type='way' ref='-26' role='outer' />
     <member type='way' ref='1066226175' role='inner' />
     <tag k='natural' v='wetland' />
     <tag k='type' v='multipolygon' />
