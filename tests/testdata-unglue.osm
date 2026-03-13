@@ -1,0 +1,49 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<osm version='0.6' generator='JOSM'>
+  <node id='-38129' action='modify' visible='true' lat='44.94547989959' lon='-93.28812531485' />
+  <node id='-38130' action='modify' visible='true' lat='44.94755786627' lon='-93.28807220982' />
+  <node id='-38132' action='modify' visible='true' lat='44.94720877637' lon='-93.28808113139' />
+  <node id='-38133' action='modify' visible='true' lat='44.94718200955' lon='-93.28661561095' />
+  <node id='-38134' action='modify' visible='true' lat='44.94593898904' lon='-93.28663078381' />
+  <node id='-38135' action='modify' visible='true' lat='44.94594698761' lon='-93.288113378' />
+  <node id='-38142' action='modify' visible='true' lat='44.94783975518' lon='-93.28806841851' />
+  <node id='-38143' action='modify' visible='true' lat='44.94991763644' lon='-93.28801531348' />
+  <node id='-38144' action='modify' visible='true' lat='44.94956856089' lon='-93.28802423504' />
+  <node id='-38145' action='modify' visible='true' lat='44.94954179517' lon='-93.2865587146' />
+  <node id='-38146' action='modify' visible='true' lat='44.94829882576' lon='-93.28657388746' />
+  <node id='-38147' action='modify' visible='true' lat='44.948306824' lon='-93.28805648166' />
+  <node id='-38150' action='modify' visible='true' lat='44.94956683209' lon='-93.28792957713' />
+  <node id='-38151' action='modify' visible='true' lat='44.94830625588' lon='-93.28795117276' />
+  <way id='-154006' action='modify' visible='true'>
+    <nd ref='-38129' />
+    <nd ref='-38135' />
+    <nd ref='-38132' />
+    <nd ref='-38130' />
+    <tag k='highway' v='secondary' />
+  </way>
+  <way id='-154035' action='modify' visible='true'>
+    <nd ref='-38132' />
+    <nd ref='-38133' />
+    <nd ref='-38134' />
+    <nd ref='-38135' />
+    <nd ref='-38132' />
+    <tag k='_test_note' v='This is incorrectly glued to this roadway' />
+    <tag k='leisure' v='park' />
+  </way>
+  <way id='-154140' action='modify' visible='true'>
+    <nd ref='-38142' />
+    <nd ref='-38147' />
+    <nd ref='-38144' />
+    <nd ref='-38143' />
+    <tag k='highway' v='secondary' />
+  </way>
+  <way id='-154157' action='modify' visible='true'>
+    <nd ref='-38150' />
+    <nd ref='-38145' />
+    <nd ref='-38146' />
+    <nd ref='-38151' />
+    <nd ref='-38150' />
+    <tag k='_test_note' v='This is correctly offset from the roadway' />
+    <tag k='leisure' v='park' />
+  </way>
+</osm>
