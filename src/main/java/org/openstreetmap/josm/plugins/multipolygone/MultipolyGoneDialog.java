@@ -87,6 +87,13 @@ public class MultipolyGoneDialog extends ToggleDialog
     private final JList<BreakPlan.RoadCorridor> breakRoadList;
     private BreakPlan currentBreakPlan;
 
+    // Unglue tab state
+    private final AbstractAction unglueAction;
+    private final JLabel unglueStatusLabel;
+    private final DefaultListModel<UngluePlan.GluedRun> unglueRunListModel;
+    private final JList<UngluePlan.GluedRun> unglueRunList;
+    private UngluePlan currentUngluePlan;
+
     /** Guard to prevent selection feedback loop (list click -> map select -> list select -> ...) */
     private boolean updatingSelection;
 
@@ -194,11 +201,26 @@ public class MultipolyGoneDialog extends ToggleDialog
         breakScrollPane.setAlignmentX(Component.LEFT_ALIGNMENT);
         breakPanel.add(breakScrollPane);
 
+        // --- Unglue tab (Tab 4) ---
+        unglueStatusLabel = new JLabel(tr("Select an area feature glued to a road"));
+        unglueRunListModel = new DefaultListModel<>();
+        unglueRunList = new JList<>(unglueRunListModel);
+        unglueRunList.setCellRenderer(new GluedRunRenderer());
+
+        JPanel ungluePanel = new JPanel();
+        ungluePanel.setLayout(new BoxLayout(ungluePanel, BoxLayout.Y_AXIS));
+        unglueStatusLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        ungluePanel.add(unglueStatusLabel);
+        JScrollPane unglueScrollPane = new JScrollPane(unglueRunList);
+        unglueScrollPane.setAlignmentX(Component.LEFT_ALIGNMENT);
+        ungluePanel.add(unglueScrollPane);
+
         // --- Tabbed pane ---
         tabbedPane = new JTabbedPane();
         tabbedPane.addTab(tr("Fixable"), new JScrollPane(list));
         tabbedPane.addTab(tr("Skipped"), new JScrollPane(skippedTree));
         tabbedPane.addTab(tr("Break Polygon"), breakPanel);
+        tabbedPane.addTab(tr("Unglue"), ungluePanel);
         tabbedPane.addChangeListener(e -> updateButtonState());
 
         // --- Actions ---
@@ -243,12 +265,21 @@ public class MultipolyGoneDialog extends ToggleDialog
         };
         new ImageProvider("dialogs", "fix").getResource().attachImageIcon(breakAction, true);
 
+        unglueAction = new AbstractAction(tr("Unglue")) {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                executeUnglue();
+            }
+        };
+        new ImageProvider("dialogs", "fix").getResource().attachImageIcon(unglueAction, true);
+
         createLayout(tabbedPane, false, Arrays.asList(
             new SideButton(refreshAction),
             new SideButton(goneAction),
             new SideButton(allGoneAction),
             new SideButton(downloadRefsAction),
-            new SideButton(breakAction)
+            new SideButton(breakAction),
+            new SideButton(unglueAction)
         ));
     }
 
@@ -706,17 +737,20 @@ public class MultipolyGoneDialog extends ToggleDialog
         int selectedTab = tabbedPane.getSelectedIndex();
         boolean onFixableTab = selectedTab == 0;
         boolean onBreakTab = selectedTab == 2;
+        boolean onUnglueTab = selectedTab == 3;
         boolean hasFixableItems = !listModel.isEmpty();
 
         goneAction.setEnabled(onFixableTab && hasFixableItems);
         allGoneAction.setEnabled(onFixableTab && hasFixableItems);
         breakAction.setEnabled(onBreakTab && currentBreakPlan != null);
+        unglueAction.setEnabled(onUnglueTab && currentUngluePlan != null);
 
         boolean hasDownloadableSkips = currentSkipResults.stream()
             .anyMatch(sr -> sr.getReason() == SkipReason.INCOMPLETE_MEMBERS
                 || sr.getReason() == SkipReason.DELETED_OR_INCOMPLETE_WAY);
         downloadRefsAction.setEnabled(
-            (onFixableTab && hasFixableItems) || (!onFixableTab && !onBreakTab && hasDownloadableSkips));
+            (onFixableTab && hasFixableItems)
+            || (!onFixableTab && !onBreakTab && !onUnglueTab && hasDownloadableSkips));
     }
 
     @Override
@@ -762,8 +796,17 @@ public class MultipolyGoneDialog extends ToggleDialog
     @Override
     public void preferenceChanged(org.openstreetmap.josm.spi.preferences.PreferenceChangeEvent e) {
         super.preferenceChanged(e);
-        if (e.getKey().startsWith("multipolygone.") && !listModel.isEmpty()) {
-            refresh();
+        if (e.getKey().startsWith("multipolygone.")) {
+            if (!listModel.isEmpty()) {
+                refresh();
+            }
+            // Re-run Break/Unglue analysis since tag filters may have changed
+            DataSet ds = getDataSet();
+            if (ds != null) {
+                Collection<? extends OsmPrimitive> selected = ds.getSelected();
+                updateBreakAnalysis(selected);
+                updateUnglueAnalysis(selected);
+            }
         }
     }
 
@@ -829,6 +872,9 @@ public class MultipolyGoneDialog extends ToggleDialog
 
             // Update Break Polygon tab analysis
             updateBreakAnalysis(selected);
+
+            // Update Unglue tab analysis
+            updateUnglueAnalysis(selected);
         } finally {
             updatingSelection = false;
         }
@@ -1087,6 +1133,100 @@ public class MultipolyGoneDialog extends ToggleDialog
         // Fallback
         String highway = w.get("highway");
         return highway != null ? "highway=" + highway : "way";
+    }
+
+    // -----------------------------------------------------------------------
+    // Unglue tab logic
+    // -----------------------------------------------------------------------
+
+    /**
+     * Updates the Unglue tab based on the current map selection.
+     */
+    private void updateUnglueAnalysis(Collection<? extends OsmPrimitive> selected) {
+        unglueRunListModel.clear();
+        currentUngluePlan = null;
+
+        DataSet ds = getDataSet();
+        if (ds == null || selected.isEmpty()) {
+            unglueStatusLabel.setText(tr("Select an area feature glued to a road"));
+            updateButtonState();
+            return;
+        }
+
+        // Find a suitable area primitive from the selection
+        OsmPrimitive target = null;
+        for (OsmPrimitive prim : selected) {
+            if (prim instanceof Way way && way.isClosed() && way.getNodesCount() >= 4) {
+                target = way;
+                break;
+            }
+            if (prim instanceof Relation rel
+                && ("multipolygon".equals(rel.get("type")) || "boundary".equals(rel.get("type")))) {
+                target = rel;
+                break;
+            }
+        }
+
+        if (target == null) {
+            unglueStatusLabel.setText(tr("Select an area feature glued to a road"));
+            updateButtonState();
+            return;
+        }
+
+        UngluePlan plan = PolygonUngluer.analyze(target, ds);
+        if (plan == null) {
+            unglueStatusLabel.setText(tr("No glued centerline segments found"));
+            updateButtonState();
+            return;
+        }
+
+        currentUngluePlan = plan;
+        unglueStatusLabel.setText(plan.getDescription());
+        for (UngluePlan.GluedRun run : plan.getGluedRuns()) {
+            unglueRunListModel.addElement(run);
+        }
+        updateButtonState();
+    }
+
+    private void executeUnglue() {
+        if (currentUngluePlan == null) return;
+
+        // Re-analyze to get fresh plan
+        DataSet ds = getDataSet();
+        if (ds == null) return;
+        UngluePlan freshPlan = PolygonUngluer.analyze(currentUngluePlan.getSource(), ds);
+        if (freshPlan == null) {
+            currentUngluePlan = null;
+            unglueStatusLabel.setText(tr("No glued centerline segments found"));
+            unglueRunListModel.clear();
+            updateButtonState();
+            return;
+        }
+
+        PolygonUnglueFixer.execute(freshPlan);
+        refresh();
+    }
+
+    private static class GluedRunRenderer extends DefaultListCellRenderer {
+        @Override
+        public Component getListCellRendererComponent(JList<?> jlist, Object value,
+                int index, boolean isSelected, boolean cellHasFocus) {
+            JLabel label = (JLabel) super.getListCellRendererComponent(
+                jlist, value, index, isSelected, cellHasFocus);
+            if (value instanceof UngluePlan.GluedRun run) {
+                Way road = run.getCenterlineWay();
+                String name = road != null ? road.get("name") : null;
+                String tagDesc = road != null ? describePrimaryTag(road) : "?";
+                String text = tagDesc;
+                if (name != null) {
+                    text = name + " (" + text + ")";
+                }
+                text += " \u2014 " + run.getSharedNodes().size() + " shared node(s), "
+                    + run.getWidthMeters() + "m wide";
+                label.setText(text);
+            }
+            return label;
+        }
     }
 
     private static class RoadCorridorRenderer extends DefaultListCellRenderer {

@@ -485,7 +485,7 @@ class PolygonBreaker {
      * @param meters   distance in real-world meters
      * @param latDeg   latitude in degrees (used for Mercator correction)
      */
-    private static double metersToProjectionUnits(double meters, double latDeg) {
+    static double metersToProjectionUnits(double meters, double latDeg) {
         double metersPerUnit = ProjectionRegistry.getProjection().getMetersPerUnit();
         if (metersPerUnit < 1e-6) return meters; // already in meters
         if (metersPerUnit < 10) {

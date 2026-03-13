@@ -49,8 +49,9 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
 
     public static final String PREF_ROAD_WIDTHS = "multipolygone.roadWidths";
     public static final String DEFAULT_ROAD_WIDTHS =
-        "highway=motorway=12;highway=trunk=10;highway=primary=7;highway=secondary=5"
-        + ";highway=tertiary=4;highway=residential=3.5;highway=service=3";
+        "highway=motorway=12;highway=trunk=10;highway=primary=7;highway=secondary=7"
+        + ";highway=tertiary=7;highway=unclassified=7;highway=residential=7"
+        + ";highway=service=7;highway=track=3.5";
 
     private DefaultTableModel identityTagsTableModel;
     private DefaultTableModel insignificantTagsTableModel;
@@ -99,7 +100,7 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
 
         /** Returns true if the given way matches this tag filter. */
         boolean matches(org.openstreetmap.josm.data.osm.Way w) {
-            if (tagValue == null) {
+            if (tagValue == null || "*".equals(tagValue)) {
                 return w.hasKey(tagKey);
             }
             return tagValue.equals(w.get(tagKey));
@@ -111,10 +112,22 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
         }
     }
 
+    /** Default width in meters when no width is specified for a tag filter. */
+    static final double DEFAULT_TAG_WIDTH = 3.5;
+
     /**
      * Parses the break-tag widths preference.
-     * Format: "key=value=width" for specific value match, "key=width" for wildcard match.
-     * The last "=" separates the width; everything before it is the tag filter.
+     * <p>Supported formats per semicolon-delimited entry:
+     * <ul>
+     *   <li>{@code key=value=width} — match specific tag value with explicit width</li>
+     *   <li>{@code key=width} — match any value of key (wildcard) with explicit width</li>
+     *   <li>{@code key=value} — match specific value, default width (3.5m)</li>
+     *   <li>{@code key} — match any value of key, default width (3.5m)</li>
+     *   <li>{@code key=*=width} — explicit wildcard with width (same as key=width)</li>
+     *   <li>{@code key=*} — explicit wildcard, default width</li>
+     * </ul>
+     * The last "=" separates the width when the trailing segment is a valid number;
+     * otherwise the entire entry is treated as a tag filter with the default width.
      */
     static java.util.List<BreakTagWidth> getBreakTagWidths() {
         String pref = Config.getPref().get(PREF_ROAD_WIDTHS, DEFAULT_ROAD_WIDTHS);
@@ -122,25 +135,39 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
         for (String entry : pref.split(";")) {
             String trimmed = entry.trim();
             if (trimmed.isEmpty()) continue;
+
             int lastEq = trimmed.lastIndexOf('=');
-            if (lastEq <= 0) continue;
-            String filter = trimmed.substring(0, lastEq).trim();
-            String widthStr = trimmed.substring(lastEq + 1).trim();
+            if (lastEq <= 0) {
+                // Bare key (e.g. "count") — wildcard match, default width
+                result.add(new BreakTagWidth(trimmed, null, DEFAULT_TAG_WIDTH));
+                continue;
+            }
+
+            String beforeLast = trimmed.substring(0, lastEq).trim();
+            String afterLast = trimmed.substring(lastEq + 1).trim();
+
+            // Try to parse the part after the last '=' as a width
+            double width = -1;
             try {
-                double width = Double.parseDouble(widthStr);
-                int eqIdx = filter.indexOf('=');
-                if (eqIdx > 0) {
-                    // key=value format
-                    result.add(new BreakTagWidth(
-                        filter.substring(0, eqIdx).trim(),
-                        filter.substring(eqIdx + 1).trim(),
-                        width));
-                } else {
-                    // key-only (wildcard) format
-                    result.add(new BreakTagWidth(filter, null, width));
-                }
+                width = Double.parseDouble(afterLast);
             } catch (NumberFormatException e) {
-                // skip malformed entries
+                // Not a number — treat entire string as tag filter with default width
+            }
+
+            if (width > 0) {
+                // afterLast is a valid width — beforeLast is the tag filter
+                int eqIdx = beforeLast.indexOf('=');
+                if (eqIdx > 0) {
+                    String key = beforeLast.substring(0, eqIdx).trim();
+                    String value = beforeLast.substring(eqIdx + 1).trim();
+                    result.add(new BreakTagWidth(key, value, width));
+                } else {
+                    result.add(new BreakTagWidth(beforeLast, null, width));
+                }
+            } else {
+                // afterLast is not a number — treat as key=value with default width
+                // (e.g. "waterway=river" or "waterway=*")
+                result.add(new BreakTagWidth(beforeLast, afterLast, DEFAULT_TAG_WIDTH));
             }
         }
         return result;
@@ -380,7 +407,8 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
         roadWidthsInfo.setToolTipText(
             tr("<html>Ways matching these tag filters are used as split lines.<br>"
                + "Use <b>key=value</b> (e.g. highway=motorway) to match a specific tag,<br>"
-               + "or <b>key</b> alone (e.g. waterway) to match any value of that key.<br>"
+               + "<b>key=*</b> or <b>key</b> alone (e.g. waterway) to match any value of that key.<br>"
+               + "Width is optional \u2014 leave blank to use the default (3.5m).<br>"
                + "The polygon boundary is offset by half the configured width.</html>"));
         breakPanel.add(roadWidthsInfo, gbc);
         gbc.gridwidth = 1;
@@ -398,10 +426,20 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
             String trimmed = entry.trim();
             if (trimmed.isEmpty()) continue;
             int lastEq = trimmed.lastIndexOf('=');
-            if (lastEq > 0) {
-                roadWidthsTableModel.addRow(new Object[]{
-                    trimmed.substring(0, lastEq).trim(),
-                    trimmed.substring(lastEq + 1).trim()});
+            if (lastEq <= 0) {
+                // Bare key (e.g. "count") — no width
+                roadWidthsTableModel.addRow(new Object[]{trimmed, ""});
+            } else {
+                String afterLast = trimmed.substring(lastEq + 1).trim();
+                try {
+                    Double.parseDouble(afterLast);
+                    // Valid number — it's the width
+                    roadWidthsTableModel.addRow(new Object[]{
+                        trimmed.substring(0, lastEq).trim(), afterLast});
+                } catch (NumberFormatException e) {
+                    // Not a number — entire string is the filter (e.g. "waterway=*")
+                    roadWidthsTableModel.addRow(new Object[]{trimmed, ""});
+                }
             }
         }
 
@@ -536,9 +574,14 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
         for (int i = 0; i < roadWidthsTableModel.getRowCount(); i++) {
             String filter = ((String) roadWidthsTableModel.getValueAt(i, 0)).trim();
             String width = ((String) roadWidthsTableModel.getValueAt(i, 1)).trim();
-            if (filter.isEmpty() || width.isEmpty()) continue;
+            if (filter.isEmpty()) continue;
             if (roadWidths.length() > 0) roadWidths.append(';');
-            roadWidths.append(filter).append('=').append(width);
+            if (width.isEmpty()) {
+                // Key-only or key=value without explicit width
+                roadWidths.append(filter);
+            } else {
+                roadWidths.append(filter).append('=').append(width);
+            }
         }
         Config.getPref().put(PREF_ROAD_WIDTHS, roadWidths.toString());
 
