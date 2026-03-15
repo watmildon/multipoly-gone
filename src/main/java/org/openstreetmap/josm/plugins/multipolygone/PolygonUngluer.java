@@ -29,6 +29,11 @@ class PolygonUngluer {
         "highway", "waterway", "railway"
     );
 
+    /** Tag keys that identify a closed way as an area feature eligible for node snapping. */
+    private static final Set<String> AREA_FEATURE_KEYS = Set.of(
+        "landuse", "leisure", "building", "amenity", "natural"
+    );
+
     /**
      * Analyzes whether the given primitive has boundary nodes glued to centerline features.
      *
@@ -143,6 +148,11 @@ class PolygonUngluer {
         List<Node> resultReusedNodes = new ArrayList<>();
         assembleResultGeometry(boundaryNodes, ringSize, gluedRuns, candidates,
             resultGeometry, resultReusedNodes);
+
+        // Try to reuse nodes from adjacent area ways at run boundaries.
+        // When a glued run borders a non-glued node shared with another area way,
+        // the adjacent way may already have a node at the correct offset position.
+        resolveAdjacentAreaNodes(resultGeometry, resultReusedNodes, areaWays);
 
         // Close the ring
         if (!resultGeometry.isEmpty()) {
@@ -419,6 +429,137 @@ class PolygonUngluer {
     }
 
     // -----------------------------------------------------------------------
+    // Adjacent area node reuse
+    // -----------------------------------------------------------------------
+
+    /**
+     * After assembling the result geometry, checks transitions between offset
+     * nodes (null in reusedNodes) and kept nodes (non-null) for opportunities
+     * to reuse nodes from adjacent area ways.
+     *
+     * <p>When a kept boundary node is shared with another closed area way, and
+     * the adjacent offset point is close to one of that way's neighbors of
+     * the shared node, the offset point is replaced with the existing neighbor
+     * node. This maintains connectivity between adjacent areas after ungluing.
+     */
+    private static void resolveAdjacentAreaNodes(
+            List<EastNorth> resultGeometry,
+            List<Node> resultReusedNodes,
+            Set<Way> areaWays) {
+
+        int size = resultGeometry.size();
+        if (size < 2) return;
+
+        // Walk the result looking for transitions: kept → offset or offset → kept
+        for (int i = 0; i < size; i++) {
+            if (resultReusedNodes.get(i) != null) continue; // not an offset node
+            // This is an offset node — check neighbors for a kept node
+            // that's shared with another area way
+            resolveOneDirection(i, -1, size, resultGeometry, resultReusedNodes, areaWays);
+            resolveOneDirection(i, +1, size, resultGeometry, resultReusedNodes, areaWays);
+        }
+    }
+
+    /**
+     * For an offset node at index {@code idx}, look in direction {@code dir}
+     * for the nearest kept (non-null) node. If found and shared with another
+     * area way, try to match this offset node to one of that way's neighbors
+     * of the shared node.
+     */
+    private static void resolveOneDirection(int idx, int dir, int size,
+            List<EastNorth> resultGeometry,
+            List<Node> resultReusedNodes,
+            Set<Way> areaWays) {
+
+        List<MultipolyGonePreferences.BreakTagWidth> tagWidths =
+            MultipolyGonePreferences.getBreakTagWidths();
+
+        // Find the nearest kept node in the given direction
+        int neighborIdx = idx + dir;
+        if (neighborIdx < 0 || neighborIdx >= size) return;
+        Node anchor = resultReusedNodes.get(neighborIdx);
+        if (anchor == null) return; // adjacent is also offset — skip
+
+        EastNorth offsetEN = resultGeometry.get(idx);
+
+        // Look for other area feature ways that share the anchor node.
+        // Only snap to closed ways tagged with an allowlisted area key
+        // (landuse, leisure, building, amenity, natural).
+        for (OsmPrimitive ref : anchor.getReferrers()) {
+            if (!(ref instanceof Way otherWay)) continue;
+            if (areaWays.contains(otherWay)) continue;
+            if (otherWay.isDeleted() || otherWay.isIncomplete()) continue;
+            if (!otherWay.isClosed() || otherWay.getNodesCount() < 4) continue;
+            if (!isAreaFeature(otherWay)) continue;
+
+            // Find anchor in the other way and get its neighbors
+            List<Node> otherNodes = otherWay.getNodes();
+            int otherRingSize = otherNodes.size() - 1;
+            for (int j = 0; j < otherRingSize; j++) {
+                if (!otherNodes.get(j).equals(anchor)) continue;
+                // Check both neighbors of anchor in the other way
+                Node prev = otherNodes.get((j - 1 + otherRingSize) % otherRingSize);
+                Node next = otherNodes.get((j + 1) % otherRingSize);
+
+                // Filter out candidates that are on a centerline way — we must
+                // not snap back to a road node we're trying to offset away from
+                if (isOnCenterline(prev, areaWays, tagWidths)) prev = null;
+                if (isOnCenterline(next, areaWays, tagWidths)) next = null;
+
+                Node best = pickCloser(offsetEN, prev, next);
+                if (best != null) {
+                    EastNorth bestEN = best.getEastNorth();
+                    double metersPerUnit = org.openstreetmap.josm.data.projection.ProjectionRegistry
+                        .getProjection().getMetersPerUnit();
+                    double distMeters = bestEN.distance(offsetEN) * metersPerUnit;
+                    // Reuse if within a generous but safe threshold (half a road width ≈ 5m max)
+                    if (distMeters < 5.0) {
+                        resultGeometry.set(idx, bestEN);
+                        resultReusedNodes.set(idx, best);
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    /** Checks whether a closed way is an area feature eligible for node snapping. */
+    private static boolean isAreaFeature(Way w) {
+        for (String key : AREA_FEATURE_KEYS) {
+            if (w.hasKey(key)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Checks whether a node is on any centerline way (road, waterway, etc.)
+     * other than the area ways being unglued.
+     */
+    private static boolean isOnCenterline(Node node,
+            Set<Way> areaWays, List<MultipolyGonePreferences.BreakTagWidth> tagWidths) {
+        if (node == null) return false;
+        for (OsmPrimitive ref : node.getReferrers()) {
+            if (!(ref instanceof Way w)) continue;
+            if (areaWays.contains(w)) continue;
+            if (w.isDeleted() || w.isIncomplete()) continue;
+            if (isCenterlineWay(w, tagWidths)) return true;
+        }
+        return false;
+    }
+
+    /** Returns whichever of a or b is closer to target, or null if both are null. */
+    private static Node pickCloser(EastNorth target, Node a, Node b) {
+        if (a == null && b == null) return null;
+        if (a == null) return b;
+        if (b == null) return a;
+        EastNorth ea = a.getEastNorth();
+        EastNorth eb = b.getEastNorth();
+        if (ea == null) return b;
+        if (eb == null) return a;
+        return ea.distance(target) <= eb.distance(target) ? a : b;
+    }
+
+    // -----------------------------------------------------------------------
     // Result geometry assembly
     // -----------------------------------------------------------------------
 
@@ -433,11 +574,15 @@ class PolygonUngluer {
             List<EastNorth> resultGeometry,
             List<Node> resultReusedNodes) {
 
-        // Build a set of indices that are part of any glued run
-        // and a mapping from startIdx -> gluedRun for substitution
+        // For each boundary index, record which runs start there and which runs
+        // cover it (so we know whether it's glued at all).
         boolean[] isGlued = new boolean[ringSize];
-        int[] runStartAt = new int[ringSize]; // -1 if not a run start
-        java.util.Arrays.fill(runStartAt, -1);
+        // Multiple runs can start at the same index (rare but possible);
+        // more commonly, a run's startIdx equals a previous run's endIdx.
+        List<List<Integer>> runsStartingAt = new ArrayList<>(ringSize);
+        for (int idx = 0; idx < ringSize; idx++) {
+            runsStartingAt.add(null);
+        }
 
         for (int r = 0; r < candidates.size(); r++) {
             GluedRunCandidate c = candidates.get(r);
@@ -447,10 +592,17 @@ class PolygonUngluer {
                 if (idx == c.endIdx) break;
                 idx = (idx + 1) % ringSize;
             }
-            runStartAt[c.startIdx] = r;
+            List<Integer> list = runsStartingAt.get(c.startIdx);
+            if (list == null) {
+                list = new ArrayList<>(2);
+                runsStartingAt.set(c.startIdx, list);
+            }
+            list.add(r);
         }
 
-        // Walk the ring, emitting non-glued nodes as-is and glued runs as offset points
+        // Walk the ring, emitting non-glued nodes as-is and glued runs as offset points.
+        // Track which runs have been emitted so we don't double-emit.
+        boolean[] emitted = new boolean[candidates.size()];
         int i = 0;
         while (i < ringSize) {
             if (!isGlued[i]) {
@@ -459,32 +611,65 @@ class PolygonUngluer {
                 resultGeometry.add(node.getEastNorth());
                 resultReusedNodes.add(node);
                 i++;
-            } else if (runStartAt[i] >= 0) {
-                // Start of a glued run — emit offset points
-                int runIdx = runStartAt[i];
-                UngluePlan.GluedRun run = gluedRuns.get(runIdx);
-                GluedRunCandidate c = candidates.get(runIdx);
-                for (EastNorth en : run.getOffsetPoints()) {
-                    resultGeometry.add(en);
-                    resultReusedNodes.add(null); // new node needed
-                }
-                // Skip past the run
-                int idx = c.startIdx;
-                while (true) {
-                    if (idx == c.endIdx) break;
-                    idx = (idx + 1) % ringSize;
-                }
-                i = (c.endIdx + 1) % ringSize;
-                // Guard against infinite loop if endIdx wraps
-                if (c.endIdx >= c.startIdx) {
-                    i = c.endIdx + 1;
-                } else {
-                    // Wrap-around run: we started at startIdx and will end past ringSize
-                    break;
-                }
             } else {
-                // Middle of a glued run (already handled by the start) — skip
-                i++;
+                // Check if any run starts at this index
+                List<Integer> starting = runsStartingAt.get(i);
+                if (starting != null) {
+                    // Emit all runs starting at this index
+                    int maxEndIdx = i;
+                    for (int runIdx : starting) {
+                        if (emitted[runIdx]) continue;
+                        emitted[runIdx] = true;
+                        UngluePlan.GluedRun run = gluedRuns.get(runIdx);
+                        GluedRunCandidate c = candidates.get(runIdx);
+                        for (EastNorth en : run.getOffsetPoints()) {
+                            resultGeometry.add(en);
+                            resultReusedNodes.add(null); // new node needed
+                        }
+                        // Track the furthest endIdx to know how far to advance
+                        if (c.endIdx >= c.startIdx) {
+                            maxEndIdx = Math.max(maxEndIdx, c.endIdx);
+                        } else {
+                            // Wrap-around: endIdx < startIdx means it goes past ring end
+                            maxEndIdx = ringSize; // will exit the loop
+                        }
+                    }
+
+                    // Advance past the emitted run(s), but check each index along
+                    // the way for additional runs that start mid-span
+                    int next = (i + 1) % ringSize;
+                    while (next != (maxEndIdx + 1) % ringSize && next != i) {
+                        List<Integer> midStarts = runsStartingAt.get(next);
+                        if (midStarts != null) {
+                            for (int runIdx : midStarts) {
+                                if (emitted[runIdx]) continue;
+                                emitted[runIdx] = true;
+                                UngluePlan.GluedRun run = gluedRuns.get(runIdx);
+                                GluedRunCandidate c = candidates.get(runIdx);
+                                for (EastNorth en : run.getOffsetPoints()) {
+                                    resultGeometry.add(en);
+                                    resultReusedNodes.add(null);
+                                }
+                                if (c.endIdx >= c.startIdx) {
+                                    maxEndIdx = Math.max(maxEndIdx, c.endIdx);
+                                } else {
+                                    maxEndIdx = ringSize;
+                                }
+                            }
+                        }
+                        next = (next + 1) % ringSize;
+                        if (next == 0 && maxEndIdx >= ringSize) break;
+                    }
+
+                    if (maxEndIdx >= ringSize) {
+                        break; // wrap-around run consumed the rest
+                    }
+                    i = maxEndIdx + 1;
+                } else {
+                    // Glued but not a run start — this node is in the middle of a run
+                    // that was already emitted. Skip it.
+                    i++;
+                }
             }
         }
     }

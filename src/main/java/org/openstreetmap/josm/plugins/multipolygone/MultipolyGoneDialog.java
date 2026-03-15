@@ -67,6 +67,11 @@ import org.openstreetmap.josm.tools.Shortcut;
 public class MultipolyGoneDialog extends ToggleDialog
         implements ActiveLayerChangeListener, DataSelectionListener, CommandQueuePreciseListener {
 
+    private static final int TAB_SIMPLIFY = 0;
+    private static final int TAB_BREAK = 1;
+    private static final int TAB_UNGLUE = 2;
+    private static final int TAB_SKIPPED = 3;
+
     private final DefaultListModel<FixPlan> listModel;
     private final JList<FixPlan> list;
 
@@ -76,10 +81,9 @@ public class MultipolyGoneDialog extends ToggleDialog
     private List<SkipResult> currentSkipResults = new ArrayList<>();
 
     private final AbstractAction refreshAction;
-    private final AbstractAction goneAction;
-    private final AbstractAction allGoneAction;
+    private final AbstractAction primaryAction;
+    private final AbstractAction secondaryAction;
     private final AbstractAction downloadRefsAction;
-    private final AbstractAction breakAction;
 
     // Break Polygon tab state
     private final JLabel breakStatusLabel;
@@ -88,7 +92,6 @@ public class MultipolyGoneDialog extends ToggleDialog
     private BreakPlan currentBreakPlan;
 
     // Unglue tab state
-    private final AbstractAction unglueAction;
     private final JLabel unglueStatusLabel;
     private final DefaultListModel<UngluePlan.GluedRun> unglueRunListModel;
     private final JList<UngluePlan.GluedRun> unglueRunList;
@@ -217,10 +220,10 @@ public class MultipolyGoneDialog extends ToggleDialog
 
         // --- Tabbed pane ---
         tabbedPane = new JTabbedPane();
-        tabbedPane.addTab(tr("Fixable"), new JScrollPane(list));
-        tabbedPane.addTab(tr("Skipped"), new JScrollPane(skippedTree));
-        tabbedPane.addTab(tr("Break Polygon"), breakPanel);
+        tabbedPane.addTab(tr("Simplify"), new JScrollPane(list));
+        tabbedPane.addTab(tr("Break"), breakPanel);
         tabbedPane.addTab(tr("Unglue"), ungluePanel);
+        tabbedPane.addTab(tr("Skipped"), new JScrollPane(skippedTree));
         tabbedPane.addChangeListener(e -> updateButtonState());
 
         // --- Actions ---
@@ -232,21 +235,21 @@ public class MultipolyGoneDialog extends ToggleDialog
         };
         new ImageProvider("dialogs", "refresh").getResource().attachImageIcon(refreshAction, true);
 
-        goneAction = new AbstractAction(tr("Gone")) {
+        primaryAction = new AbstractAction(tr("Gone")) {
             @Override
             public void actionPerformed(ActionEvent e) {
-                fixSelected();
+                executePrimaryAction();
             }
         };
-        new ImageProvider("dialogs", "fix").getResource().attachImageIcon(goneAction, true);
+        new ImageProvider("dialogs", "fix").getResource().attachImageIcon(primaryAction, true);
 
-        allGoneAction = new AbstractAction(tr("All Gone")) {
+        secondaryAction = new AbstractAction(tr("All Gone")) {
             @Override
             public void actionPerformed(ActionEvent e) {
-                fixAll();
+                executeSecondaryAction();
             }
         };
-        new ImageProvider("dialogs", "fix").getResource().attachImageIcon(allGoneAction, true);
+        new ImageProvider("dialogs", "fix").getResource().attachImageIcon(secondaryAction, true);
 
         downloadRefsAction = new AbstractAction("") {
             @Override
@@ -257,29 +260,11 @@ public class MultipolyGoneDialog extends ToggleDialog
         downloadRefsAction.putValue(AbstractAction.SHORT_DESCRIPTION, tr("Download Refs"));
         new ImageProvider("download").getResource().attachImageIcon(downloadRefsAction, true);
 
-        breakAction = new AbstractAction(tr("Break")) {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                executeBreak();
-            }
-        };
-        new ImageProvider("dialogs", "fix").getResource().attachImageIcon(breakAction, true);
-
-        unglueAction = new AbstractAction(tr("Unglue")) {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                executeUnglue();
-            }
-        };
-        new ImageProvider("dialogs", "fix").getResource().attachImageIcon(unglueAction, true);
-
         createLayout(tabbedPane, false, Arrays.asList(
             new SideButton(refreshAction),
-            new SideButton(goneAction),
-            new SideButton(allGoneAction),
-            new SideButton(downloadRefsAction),
-            new SideButton(breakAction),
-            new SideButton(unglueAction)
+            new SideButton(primaryAction),
+            new SideButton(secondaryAction),
+            new SideButton(downloadRefsAction)
         ));
     }
 
@@ -320,9 +305,9 @@ public class MultipolyGoneDialog extends ToggleDialog
     }
 
     private void updateTabTitles(int fixCount, int skipCount) {
-        if (tabbedPane.getTabCount() >= 2) {
-            tabbedPane.setTitleAt(0, tr("Fixable ({0})", fixCount));
-            tabbedPane.setTitleAt(1, tr("Skipped ({0})", skipCount));
+        if (tabbedPane.getTabCount() >= 4) {
+            tabbedPane.setTitleAt(TAB_SIMPLIFY, tr("Simplify ({0})", fixCount));
+            tabbedPane.setTitleAt(TAB_SKIPPED, tr("Skipped ({0})", skipCount));
         }
     }
 
@@ -476,7 +461,7 @@ public class MultipolyGoneDialog extends ToggleDialog
             return;
         }
 
-        if (tabbedPane.getSelectedIndex() == 1) {
+        if (tabbedPane.getSelectedIndex() == TAB_SKIPPED) {
             downloadForSkippedRelations(editLayer);
             return;
         }
@@ -735,22 +720,62 @@ public class MultipolyGoneDialog extends ToggleDialog
 
     private void updateButtonState() {
         int selectedTab = tabbedPane.getSelectedIndex();
-        boolean onFixableTab = selectedTab == 0;
-        boolean onBreakTab = selectedTab == 2;
-        boolean onUnglueTab = selectedTab == 3;
+        boolean onSimplifyTab = selectedTab == TAB_SIMPLIFY;
+        boolean onBreakTab = selectedTab == TAB_BREAK;
+        boolean onUnglueTab = selectedTab == TAB_UNGLUE;
+        boolean onSkippedTab = selectedTab == TAB_SKIPPED;
         boolean hasFixableItems = !listModel.isEmpty();
 
-        goneAction.setEnabled(onFixableTab && hasFixableItems);
-        allGoneAction.setEnabled(onFixableTab && hasFixableItems);
-        breakAction.setEnabled(onBreakTab && currentBreakPlan != null);
-        unglueAction.setEnabled(onUnglueTab && currentUngluePlan != null);
+        // Rename buttons based on active tab
+        if (onBreakTab) {
+            primaryAction.putValue(AbstractAction.NAME, tr("Break"));
+            secondaryAction.putValue(AbstractAction.NAME, tr("Break All"));
+        } else if (onUnglueTab) {
+            primaryAction.putValue(AbstractAction.NAME, tr("Unglue"));
+            secondaryAction.putValue(AbstractAction.NAME, tr("Unglue All"));
+        } else {
+            primaryAction.putValue(AbstractAction.NAME, tr("Gone"));
+            secondaryAction.putValue(AbstractAction.NAME, tr("All Gone"));
+        }
+
+        // Enable/disable based on tab context
+        if (onSimplifyTab) {
+            primaryAction.setEnabled(hasFixableItems);
+            secondaryAction.setEnabled(hasFixableItems);
+        } else if (onBreakTab) {
+            primaryAction.setEnabled(currentBreakPlan != null);
+            secondaryAction.setEnabled(false);
+        } else if (onUnglueTab) {
+            primaryAction.setEnabled(currentUngluePlan != null);
+            secondaryAction.setEnabled(getDataSet() != null);
+        } else {
+            primaryAction.setEnabled(false);
+            secondaryAction.setEnabled(false);
+        }
 
         boolean hasDownloadableSkips = currentSkipResults.stream()
             .anyMatch(sr -> sr.getReason() == SkipReason.INCOMPLETE_MEMBERS
                 || sr.getReason() == SkipReason.DELETED_OR_INCOMPLETE_WAY);
         downloadRefsAction.setEnabled(
-            (onFixableTab && hasFixableItems)
-            || (!onFixableTab && !onBreakTab && !onUnglueTab && hasDownloadableSkips));
+            (onSimplifyTab && hasFixableItems)
+            || (onSkippedTab && hasDownloadableSkips));
+    }
+
+    private void executePrimaryAction() {
+        switch (tabbedPane.getSelectedIndex()) {
+            case TAB_SIMPLIFY -> fixSelected();
+            case TAB_BREAK -> executeBreak();
+            case TAB_UNGLUE -> executeUnglue();
+            default -> { }
+        }
+    }
+
+    private void executeSecondaryAction() {
+        switch (tabbedPane.getSelectedIndex()) {
+            case TAB_SIMPLIFY -> fixAll();
+            case TAB_UNGLUE -> unglueAll();
+            default -> { }
+        }
     }
 
     @Override
@@ -1204,6 +1229,35 @@ public class MultipolyGoneDialog extends ToggleDialog
         }
 
         PolygonUnglueFixer.execute(freshPlan);
+        refresh();
+    }
+
+    private void unglueAll() {
+        DataSet ds = getDataSet();
+        if (ds == null) return;
+
+        List<UngluePlan> plans = new ArrayList<>();
+        for (Way w : ds.getWays()) {
+            if (w.isDeleted() || w.isIncomplete()) continue;
+            if (!w.isClosed() || w.getNodesCount() < 4) continue;
+            UngluePlan plan = PolygonUngluer.analyze(w, ds);
+            if (plan != null) {
+                plans.add(plan);
+            }
+        }
+        for (Relation r : ds.getRelations()) {
+            if (r.isDeleted() || r.isIncomplete()) continue;
+            UngluePlan plan = PolygonUngluer.analyze(r, ds);
+            if (plan != null) {
+                plans.add(plan);
+            }
+        }
+
+        if (plans.isEmpty()) return;
+
+        for (UngluePlan plan : plans) {
+            PolygonUnglueFixer.execute(plan);
+        }
         refresh();
     }
 

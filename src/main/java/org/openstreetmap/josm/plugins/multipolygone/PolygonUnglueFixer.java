@@ -20,6 +20,7 @@ import org.openstreetmap.josm.data.osm.RelationMember;
 import org.openstreetmap.josm.data.osm.Way;
 import org.openstreetmap.josm.data.projection.ProjectionRegistry;
 import org.openstreetmap.josm.tools.Logging;
+import org.openstreetmap.josm.data.projection.Projection;
 
 /**
  * Builds JOSM commands to execute an {@link UngluePlan}.
@@ -60,8 +61,18 @@ class PolygonUnglueFixer {
     }
 
     /**
+     * Tolerance in meters for matching an offset position to an existing node.
+     * Two offset points computed from the same shared node on the same centerline
+     * will be nearly identical, so a small tolerance suffices.
+     */
+    private static final double REUSE_TOLERANCE_METERS = 0.01;
+
+    /**
      * Builds the list of JOSM commands for an unglue plan.
      * Creates new nodes at offset positions and changes the way's node list.
+     * When an existing node in the DataSet already occupies the target offset
+     * position (e.g., from a previously executed unglue on an adjacent area),
+     * that node is reused to maintain connectivity.
      */
     static List<Command> buildCommands(UngluePlan plan) {
         List<Command> commands = new ArrayList<>();
@@ -80,9 +91,15 @@ class PolygonUnglueFixer {
         }
         if (targetWay == null) return commands;
 
+        Projection proj = ProjectionRegistry.getProjection();
+        double toleranceEN = REUSE_TOLERANCE_METERS / proj.getMetersPerUnit();
+
         // Build the new node list from the result geometry
         List<EastNorth> resultGeom = plan.getResultGeometry();
         List<Node> resultReused = plan.getResultReusedNodes();
+
+        // Track nodes created within this call so we can reuse them too
+        List<Node> createdNodes = new ArrayList<>();
 
         List<Node> newNodes = new ArrayList<>();
         for (int i = 0; i < resultGeom.size(); i++) {
@@ -90,11 +107,18 @@ class PolygonUnglueFixer {
             if (reused != null) {
                 newNodes.add(reused);
             } else {
-                // Create a new node at the offset position
-                LatLon ll = ProjectionRegistry.getProjection().eastNorth2latlon(resultGeom.get(i));
-                Node node = new Node(ll);
-                commands.add(new AddCommand(ds, node));
-                newNodes.add(node);
+                EastNorth targetEN = resultGeom.get(i);
+                // Try to find an existing node at this position
+                Node existing = findNearbyNode(ds, createdNodes, targetEN, toleranceEN);
+                if (existing != null) {
+                    newNodes.add(existing);
+                } else {
+                    LatLon ll = proj.eastNorth2latlon(targetEN);
+                    Node node = new Node(ll);
+                    commands.add(new AddCommand(ds, node));
+                    createdNodes.add(node);
+                    newNodes.add(node);
+                }
             }
         }
 
@@ -102,6 +126,31 @@ class PolygonUnglueFixer {
         commands.add(new ChangeNodesCommand(targetWay, newNodes));
 
         return commands;
+    }
+
+    /**
+     * Searches for an existing node near the target position. Checks both
+     * the DataSet (for nodes from previous unglue operations) and the list
+     * of nodes created in the current call.
+     */
+    private static Node findNearbyNode(DataSet ds, List<Node> createdNodes,
+                                        EastNorth target, double toleranceEN) {
+        // Check nodes created in this batch first (fast, small list)
+        for (Node n : createdNodes) {
+            EastNorth en = n.getEastNorth();
+            if (en != null && en.distance(target) <= toleranceEN) {
+                return n;
+            }
+        }
+        // Search the DataSet for a nearby node
+        for (Node n : ds.getNodes()) {
+            if (n.isDeleted() || n.isIncomplete()) continue;
+            EastNorth en = n.getEastNorth();
+            if (en != null && en.distance(target) <= toleranceEN) {
+                return n;
+            }
+        }
+        return null;
     }
 
     private static Way findOuterWay(Relation rel) {
