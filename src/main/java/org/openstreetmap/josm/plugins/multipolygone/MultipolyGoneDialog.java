@@ -1248,10 +1248,12 @@ public class MultipolyGoneDialog extends ToggleDialog
         DataSet ds = getDataSet();
         if (ds == null) return;
 
+        Set<String> areaTags = getAreaTagKeys();
         List<UngluePlan> plans = new ArrayList<>();
         for (Way w : ds.getWays()) {
             if (w.isDeleted() || w.isIncomplete()) continue;
             if (!w.isClosed() || w.getNodesCount() < 4) continue;
+            if (!hasAnyKey(w, areaTags)) continue;
             UngluePlan plan = PolygonUngluer.analyze(w, ds);
             if (plan != null) {
                 plans.add(plan);
@@ -1259,6 +1261,7 @@ public class MultipolyGoneDialog extends ToggleDialog
         }
         for (Relation r : ds.getRelations()) {
             if (r.isDeleted() || r.isIncomplete()) continue;
+            if (!hasAnyKey(r, areaTags)) continue;
             UngluePlan plan = PolygonUngluer.analyze(r, ds);
             if (plan != null) {
                 plans.add(plan);
@@ -1269,6 +1272,25 @@ public class MultipolyGoneDialog extends ToggleDialog
 
         PolygonUnglueFixer.executeAll(plans);
         refresh();
+    }
+
+    private static Set<String> getAreaTagKeys() {
+        String pref = Config.getPref().get(
+            MultipolyGonePreferences.PREF_AREA_TAGS,
+            MultipolyGonePreferences.DEFAULT_AREA_TAGS);
+        Set<String> keys = new java.util.HashSet<>();
+        for (String key : pref.split(";")) {
+            String trimmed = key.trim();
+            if (!trimmed.isEmpty()) keys.add(trimmed);
+        }
+        return keys;
+    }
+
+    private static boolean hasAnyKey(OsmPrimitive p, Set<String> keys) {
+        for (String key : keys) {
+            if (p.hasKey(key)) return true;
+        }
+        return false;
     }
 
     private static class CenterlineCorridorRenderer extends DefaultListCellRenderer {

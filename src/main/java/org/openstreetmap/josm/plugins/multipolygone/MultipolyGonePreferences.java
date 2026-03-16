@@ -50,6 +50,9 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
     public static final String PREF_CENTERLINE_TAGS = "multipolygone.centerlineTags";
     public static final String DEFAULT_CENTERLINE_TAGS = "highway;waterway;railway";
 
+    public static final String PREF_AREA_TAGS = "multipolygone.areaTags";
+    public static final String DEFAULT_AREA_TAGS = "landuse;leisure;building;amenity;natural";
+
     public static final String PREF_ROAD_WIDTHS = "multipolygone.roadWidths";
     public static final String DEFAULT_ROAD_WIDTHS =
         "highway=motorway=12;highway=trunk=10;highway=primary=7;highway=secondary=7"
@@ -60,6 +63,7 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
     private DefaultTableModel identityTagsTableModel;
     private DefaultTableModel insignificantTagsTableModel;
     private DefaultTableModel centerlineTagsTableModel;
+    private DefaultTableModel areaTagsTableModel;
     private DefaultTableModel roadWidthsTableModel;
     private JCheckBox useDiscardableKeysCheckBox;
     private JComboBox<String> downloadBeforeFixCombo;
@@ -558,6 +562,64 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
         ungluePanel.add(centerlineButtonPanel, gbc);
         gbc.gridwidth = 1;
 
+        // Area tag keys sub-section
+        gbc.gridx = 0;
+        gbc.gridy = row++;
+        gbc.gridwidth = 4;
+        JLabel areaTagsInfo = new JLabel(
+            tr("Area tag keys (primitives with these tags are included in \"Unglue All\")"));
+        areaTagsInfo.setToolTipText(
+            tr("Only closed ways and relations tagged with at least one of these keys "
+               + "will be processed by \"Unglue All\". Single-selection unglue is not affected."));
+        ungluePanel.add(areaTagsInfo, gbc);
+        gbc.gridwidth = 1;
+
+        areaTagsTableModel = new DefaultTableModel(
+                new String[]{tr("Tag key")}, 0);
+
+        String currentAreaTags = Config.getPref().get(PREF_AREA_TAGS, DEFAULT_AREA_TAGS);
+        for (String key : parseTagSet(currentAreaTags)) {
+            areaTagsTableModel.addRow(new Object[]{key});
+        }
+
+        JTable areaTagsTable = new JTable(areaTagsTableModel);
+        areaTagsTable.setRowHeight(22);
+        JScrollPane areaTagsScrollPane = new JScrollPane(areaTagsTable);
+        areaTagsScrollPane.setPreferredSize(new Dimension(400, 132));
+
+        gbc.gridx = 0;
+        gbc.gridy = row++;
+        gbc.gridwidth = 4;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.weightx = 1.0;
+        ungluePanel.add(areaTagsScrollPane, gbc);
+        gbc.fill = GridBagConstraints.NONE;
+        gbc.weightx = 0;
+        gbc.gridwidth = 1;
+
+        gbc.gridx = 0;
+        gbc.gridy = row++;
+        gbc.gridwidth = 4;
+        JPanel areaTagsButtonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        JButton areaTagsAddButton = new JButton(tr("Add"));
+        areaTagsAddButton.addActionListener(e -> {
+            areaTagsTableModel.addRow(new Object[]{""});
+            int newRow = areaTagsTableModel.getRowCount() - 1;
+            areaTagsTable.editCellAt(newRow, 0);
+            areaTagsTable.getSelectionModel().setSelectionInterval(newRow, newRow);
+        });
+        JButton areaTagsRemoveButton = new JButton(tr("Remove"));
+        areaTagsRemoveButton.addActionListener(e -> {
+            int[] selected = areaTagsTable.getSelectedRows();
+            for (int i = selected.length - 1; i >= 0; i--) {
+                areaTagsTableModel.removeRow(selected[i]);
+            }
+        });
+        areaTagsButtonPanel.add(areaTagsAddButton);
+        areaTagsButtonPanel.add(areaTagsRemoveButton);
+        ungluePanel.add(areaTagsButtonPanel, gbc);
+        gbc.gridwidth = 1;
+
         outerGbc.gridy = 4;
         outerPanel.add(ungluePanel, outerGbc);
 
@@ -656,6 +718,16 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
             centerlineTags.append(key);
         }
         Config.getPref().put(PREF_CENTERLINE_TAGS, centerlineTags.toString());
+
+        // Serialize area tags table
+        StringBuilder areaTags = new StringBuilder();
+        for (int i = 0; i < areaTagsTableModel.getRowCount(); i++) {
+            String key = ((String) areaTagsTableModel.getValueAt(i, 0)).trim();
+            if (key.isEmpty()) continue;
+            if (areaTags.length() > 0) areaTags.append(';');
+            areaTags.append(key);
+        }
+        Config.getPref().put(PREF_AREA_TAGS, areaTags.toString());
 
         // Serialize break-tag widths table
         StringBuilder roadWidths = new StringBuilder();
