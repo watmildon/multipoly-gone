@@ -93,8 +93,8 @@ public class MultipolyGoneDialog extends ToggleDialog
 
     // Unglue tab state
     private final JLabel unglueStatusLabel;
-    private final DefaultListModel<UngluePlan.GluedRun> unglueRunListModel;
-    private final JList<UngluePlan.GluedRun> unglueRunList;
+    private final DefaultListModel<UngluePlan.CenterlineCorridor> unglueRunListModel;
+    private final JList<UngluePlan.CenterlineCorridor> unglueRunList;
     private UngluePlan currentUngluePlan;
 
     /** Guard to prevent selection feedback loop (list click -> map select -> list select -> ...) */
@@ -208,7 +208,7 @@ public class MultipolyGoneDialog extends ToggleDialog
         unglueStatusLabel = new JLabel(tr("Select an area feature glued to a road"));
         unglueRunListModel = new DefaultListModel<>();
         unglueRunList = new JList<>(unglueRunListModel);
-        unglueRunList.setCellRenderer(new GluedRunRenderer());
+        unglueRunList.setCellRenderer(new CenterlineCorridorRenderer());
 
         JPanel ungluePanel = new JPanel();
         ungluePanel.setLayout(new BoxLayout(ungluePanel, BoxLayout.Y_AXIS));
@@ -1207,14 +1207,25 @@ public class MultipolyGoneDialog extends ToggleDialog
 
         currentUngluePlan = plan;
         unglueStatusLabel.setText(plan.getDescription());
-        for (UngluePlan.GluedRun run : plan.getGluedRuns()) {
+        for (UngluePlan.CenterlineCorridor run : plan.getCorridors()) {
             unglueRunListModel.addElement(run);
         }
         updateButtonState();
     }
 
+    private static boolean confirmUnglueExperimental() {
+        int choice = JOptionPane.showConfirmDialog(
+            MainApplication.getMainFrame(),
+            tr("Unglue is experimental and likely buggy.\nResults require careful review before uploading.\n\nProceed?"),
+            tr("Experimental Feature"),
+            JOptionPane.OK_CANCEL_OPTION,
+            JOptionPane.WARNING_MESSAGE);
+        return choice == JOptionPane.OK_OPTION;
+    }
+
     private void executeUnglue() {
         if (currentUngluePlan == null) return;
+        if (!confirmUnglueExperimental()) return;
 
         // Re-analyze to get fresh plan
         DataSet ds = getDataSet();
@@ -1233,6 +1244,7 @@ public class MultipolyGoneDialog extends ToggleDialog
     }
 
     private void unglueAll() {
+        if (!confirmUnglueExperimental()) return;
         DataSet ds = getDataSet();
         if (ds == null) return;
 
@@ -1255,28 +1267,25 @@ public class MultipolyGoneDialog extends ToggleDialog
 
         if (plans.isEmpty()) return;
 
-        for (UngluePlan plan : plans) {
-            PolygonUnglueFixer.execute(plan);
-        }
+        PolygonUnglueFixer.executeAll(plans);
         refresh();
     }
 
-    private static class GluedRunRenderer extends DefaultListCellRenderer {
+    private static class CenterlineCorridorRenderer extends DefaultListCellRenderer {
         @Override
         public Component getListCellRendererComponent(JList<?> jlist, Object value,
                 int index, boolean isSelected, boolean cellHasFocus) {
             JLabel label = (JLabel) super.getListCellRendererComponent(
                 jlist, value, index, isSelected, cellHasFocus);
-            if (value instanceof UngluePlan.GluedRun run) {
-                Way road = run.getCenterlineWay();
+            if (value instanceof UngluePlan.CenterlineCorridor corridor) {
+                Way road = corridor.getCenterlineWay();
                 String name = road != null ? road.get("name") : null;
                 String tagDesc = road != null ? describePrimaryTag(road) : "?";
                 String text = tagDesc;
                 if (name != null) {
                     text = name + " (" + text + ")";
                 }
-                text += " \u2014 " + run.getSharedNodes().size() + " shared node(s), "
-                    + run.getWidthMeters() + "m wide";
+                text += " \u2014 " + corridor.getWidthMeters() + "m wide";
                 label.setText(text);
             }
             return label;

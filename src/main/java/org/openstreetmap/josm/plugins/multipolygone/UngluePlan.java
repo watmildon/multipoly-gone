@@ -10,21 +10,22 @@ import org.openstreetmap.josm.data.osm.Way;
 
 /**
  * A plan to unglue an area feature (closed way or multipolygon) from
- * centerline features (roads, waterways, etc.) by offsetting shared segments.
+ * centerline features (roads, waterways, etc.) by clipping the area
+ * boundary away from centerline corridors using JTS buffer/difference.
  */
 class UngluePlan {
 
     private final OsmPrimitive source;
-    private final List<GluedRun> gluedRuns;
+    private final List<CenterlineCorridor> corridors;
     private final List<EastNorth> resultGeometry;
     private final List<Node> resultReusedNodes;
     private final String description;
 
-    UngluePlan(OsmPrimitive source, List<GluedRun> gluedRuns,
+    UngluePlan(OsmPrimitive source, List<CenterlineCorridor> corridors,
                List<EastNorth> resultGeometry, List<Node> resultReusedNodes,
                String description) {
         this.source = source;
-        this.gluedRuns = Collections.unmodifiableList(gluedRuns);
+        this.corridors = Collections.unmodifiableList(corridors);
         this.resultGeometry = Collections.unmodifiableList(resultGeometry);
         this.resultReusedNodes = Collections.unmodifiableList(resultReusedNodes);
         this.description = description;
@@ -34,8 +35,8 @@ class UngluePlan {
         return source;
     }
 
-    List<GluedRun> getGluedRuns() {
-        return gluedRuns;
+    List<CenterlineCorridor> getCorridors() {
+        return corridors;
     }
 
     /** Closed ring of the corrected area geometry (first == last). */
@@ -63,29 +64,19 @@ class UngluePlan {
     // -----------------------------------------------------------------------
 
     /**
-     * A contiguous run of shared nodes between the area boundary and a
-     * centerline way. The area boundary along this run should be offset
-     * away from the centerline.
+     * A centerline way that the area boundary is glued to, along with
+     * the determined width used for the corridor buffer.
      */
-    static class GluedRun {
+    static class CenterlineCorridor {
         private final Way centerlineWay;
-        private final List<Node> sharedNodes;
         private final double widthMeters;
-        private final List<EastNorth> offsetPoints;
 
-        GluedRun(Way centerlineWay, List<Node> sharedNodes, double widthMeters,
-                 List<EastNorth> offsetPoints) {
+        CenterlineCorridor(Way centerlineWay, double widthMeters) {
             this.centerlineWay = centerlineWay;
-            this.sharedNodes = Collections.unmodifiableList(sharedNodes);
             this.widthMeters = widthMeters;
-            this.offsetPoints = Collections.unmodifiableList(offsetPoints);
         }
 
         Way getCenterlineWay() { return centerlineWay; }
-        List<Node> getSharedNodes() { return sharedNodes; }
         double getWidthMeters() { return widthMeters; }
-
-        /** Offset points replacing the shared nodes in the area boundary. */
-        List<EastNorth> getOffsetPoints() { return offsetPoints; }
     }
 }

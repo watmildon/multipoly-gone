@@ -51,7 +51,8 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
     public static final String DEFAULT_ROAD_WIDTHS =
         "highway=motorway=12;highway=trunk=10;highway=primary=7;highway=secondary=7"
         + ";highway=tertiary=7;highway=unclassified=7;highway=residential=7"
-        + ";highway=service=7;highway=track=3.5";
+        + ";highway=service=7;highway=track=3.5"
+        + ";railway=7;waterway=stream=3.5;waterway=river=12";
 
     private DefaultTableModel identityTagsTableModel;
     private DefaultTableModel insignificantTagsTableModel;

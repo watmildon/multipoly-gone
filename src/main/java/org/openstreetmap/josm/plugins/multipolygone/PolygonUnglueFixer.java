@@ -61,11 +61,47 @@ class PolygonUnglueFixer {
     }
 
     /**
-     * Tolerance in meters for matching an offset position to an existing node.
-     * Two offset points computed from the same shared node on the same centerline
-     * will be nearly identical, so a small tolerance suffices.
+     * Executes multiple unglue plans as a single atomic undo operation.
+     * Commands are built and executed sequentially (so later plans can
+     * reuse nodes created by earlier ones), then wrapped in one SequenceCommand.
      */
-    private static final double REUSE_TOLERANCE_METERS = 0.01;
+    static void executeAll(List<UngluePlan> plans) {
+        List<Command> allCommands = new ArrayList<>();
+
+        for (UngluePlan plan : plans) {
+            List<Command> commands = buildCommands(plan);
+            for (Command cmd : commands) {
+                cmd.executeCommand();
+            }
+            allCommands.addAll(commands);
+        }
+
+        if (allCommands.isEmpty()) return;
+
+        Logging.info("Multipoly-Gone: executed {0} commands for {1} unglue plans",
+            allCommands.size(), plans.size());
+
+        try {
+            Command seq = SequenceCommand.wrapIfNeeded(
+                tr("Unglue all areas from centerlines"), allCommands);
+            for (int i = allCommands.size() - 1; i >= 0; i--) {
+                allCommands.get(i).undoCommand();
+            }
+            UndoRedoHandler.getInstance().add(seq);
+        } catch (RuntimeException e) {
+            for (int i = allCommands.size() - 1; i >= 0; i--) {
+                allCommands.get(i).undoCommand();
+            }
+            throw e;
+        }
+    }
+
+    /**
+     * Tolerance in meters for matching an offset position to an existing node.
+     * With JTS buffer/difference, adjacent areas may produce slightly different
+     * vertex positions along the corridor edge, so we use a generous tolerance.
+     */
+    private static final double REUSE_TOLERANCE_METERS = 0.5;
 
     /**
      * Builds the list of JOSM commands for an unglue plan.

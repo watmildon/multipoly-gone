@@ -8,6 +8,13 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
+import org.locationtech.jts.geom.Coordinate;
+import org.locationtech.jts.geom.Geometry;
+import org.locationtech.jts.geom.LineString;
+import org.locationtech.jts.geom.Polygon;
+import org.locationtech.jts.operation.buffer.BufferOp;
+import org.locationtech.jts.operation.buffer.BufferParameters;
+import org.locationtech.jts.operation.union.CascadedPolygonUnion;
 import org.openstreetmap.josm.data.coor.EastNorth;
 import org.openstreetmap.josm.data.osm.DataSet;
 import org.openstreetmap.josm.data.osm.Node;
@@ -15,12 +22,13 @@ import org.openstreetmap.josm.data.osm.OsmPrimitive;
 import org.openstreetmap.josm.data.osm.Relation;
 import org.openstreetmap.josm.data.osm.RelationMember;
 import org.openstreetmap.josm.data.osm.Way;
+import org.openstreetmap.josm.tools.Logging;
 
 /**
  * Analyzes an area feature (closed way or multipolygon) and detects where its
  * boundary shares nodes with centerline features (roads, waterways, railways, etc.).
- * Produces an {@link UngluePlan} that offsets the shared segments away from the
- * centerline by half the feature's width.
+ * Produces an {@link UngluePlan} that clips the area boundary away from the
+ * centerline using JTS buffer/difference operations.
  */
 class PolygonUngluer {
 
@@ -29,10 +37,8 @@ class PolygonUngluer {
         "highway", "waterway", "railway"
     );
 
-    /** Tag keys that identify a closed way as an area feature eligible for node snapping. */
-    private static final Set<String> AREA_FEATURE_KEYS = Set.of(
-        "landuse", "leisure", "building", "amenity", "natural"
-    );
+    /** Tolerance for matching JTS result coordinates back to original nodes. */
+    private static final double NODE_MATCH_TOLERANCE = 1e-8;
 
     /**
      * Analyzes whether the given primitive has boundary nodes glued to centerline features.
@@ -69,7 +75,8 @@ class PolygonUngluer {
     }
 
     /**
-     * Core analysis: finds glued runs and computes offset geometry.
+     * Core analysis: finds centerline ways sharing nodes with the area boundary,
+     * builds corridor buffers, and computes the clipped result geometry.
      *
      * @param areaWay the closed way defining the area boundary
      * @param source  the original primitive (Way or Relation)
@@ -93,11 +100,9 @@ class PolygonUngluer {
             }
         }
 
-        // For each boundary node, find centerline ways it belongs to
-        // A node is "glued" if it is shared with a non-area way that has a centerline tag
+        // Stage 1: Centerline detection
+        // For each boundary node, find which centerline ways it belongs to
         List<Set<Way>> nodeCenterlines = new ArrayList<>(ringSize);
-        Set<Way> allCenterlines = new LinkedHashSet<>();
-
         for (int i = 0; i < ringSize; i++) {
             Node node = boundaryNodes.get(i);
             Set<Way> centerlines = new LinkedHashSet<>();
@@ -107,66 +112,205 @@ class PolygonUngluer {
                 if (w.isDeleted() || w.isIncomplete()) continue;
                 if (isCenterlineWay(w, tagWidths)) {
                     centerlines.add(w);
-                    allCenterlines.add(w);
                 }
             }
             nodeCenterlines.add(centerlines);
         }
 
-        if (allCenterlines.isEmpty()) return null;
+        // Stage 2: Only keep centerlines that share an edge (2+ consecutive
+        // boundary nodes). A road that merely touches the area at a single
+        // node (e.g., a T-junction) should NOT be buffered away.
+        Set<Way> edgeCenterlines = findEdgeSharingCenterlines(
+            boundaryNodes, ringSize, nodeCenterlines);
 
-        // Build glued runs: consecutive boundary nodes sharing the same centerline way
-        List<GluedRunCandidate> candidates = buildGluedRuns(boundaryNodes, ringSize,
-            nodeCenterlines, allCenterlines);
+        if (edgeCenterlines.isEmpty()) return null;
 
-        if (candidates.isEmpty()) return null;
-
-        // Compute offset geometry for each run
-        List<UngluePlan.GluedRun> gluedRuns = new ArrayList<>();
-
-        for (GluedRunCandidate candidate : candidates) {
-            double width = getWayWidth(candidate.centerlineWay, tagWidths);
-            double halfWidthMeters = width / 2.0;
-
-            List<EastNorth> offsetPoints = computeOffsetPoints(
-                candidate.startIdx, candidate.endIdx, boundaryNodes, ringSize,
-                candidate.centerlineWay, halfWidthMeters);
-
-            if (offsetPoints.isEmpty()) continue;
-
-            gluedRuns.add(new UngluePlan.GluedRun(
-                candidate.centerlineWay,
-                candidate.sharedNodes(boundaryNodes, ringSize),
-                width,
-                offsetPoints));
+        List<UngluePlan.CenterlineCorridor> corridors = new ArrayList<>();
+        for (Way w : edgeCenterlines) {
+            corridors.add(new UngluePlan.CenterlineCorridor(
+                w, getWayWidth(w, tagWidths)));
         }
 
-        if (gluedRuns.isEmpty()) return null;
-
-        // Assemble result geometry: replace glued segments with offset points
+        // Stage 3: JTS buffer + difference
         List<EastNorth> resultGeometry = new ArrayList<>();
         List<Node> resultReusedNodes = new ArrayList<>();
-        assembleResultGeometry(boundaryNodes, ringSize, gluedRuns, candidates,
-            resultGeometry, resultReusedNodes);
 
-        // Try to reuse nodes from adjacent area ways at run boundaries.
-        // When a glued run borders a non-glued node shared with another area way,
-        // the adjacent way may already have a node at the correct offset position.
-        resolveAdjacentAreaNodes(resultGeometry, resultReusedNodes, areaWays);
-
-        // Close the ring
-        if (!resultGeometry.isEmpty()) {
-            resultGeometry.add(resultGeometry.get(0));
-            resultReusedNodes.add(resultReusedNodes.get(0));
+        if (!computeBufferedResult(areaWay, corridors, resultGeometry, resultReusedNodes)) {
+            return null;
         }
 
-        int totalShared = gluedRuns.stream()
-            .mapToInt(r -> r.getSharedNodes().size())
-            .sum();
-        String desc = tr("{0} shared node(s) across {1} centerline(s) — offset by half-width",
-            totalShared, gluedRuns.size());
+        String desc = tr("{0} centerline(s) — clipped by half-width corridor buffer",
+            corridors.size());
 
-        return new UngluePlan(source, gluedRuns, resultGeometry, resultReusedNodes, desc);
+        return new UngluePlan(source, corridors, resultGeometry, resultReusedNodes, desc);
+    }
+
+    // -----------------------------------------------------------------------
+    // Glued segment detection
+    // -----------------------------------------------------------------------
+
+    /**
+     * Returns the set of centerline ways that share at least one edge
+     * (2+ consecutive boundary nodes) with the area. Centerlines that only
+     * touch at a single node (e.g., a T-junction road) are excluded.
+     */
+    private static Set<Way> findEdgeSharingCenterlines(
+            List<Node> boundaryNodes, int ringSize,
+            List<Set<Way>> nodeCenterlines) {
+        Set<Way> result = new LinkedHashSet<>();
+        for (int i = 0; i < ringSize; i++) {
+            int next = (i + 1) % ringSize;
+            // Find centerlines present at both consecutive boundary nodes
+            for (Way w : nodeCenterlines.get(i)) {
+                if (nodeCenterlines.get(next).contains(w)) {
+                    result.add(w);
+                }
+            }
+        }
+        return result;
+    }
+
+    // -----------------------------------------------------------------------
+    // JTS buffer + difference
+    // -----------------------------------------------------------------------
+
+    /**
+     * Computes the clipped area geometry using JTS buffer/difference.
+     * For each centerline corridor, builds a half-width buffer and subtracts it
+     * from the area polygon.
+     *
+     * @return true if a valid result was produced, false otherwise
+     */
+    private static boolean computeBufferedResult(Way areaWay,
+            List<UngluePlan.CenterlineCorridor> corridors,
+            List<EastNorth> resultGeometry, List<Node> resultReusedNodes) {
+
+        Polygon jtsPoly = GeometryUtils.wayToJtsPolygon(areaWay);
+        if (jtsPoly == null) return false;
+
+        // Compute centroid latitude for projection conversion
+        Coordinate centroid = jtsPoly.getCentroid().getCoordinate();
+        // In EPSG:4326, north = lat. In metric projections, use a rough conversion.
+        double centroidLat = centroid.y;
+        double metersPerUnit = org.openstreetmap.josm.data.projection.ProjectionRegistry
+            .getProjection().getMetersPerUnit();
+        if (metersPerUnit < 10) {
+            // Metric projection — centroid.y is in meters, convert to degrees roughly
+            centroidLat = 0; // use equator as fallback (metersToProjectionUnits handles cos(lat))
+        }
+
+        // Build corridor buffers
+        List<Geometry> buffers = new ArrayList<>();
+        for (UngluePlan.CenterlineCorridor corridor : corridors) {
+            LineString jtsLine = GeometryUtils.wayToJtsLineString(corridor.getCenterlineWay());
+            if (jtsLine == null) continue;
+
+            double halfWidth = PolygonBreaker.metersToProjectionUnits(
+                corridor.getWidthMeters() / 2.0, centroidLat);
+
+            BufferParameters params = new BufferParameters();
+            params.setEndCapStyle(BufferParameters.CAP_FLAT);
+            params.setQuadrantSegments(8);
+
+            Geometry buffer = BufferOp.bufferOp(jtsLine, halfWidth, params);
+            if (buffer != null && !buffer.isEmpty()) {
+                buffers.add(buffer);
+            }
+        }
+
+        if (buffers.isEmpty()) return false;
+
+        // Union all corridor buffers
+        Geometry corridorUnion;
+        if (buffers.size() == 1) {
+            corridorUnion = buffers.get(0);
+        } else {
+            corridorUnion = CascadedPolygonUnion.union(buffers);
+        }
+
+        // Compute difference
+        Geometry result;
+        try {
+            result = jtsPoly.difference(corridorUnion);
+        } catch (Exception e) {
+            Logging.warn("Multipoly-Gone: JTS difference failed: " + e.getMessage());
+            // Try cleaning with buffer(0)
+            try {
+                result = jtsPoly.buffer(0).difference(corridorUnion.buffer(0));
+            } catch (Exception e2) {
+                Logging.warn("Multipoly-Gone: JTS difference failed after cleanup: " + e2.getMessage());
+                return false;
+            }
+        }
+
+        if (result == null || result.isEmpty()) return false;
+
+        // Extract the largest polygon from the result
+        Polygon resultPoly = extractLargestPolygon(result);
+        if (resultPoly == null) return false;
+
+        // Extract coordinates and match back to original nodes
+        Coordinate[] coords = resultPoly.getExteriorRing().getCoordinates();
+        if (coords.length < 4) return false;
+
+        // Build a lookup of original boundary nodes by position
+        List<Node> origNodes = areaWay.getNodes();
+
+        for (Coordinate coord : coords) {
+            EastNorth en = new EastNorth(coord.x, coord.y);
+            Node matched = findMatchingOriginalNode(en, origNodes);
+            resultGeometry.add(en);
+            resultReusedNodes.add(matched);
+        }
+
+        // Ensure closure
+        if (!resultGeometry.isEmpty()) {
+            EastNorth first = resultGeometry.get(0);
+            EastNorth last = resultGeometry.get(resultGeometry.size() - 1);
+            if (!GeometryUtils.isNear(first, last, 1e-10)) {
+                resultGeometry.add(first);
+                resultReusedNodes.add(resultReusedNodes.get(0));
+            }
+        }
+
+        return resultGeometry.size() >= 4;
+    }
+
+    /**
+     * Extracts the largest polygon (by area) from a JTS Geometry result.
+     */
+    private static Polygon extractLargestPolygon(Geometry geom) {
+        if (geom instanceof Polygon) {
+            return (Polygon) geom;
+        }
+
+        Polygon largest = null;
+        double largestArea = 0;
+        for (int i = 0; i < geom.getNumGeometries(); i++) {
+            Geometry sub = geom.getGeometryN(i);
+            if (sub instanceof Polygon poly) {
+                double area = poly.getArea();
+                if (area > largestArea) {
+                    largestArea = area;
+                    largest = poly;
+                }
+            }
+        }
+        return largest;
+    }
+
+    /**
+     * Finds an original boundary node whose position matches the given EastNorth
+     * within a tight tolerance.
+     */
+    private static Node findMatchingOriginalNode(EastNorth target, List<Node> origNodes) {
+        for (Node node : origNodes) {
+            EastNorth en = node.getEastNorth();
+            if (en != null && GeometryUtils.isNear(target, en, NODE_MATCH_TOLERANCE)) {
+                return node;
+            }
+        }
+        return null;
     }
 
     // -----------------------------------------------------------------------
@@ -186,217 +330,6 @@ class PolygonUngluer {
             if (tw.matches(w)) return true;
         }
         return false;
-    }
-
-    // -----------------------------------------------------------------------
-    // Glued run detection
-    // -----------------------------------------------------------------------
-
-    /** Intermediate representation of a contiguous run before offset computation. */
-    private static class GluedRunCandidate {
-        final Way centerlineWay;
-        final int startIdx; // inclusive index in boundary ring
-        final int endIdx;   // inclusive index in boundary ring
-
-        GluedRunCandidate(Way centerlineWay, int startIdx, int endIdx) {
-            this.centerlineWay = centerlineWay;
-            this.startIdx = startIdx;
-            this.endIdx = endIdx;
-        }
-
-        /** Extracts the shared nodes from the boundary ring. */
-        List<Node> sharedNodes(List<Node> boundaryNodes, int ringSize) {
-            List<Node> result = new ArrayList<>();
-            int idx = startIdx;
-            while (true) {
-                result.add(boundaryNodes.get(idx));
-                if (idx == endIdx) break;
-                idx = (idx + 1) % ringSize;
-            }
-            return result;
-        }
-    }
-
-    /**
-     * Finds contiguous runs of boundary nodes that share a centerline way.
-     * A run requires at least 2 consecutive boundary nodes on the same centerline.
-     */
-    private static List<GluedRunCandidate> buildGluedRuns(
-            List<Node> boundaryNodes, int ringSize,
-            List<Set<Way>> nodeCenterlines, Set<Way> allCenterlines) {
-
-        List<GluedRunCandidate> result = new ArrayList<>();
-
-        for (Way centerline : allCenterlines) {
-            // Find all boundary indices that share this centerline
-            boolean[] onCenterline = new boolean[ringSize];
-            for (int i = 0; i < ringSize; i++) {
-                onCenterline[i] = nodeCenterlines.get(i).contains(centerline);
-            }
-
-            // Extract contiguous runs (handling wrap-around)
-            // First, find a starting point that is NOT on the centerline
-            // to avoid splitting a run that wraps around
-            int startSearch = -1;
-            for (int i = 0; i < ringSize; i++) {
-                if (!onCenterline[i]) {
-                    startSearch = i;
-                    break;
-                }
-            }
-
-            if (startSearch == -1) {
-                // All nodes are on this centerline — entire boundary is glued
-                // This is an edge case; create one run covering the whole ring
-                result.add(new GluedRunCandidate(centerline, 0, ringSize - 1));
-                continue;
-            }
-
-            // Walk from startSearch, collecting runs
-            int i = startSearch;
-            int visited = 0;
-            while (visited < ringSize) {
-                int idx = i % ringSize;
-                if (onCenterline[idx]) {
-                    // Start of a run
-                    int runStart = idx;
-                    int runEnd = idx;
-                    i++;
-                    visited++;
-                    while (visited < ringSize) {
-                        int nextIdx = i % ringSize;
-                        if (!onCenterline[nextIdx]) break;
-                        runEnd = nextIdx;
-                        i++;
-                        visited++;
-                    }
-                    // Only include runs of 2+ nodes (a single shared node isn't a "glued segment")
-                    if (runStart != runEnd) {
-                        result.add(new GluedRunCandidate(centerline, runStart, runEnd));
-                    }
-                } else {
-                    i++;
-                    visited++;
-                }
-            }
-        }
-
-        return result;
-    }
-
-    // -----------------------------------------------------------------------
-    // Offset computation
-    // -----------------------------------------------------------------------
-
-    /**
-     * Computes offset points for a glued run. The offset direction is determined by
-     * which side of the centerline the area's interior lies on.
-     *
-     * @param startIdx   start index in boundary ring (inclusive)
-     * @param endIdx     end index in boundary ring (inclusive)
-     * @param boundaryNodes the full boundary (with closure duplicate)
-     * @param ringSize   number of unique nodes in ring
-     * @param centerline the centerline way
-     * @param halfWidthMeters offset distance in meters
-     * @return offset EastNorth points replacing the shared segment
-     */
-    private static List<EastNorth> computeOffsetPoints(
-            int startIdx, int endIdx, List<Node> boundaryNodes, int ringSize,
-            Way centerline, double halfWidthMeters) {
-
-        List<EastNorth> result = new ArrayList<>();
-
-        // Determine offset side: is the area interior to the left or right
-        // of the centerline direction?
-        boolean offsetLeft = determineOffsetSide(startIdx, endIdx, boundaryNodes, ringSize, centerline);
-
-        // Walk the run indices and compute perpendicular offsets
-        int idx = startIdx;
-        while (true) {
-            Node node = boundaryNodes.get(idx);
-            EastNorth en = node.getEastNorth();
-
-            // Find the local centerline direction at this node
-            EastNorth[] lineDir = getCenterlineDirection(node, centerline);
-            if (lineDir == null) {
-                // Fallback: use boundary direction
-                int prevIdx = (idx - 1 + ringSize) % ringSize;
-                int nextIdx = (idx + 1) % ringSize;
-                lineDir = new EastNorth[]{
-                    boundaryNodes.get(prevIdx).getEastNorth(),
-                    boundaryNodes.get(nextIdx).getEastNorth()
-                };
-            }
-
-            EastNorth[] offsets = GeometryUtils.perpendicularOffsets(
-                lineDir[0], lineDir[1], en, halfWidthMeters);
-
-            // offsets[0] = left, offsets[1] = right
-            result.add(offsetLeft ? offsets[0] : offsets[1]);
-
-            if (idx == endIdx) break;
-            idx = (idx + 1) % ringSize;
-        }
-
-        return result;
-    }
-
-    /**
-     * Determines whether the area interior is to the left or right of the centerline
-     * direction at the glued run.
-     *
-     * Strategy: take a non-shared boundary node adjacent to the run and check which
-     * side of the centerline it lies on.
-     */
-    private static boolean determineOffsetSide(int startIdx, int endIdx,
-            List<Node> boundaryNodes, int ringSize, Way centerline) {
-
-        // Find a boundary node just before or after the run that is NOT on the centerline
-        int probeIdx = (startIdx - 1 + ringSize) % ringSize;
-        Node probeNode = boundaryNodes.get(probeIdx);
-        EastNorth probeEN = probeNode.getEastNorth();
-
-        // Get centerline direction at the start of the run
-        Node runStartNode = boundaryNodes.get(startIdx);
-        EastNorth[] lineDir = getCenterlineDirection(runStartNode, centerline);
-        if (lineDir == null) return true; // fallback
-
-        // Cross product: positive = probe is to the left of centerline direction
-        double dx = lineDir[1].east() - lineDir[0].east();
-        double dy = lineDir[1].north() - lineDir[0].north();
-        double px = probeEN.east() - lineDir[0].east();
-        double py = probeEN.north() - lineDir[0].north();
-        double cross = dx * py - dy * px;
-
-        return cross > 0; // positive cross product means probe is to the left
-    }
-
-    /**
-     * Gets the centerline direction (as two EastNorth points) at a given node.
-     * Returns the segment endpoints from the centerline way that contain this node.
-     */
-    private static EastNorth[] getCenterlineDirection(Node node, Way centerline) {
-        List<Node> wayNodes = centerline.getNodes();
-        for (int i = 0; i < wayNodes.size(); i++) {
-            if (wayNodes.get(i).equals(node)) {
-                // Use surrounding nodes for direction
-                EastNorth prev, next;
-                if (i > 0 && i < wayNodes.size() - 1) {
-                    prev = wayNodes.get(i - 1).getEastNorth();
-                    next = wayNodes.get(i + 1).getEastNorth();
-                } else if (i == 0 && wayNodes.size() > 1) {
-                    prev = wayNodes.get(0).getEastNorth();
-                    next = wayNodes.get(1).getEastNorth();
-                } else if (i == wayNodes.size() - 1 && wayNodes.size() > 1) {
-                    prev = wayNodes.get(i - 1).getEastNorth();
-                    next = wayNodes.get(i).getEastNorth();
-                } else {
-                    return null;
-                }
-                return new EastNorth[]{prev, next};
-            }
-        }
-        return null;
     }
 
     // -----------------------------------------------------------------------
@@ -426,251 +359,5 @@ class PolygonUngluer {
 
         // 4. Default
         return 3.5;
-    }
-
-    // -----------------------------------------------------------------------
-    // Adjacent area node reuse
-    // -----------------------------------------------------------------------
-
-    /**
-     * After assembling the result geometry, checks transitions between offset
-     * nodes (null in reusedNodes) and kept nodes (non-null) for opportunities
-     * to reuse nodes from adjacent area ways.
-     *
-     * <p>When a kept boundary node is shared with another closed area way, and
-     * the adjacent offset point is close to one of that way's neighbors of
-     * the shared node, the offset point is replaced with the existing neighbor
-     * node. This maintains connectivity between adjacent areas after ungluing.
-     */
-    private static void resolveAdjacentAreaNodes(
-            List<EastNorth> resultGeometry,
-            List<Node> resultReusedNodes,
-            Set<Way> areaWays) {
-
-        int size = resultGeometry.size();
-        if (size < 2) return;
-
-        // Walk the result looking for transitions: kept → offset or offset → kept
-        for (int i = 0; i < size; i++) {
-            if (resultReusedNodes.get(i) != null) continue; // not an offset node
-            // This is an offset node — check neighbors for a kept node
-            // that's shared with another area way
-            resolveOneDirection(i, -1, size, resultGeometry, resultReusedNodes, areaWays);
-            resolveOneDirection(i, +1, size, resultGeometry, resultReusedNodes, areaWays);
-        }
-    }
-
-    /**
-     * For an offset node at index {@code idx}, look in direction {@code dir}
-     * for the nearest kept (non-null) node. If found and shared with another
-     * area way, try to match this offset node to one of that way's neighbors
-     * of the shared node.
-     */
-    private static void resolveOneDirection(int idx, int dir, int size,
-            List<EastNorth> resultGeometry,
-            List<Node> resultReusedNodes,
-            Set<Way> areaWays) {
-
-        List<MultipolyGonePreferences.BreakTagWidth> tagWidths =
-            MultipolyGonePreferences.getBreakTagWidths();
-
-        // Find the nearest kept node in the given direction
-        int neighborIdx = idx + dir;
-        if (neighborIdx < 0 || neighborIdx >= size) return;
-        Node anchor = resultReusedNodes.get(neighborIdx);
-        if (anchor == null) return; // adjacent is also offset — skip
-
-        EastNorth offsetEN = resultGeometry.get(idx);
-
-        // Look for other area feature ways that share the anchor node.
-        // Only snap to closed ways tagged with an allowlisted area key
-        // (landuse, leisure, building, amenity, natural).
-        for (OsmPrimitive ref : anchor.getReferrers()) {
-            if (!(ref instanceof Way otherWay)) continue;
-            if (areaWays.contains(otherWay)) continue;
-            if (otherWay.isDeleted() || otherWay.isIncomplete()) continue;
-            if (!otherWay.isClosed() || otherWay.getNodesCount() < 4) continue;
-            if (!isAreaFeature(otherWay)) continue;
-
-            // Find anchor in the other way and get its neighbors
-            List<Node> otherNodes = otherWay.getNodes();
-            int otherRingSize = otherNodes.size() - 1;
-            for (int j = 0; j < otherRingSize; j++) {
-                if (!otherNodes.get(j).equals(anchor)) continue;
-                // Check both neighbors of anchor in the other way
-                Node prev = otherNodes.get((j - 1 + otherRingSize) % otherRingSize);
-                Node next = otherNodes.get((j + 1) % otherRingSize);
-
-                // Filter out candidates that are on a centerline way — we must
-                // not snap back to a road node we're trying to offset away from
-                if (isOnCenterline(prev, areaWays, tagWidths)) prev = null;
-                if (isOnCenterline(next, areaWays, tagWidths)) next = null;
-
-                Node best = pickCloser(offsetEN, prev, next);
-                if (best != null) {
-                    EastNorth bestEN = best.getEastNorth();
-                    double metersPerUnit = org.openstreetmap.josm.data.projection.ProjectionRegistry
-                        .getProjection().getMetersPerUnit();
-                    double distMeters = bestEN.distance(offsetEN) * metersPerUnit;
-                    // Reuse if within a generous but safe threshold (half a road width ≈ 5m max)
-                    if (distMeters < 5.0) {
-                        resultGeometry.set(idx, bestEN);
-                        resultReusedNodes.set(idx, best);
-                        return;
-                    }
-                }
-            }
-        }
-    }
-
-    /** Checks whether a closed way is an area feature eligible for node snapping. */
-    private static boolean isAreaFeature(Way w) {
-        for (String key : AREA_FEATURE_KEYS) {
-            if (w.hasKey(key)) return true;
-        }
-        return false;
-    }
-
-    /**
-     * Checks whether a node is on any centerline way (road, waterway, etc.)
-     * other than the area ways being unglued.
-     */
-    private static boolean isOnCenterline(Node node,
-            Set<Way> areaWays, List<MultipolyGonePreferences.BreakTagWidth> tagWidths) {
-        if (node == null) return false;
-        for (OsmPrimitive ref : node.getReferrers()) {
-            if (!(ref instanceof Way w)) continue;
-            if (areaWays.contains(w)) continue;
-            if (w.isDeleted() || w.isIncomplete()) continue;
-            if (isCenterlineWay(w, tagWidths)) return true;
-        }
-        return false;
-    }
-
-    /** Returns whichever of a or b is closer to target, or null if both are null. */
-    private static Node pickCloser(EastNorth target, Node a, Node b) {
-        if (a == null && b == null) return null;
-        if (a == null) return b;
-        if (b == null) return a;
-        EastNorth ea = a.getEastNorth();
-        EastNorth eb = b.getEastNorth();
-        if (ea == null) return b;
-        if (eb == null) return a;
-        return ea.distance(target) <= eb.distance(target) ? a : b;
-    }
-
-    // -----------------------------------------------------------------------
-    // Result geometry assembly
-    // -----------------------------------------------------------------------
-
-    /**
-     * Assembles the result geometry by walking the boundary ring and replacing
-     * glued runs with their offset points.
-     */
-    private static void assembleResultGeometry(
-            List<Node> boundaryNodes, int ringSize,
-            List<UngluePlan.GluedRun> gluedRuns,
-            List<GluedRunCandidate> candidates,
-            List<EastNorth> resultGeometry,
-            List<Node> resultReusedNodes) {
-
-        // For each boundary index, record which runs start there and which runs
-        // cover it (so we know whether it's glued at all).
-        boolean[] isGlued = new boolean[ringSize];
-        // Multiple runs can start at the same index (rare but possible);
-        // more commonly, a run's startIdx equals a previous run's endIdx.
-        List<List<Integer>> runsStartingAt = new ArrayList<>(ringSize);
-        for (int idx = 0; idx < ringSize; idx++) {
-            runsStartingAt.add(null);
-        }
-
-        for (int r = 0; r < candidates.size(); r++) {
-            GluedRunCandidate c = candidates.get(r);
-            int idx = c.startIdx;
-            while (true) {
-                isGlued[idx] = true;
-                if (idx == c.endIdx) break;
-                idx = (idx + 1) % ringSize;
-            }
-            List<Integer> list = runsStartingAt.get(c.startIdx);
-            if (list == null) {
-                list = new ArrayList<>(2);
-                runsStartingAt.set(c.startIdx, list);
-            }
-            list.add(r);
-        }
-
-        // Walk the ring, emitting non-glued nodes as-is and glued runs as offset points.
-        // Track which runs have been emitted so we don't double-emit.
-        boolean[] emitted = new boolean[candidates.size()];
-        int i = 0;
-        while (i < ringSize) {
-            if (!isGlued[i]) {
-                // Non-glued node — keep as-is
-                Node node = boundaryNodes.get(i);
-                resultGeometry.add(node.getEastNorth());
-                resultReusedNodes.add(node);
-                i++;
-            } else {
-                // Check if any run starts at this index
-                List<Integer> starting = runsStartingAt.get(i);
-                if (starting != null) {
-                    // Emit all runs starting at this index
-                    int maxEndIdx = i;
-                    for (int runIdx : starting) {
-                        if (emitted[runIdx]) continue;
-                        emitted[runIdx] = true;
-                        UngluePlan.GluedRun run = gluedRuns.get(runIdx);
-                        GluedRunCandidate c = candidates.get(runIdx);
-                        for (EastNorth en : run.getOffsetPoints()) {
-                            resultGeometry.add(en);
-                            resultReusedNodes.add(null); // new node needed
-                        }
-                        // Track the furthest endIdx to know how far to advance
-                        if (c.endIdx >= c.startIdx) {
-                            maxEndIdx = Math.max(maxEndIdx, c.endIdx);
-                        } else {
-                            // Wrap-around: endIdx < startIdx means it goes past ring end
-                            maxEndIdx = ringSize; // will exit the loop
-                        }
-                    }
-
-                    // Advance past the emitted run(s), but check each index along
-                    // the way for additional runs that start mid-span
-                    int next = (i + 1) % ringSize;
-                    while (next != (maxEndIdx + 1) % ringSize && next != i) {
-                        List<Integer> midStarts = runsStartingAt.get(next);
-                        if (midStarts != null) {
-                            for (int runIdx : midStarts) {
-                                if (emitted[runIdx]) continue;
-                                emitted[runIdx] = true;
-                                UngluePlan.GluedRun run = gluedRuns.get(runIdx);
-                                GluedRunCandidate c = candidates.get(runIdx);
-                                for (EastNorth en : run.getOffsetPoints()) {
-                                    resultGeometry.add(en);
-                                    resultReusedNodes.add(null);
-                                }
-                                if (c.endIdx >= c.startIdx) {
-                                    maxEndIdx = Math.max(maxEndIdx, c.endIdx);
-                                } else {
-                                    maxEndIdx = ringSize;
-                                }
-                            }
-                        }
-                        next = (next + 1) % ringSize;
-                        if (next == 0 && maxEndIdx >= ringSize) break;
-                    }
-
-                    if (maxEndIdx >= ringSize) {
-                        break; // wrap-around run consumed the rest
-                    }
-                    i = maxEndIdx + 1;
-                } else {
-                    // Glued but not a run start — this node is in the middle of a run
-                    // that was already emitted. Skip it.
-                    i++;
-                }
-            }
-        }
     }
 }
