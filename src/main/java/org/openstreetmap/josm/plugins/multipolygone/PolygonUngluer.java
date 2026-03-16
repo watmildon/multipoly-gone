@@ -32,10 +32,23 @@ import org.openstreetmap.josm.tools.Logging;
  */
 class PolygonUngluer {
 
-    /** Tag keys whose ways are considered "centerline" linear features. */
-    private static final Set<String> CENTERLINE_KEYS = Set.of(
-        "highway", "waterway", "railway"
-    );
+    /**
+     * Returns the set of tag keys whose ways are considered "centerline" linear features,
+     * from the configured preference (falling back to defaults).
+     */
+    private static Set<String> getCenterlineKeys() {
+        String pref = org.openstreetmap.josm.spi.preferences.Config.getPref().get(
+            MultipolyGonePreferences.PREF_CENTERLINE_TAGS,
+            MultipolyGonePreferences.DEFAULT_CENTERLINE_TAGS);
+        Set<String> keys = new LinkedHashSet<>();
+        for (String key : pref.split(";")) {
+            String trimmed = key.trim();
+            if (!trimmed.isEmpty()) {
+                keys.add(trimmed);
+            }
+        }
+        return keys;
+    }
 
     /** Tolerance for matching JTS result coordinates back to original nodes. */
     private static final double NODE_MATCH_TOLERANCE = 1e-8;
@@ -322,7 +335,7 @@ class PolygonUngluer {
      * Uses the hardcoded CENTERLINE_KEYS set plus configured tag filters from preferences.
      */
     private static boolean isCenterlineWay(Way w, List<MultipolyGonePreferences.BreakTagWidth> tagWidths) {
-        for (String key : CENTERLINE_KEYS) {
+        for (String key : getCenterlineKeys()) {
             if (w.hasKey(key)) return true;
         }
         // Also match configured break-tag filters (captures things like aeroway=taxiway, etc.)

@@ -47,6 +47,9 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
     public static final String PREF_DEBUG_MODE = "multipolygone.debugMode";
     public static final int DEFAULT_DEBUG_ITERATIONS = 10;
 
+    public static final String PREF_CENTERLINE_TAGS = "multipolygone.centerlineTags";
+    public static final String DEFAULT_CENTERLINE_TAGS = "highway;waterway;railway";
+
     public static final String PREF_ROAD_WIDTHS = "multipolygone.roadWidths";
     public static final String DEFAULT_ROAD_WIDTHS =
         "highway=motorway=12;highway=trunk=10;highway=primary=7;highway=secondary=7"
@@ -56,6 +59,7 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
 
     private DefaultTableModel identityTagsTableModel;
     private DefaultTableModel insignificantTagsTableModel;
+    private DefaultTableModel centerlineTagsTableModel;
     private DefaultTableModel roadWidthsTableModel;
     private JCheckBox useDiscardableKeysCheckBox;
     private JComboBox<String> downloadBeforeFixCombo;
@@ -392,9 +396,9 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
         outerGbc.gridy = 2;
         outerPanel.add(downloadPanel, outerGbc);
 
-        // === Section 4: Polygon Breaking ===
+        // === Section 4: Centerline Offset Widths ===
         JPanel breakPanel = new JPanel(new GridBagLayout());
-        breakPanel.setBorder(BorderFactory.createTitledBorder(tr("Polygon Breaking")));
+        breakPanel.setBorder(BorderFactory.createTitledBorder(tr("Centerline Offset Widths")));
         gbc = new GridBagConstraints();
         gbc.insets = new Insets(3, 5, 3, 5);
         gbc.anchor = GridBagConstraints.WEST;
@@ -404,9 +408,10 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
         gbc.gridy = row++;
         gbc.gridwidth = 4;
         JLabel roadWidthsInfo = new JLabel(
-            tr("Tag filters and widths (meters) for polygon splitting"));
+            tr("Tag filters and widths (meters) for centerline features"));
         roadWidthsInfo.setToolTipText(
-            tr("<html>Ways matching these tag filters are used as split lines.<br>"
+            tr("<html>Used by both <b>Break Polygon</b> and <b>Unglue</b>.<br>"
+               + "Ways matching these tag filters are treated as centerline features.<br>"
                + "Use <b>key=value</b> (e.g. highway=motorway) to match a specific tag,<br>"
                + "<b>key=*</b> or <b>key</b> alone (e.g. waterway) to match any value of that key.<br>"
                + "Width is optional \u2014 leave blank to use the default (3.5m).<br>"
@@ -487,7 +492,76 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
         outerGbc.gridy = 3;
         outerPanel.add(breakPanel, outerGbc);
 
-        // === Section 5: Developer ===
+        // === Section 5: Unglue ===
+        JPanel ungluePanel = new JPanel(new GridBagLayout());
+        ungluePanel.setBorder(BorderFactory.createTitledBorder(tr("Unglue")));
+        gbc = new GridBagConstraints();
+        gbc.insets = new Insets(3, 5, 3, 5);
+        gbc.anchor = GridBagConstraints.WEST;
+        row = 0;
+
+        gbc.gridx = 0;
+        gbc.gridy = row++;
+        gbc.gridwidth = 4;
+        JLabel centerlineInfo = new JLabel(
+            tr("Centerline tag keys (ways with these tags are treated as centerlines to unglue from)"));
+        centerlineInfo.setToolTipText(
+            tr("Area boundaries sharing nodes with ways that have these tag keys "
+               + "will be offset away from the centerline by half the feature width."));
+        ungluePanel.add(centerlineInfo, gbc);
+        gbc.gridwidth = 1;
+
+        centerlineTagsTableModel = new DefaultTableModel(
+                new String[]{tr("Tag key")}, 0);
+
+        String currentCenterlineTags = Config.getPref().get(PREF_CENTERLINE_TAGS,
+            DEFAULT_CENTERLINE_TAGS);
+        for (String key : parseTagSet(currentCenterlineTags)) {
+            centerlineTagsTableModel.addRow(new Object[]{key});
+        }
+
+        JTable centerlineTable = new JTable(centerlineTagsTableModel);
+        centerlineTable.setRowHeight(22);
+        JScrollPane centerlineScrollPane = new JScrollPane(centerlineTable);
+        centerlineScrollPane.setPreferredSize(new Dimension(400, 132));
+
+        gbc.gridx = 0;
+        gbc.gridy = row++;
+        gbc.gridwidth = 4;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.weightx = 1.0;
+        ungluePanel.add(centerlineScrollPane, gbc);
+        gbc.fill = GridBagConstraints.NONE;
+        gbc.weightx = 0;
+        gbc.gridwidth = 1;
+
+        gbc.gridx = 0;
+        gbc.gridy = row++;
+        gbc.gridwidth = 4;
+        JPanel centerlineButtonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        JButton centerlineAddButton = new JButton(tr("Add"));
+        centerlineAddButton.addActionListener(e -> {
+            centerlineTagsTableModel.addRow(new Object[]{""});
+            int newRow = centerlineTagsTableModel.getRowCount() - 1;
+            centerlineTable.editCellAt(newRow, 0);
+            centerlineTable.getSelectionModel().setSelectionInterval(newRow, newRow);
+        });
+        JButton centerlineRemoveButton = new JButton(tr("Remove"));
+        centerlineRemoveButton.addActionListener(e -> {
+            int[] selected = centerlineTable.getSelectedRows();
+            for (int i = selected.length - 1; i >= 0; i--) {
+                centerlineTagsTableModel.removeRow(selected[i]);
+            }
+        });
+        centerlineButtonPanel.add(centerlineAddButton);
+        centerlineButtonPanel.add(centerlineRemoveButton);
+        ungluePanel.add(centerlineButtonPanel, gbc);
+        gbc.gridwidth = 1;
+
+        outerGbc.gridy = 4;
+        outerPanel.add(ungluePanel, outerGbc);
+
+        // === Section 6: Developer ===
         JPanel devPanel = new JPanel(new GridBagLayout());
         devPanel.setBorder(BorderFactory.createTitledBorder(tr("Developer")));
         gbc = new GridBagConstraints();
@@ -509,16 +583,19 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
             Config.getPref().getBoolean(PREF_DEBUG_MODE, false));
         addCheckBox(devPanel, gbc, row++, debugModeCheckBox);
 
-        outerGbc.gridy = 4;
+        outerGbc.gridy = 5;
         outerPanel.add(devPanel, outerGbc);
 
         JPanel wrapper = new JPanel(new BorderLayout());
         wrapper.add(outerPanel, BorderLayout.NORTH);
+        JScrollPane outerScrollPane = new JScrollPane(wrapper);
+        outerScrollPane.setBorder(BorderFactory.createEmptyBorder());
+        outerScrollPane.getVerticalScrollBar().setUnitIncrement(16);
         GridBagConstraints tabConstraints = new GridBagConstraints();
         tabConstraints.fill = GridBagConstraints.BOTH;
         tabConstraints.weightx = 1.0;
         tabConstraints.weighty = 1.0;
-        gui.createPreferenceTab(this).add(wrapper, tabConstraints);
+        gui.createPreferenceTab(this).add(outerScrollPane, tabConstraints);
     }
 
     private static void addCheckBox(JPanel panel, GridBagConstraints gbc, int row, JCheckBox checkBox) {
@@ -569,6 +646,16 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
 
         String[] downloadValues = {"prompt", "always", "never"};
         Config.getPref().put(PREF_DOWNLOAD_BEFORE_FIX, downloadValues[downloadBeforeFixCombo.getSelectedIndex()]);
+
+        // Serialize centerline tags table
+        StringBuilder centerlineTags = new StringBuilder();
+        for (int i = 0; i < centerlineTagsTableModel.getRowCount(); i++) {
+            String key = ((String) centerlineTagsTableModel.getValueAt(i, 0)).trim();
+            if (key.isEmpty()) continue;
+            if (centerlineTags.length() > 0) centerlineTags.append(';');
+            centerlineTags.append(key);
+        }
+        Config.getPref().put(PREF_CENTERLINE_TAGS, centerlineTags.toString());
 
         // Serialize break-tag widths table
         StringBuilder roadWidths = new StringBuilder();
