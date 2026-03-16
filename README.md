@@ -53,9 +53,19 @@ You can set which tags you think should be broken along and add estimated buffer
 
 <img width="500" height="400" alt="image" src="https://github.com/user-attachments/assets/3732327d-c5d0-49ce-8f43-9c8afe0e36b1" />
 
-## UnGlueAll
+## Unglue
 
-**Coming evetually!**
+A common incorrect mapping pattern is to attach area features (`leisure=park`, `landuse=residential`, etc) onto centerway features (`highway`, `waterway`, etc). It is tedius to unglue nodes and offset the area. The Unglue tab detects these features and offsets them away from the centerline by half the feature's width, producing cleaner geometry.
+
+The default set of "centerline" features are `highway`, `waterway`, and `railway`, adjustable in the preferences.
+
+Unglue All currently works off of an allowlist of tags when looking for things to unglue and offset.  The defaults are `landuse`,`leisure`,`building`,`amenity`,`natural`.
+
+For best results, add `width`/`lanes` etc tagging to centerlines before ungluing. This give you the best shot at less cleanup.
+
+<img width="400" height="250" alt="image" src="https://github.com/user-attachments/assets/b8913095-90cd-4159-877b-79f30e9318bf" />
+<img width="250" height="250" alt="image" src="https://github.com/user-attachments/assets/a1619857-18ef-43ec-858a-fa377aa83e4f" />
+
 
 ## Configuration
 
@@ -88,9 +98,14 @@ These all err on the side of being too small.
 | `highway=motorway` | 12 |
 | `highway=trunk` | 10 |
 | `highway=primary` | 7 |
-| `highway=secondary` | 5 |
-| `highway=tertiary` | 4 |
-| `highway=residential` | 3.5 |
-| `highway=service` | 3 |
+| `highway=secondary` | 7 |
+| `highway=tertiary` | 7 |
+| `highway=unclassified` | 7 |
+| `highway=residential` | 7 |
+| `highway=service` | 7 |
+| `highway=track` | 3.5 |
+| `railway` | 7 |
+| `waterway=stream` | 3.5 |
+| `waterway=river` | 12 |
 
 Configured via `multipolygone.roadWidths` preference. Format: `key=value=width` entries separated by `;`.
