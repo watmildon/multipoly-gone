@@ -402,31 +402,9 @@ class PolygonBreaker {
     // JTS conversion
     // -----------------------------------------------------------------------
 
-    /** Converts a closed OSM Way to a JTS Polygon. */
+    /** Converts a closed OSM Way to a JTS Polygon. Delegates to GeometryUtils. */
     private static Polygon wayToJtsPolygon(Way way) {
-        List<Node> nodes = way.getNodes();
-        if (nodes.size() < 4) return null;
-
-        Coordinate[] coords = new Coordinate[nodes.size()];
-        for (int i = 0; i < nodes.size(); i++) {
-            EastNorth en = nodes.get(i).getEastNorth();
-            coords[i] = new Coordinate(en.east(), en.north());
-        }
-        // Ensure closure
-        if (!coords[0].equals2D(coords[coords.length - 1])) {
-            Coordinate[] closed = new Coordinate[coords.length + 1];
-            System.arraycopy(coords, 0, closed, 0, coords.length);
-            closed[closed.length - 1] = new Coordinate(coords[0].x, coords[0].y);
-            coords = closed;
-        }
-
-        try {
-            LinearRing ring = GF.createLinearRing(coords);
-            return GF.createPolygon(ring);
-        } catch (Exception e) {
-            Logging.warn("Multipoly-Gone: failed to create JTS polygon: " + e.getMessage());
-            return null;
-        }
+        return GeometryUtils.wayToJtsPolygon(way);
     }
 
     /** Converts a RoadChain to a JTS LineString. */
@@ -485,7 +463,7 @@ class PolygonBreaker {
      * @param meters   distance in real-world meters
      * @param latDeg   latitude in degrees (used for Mercator correction)
      */
-    private static double metersToProjectionUnits(double meters, double latDeg) {
+    static double metersToProjectionUnits(double meters, double latDeg) {
         double metersPerUnit = ProjectionRegistry.getProjection().getMetersPerUnit();
         if (metersPerUnit < 1e-6) return meters; // already in meters
         if (metersPerUnit < 10) {

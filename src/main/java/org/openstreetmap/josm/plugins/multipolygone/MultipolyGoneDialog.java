@@ -67,6 +67,11 @@ import org.openstreetmap.josm.tools.Shortcut;
 public class MultipolyGoneDialog extends ToggleDialog
         implements ActiveLayerChangeListener, DataSelectionListener, CommandQueuePreciseListener {
 
+    private static final int TAB_SIMPLIFY = 0;
+    private static final int TAB_BREAK = 1;
+    private static final int TAB_UNGLUE = 2;
+    private static final int TAB_SKIPPED = 3;
+
     private final DefaultListModel<FixPlan> listModel;
     private final JList<FixPlan> list;
 
@@ -76,16 +81,21 @@ public class MultipolyGoneDialog extends ToggleDialog
     private List<SkipResult> currentSkipResults = new ArrayList<>();
 
     private final AbstractAction refreshAction;
-    private final AbstractAction goneAction;
-    private final AbstractAction allGoneAction;
+    private final AbstractAction primaryAction;
+    private final AbstractAction secondaryAction;
     private final AbstractAction downloadRefsAction;
-    private final AbstractAction breakAction;
 
     // Break Polygon tab state
     private final JLabel breakStatusLabel;
     private final DefaultListModel<BreakPlan.RoadCorridor> breakRoadListModel;
     private final JList<BreakPlan.RoadCorridor> breakRoadList;
     private BreakPlan currentBreakPlan;
+
+    // Unglue tab state
+    private final JLabel unglueStatusLabel;
+    private final DefaultListModel<UngluePlan.CenterlineCorridor> unglueRunListModel;
+    private final JList<UngluePlan.CenterlineCorridor> unglueRunList;
+    private UngluePlan currentUngluePlan;
 
     /** Guard to prevent selection feedback loop (list click -> map select -> list select -> ...) */
     private boolean updatingSelection;
@@ -194,11 +204,26 @@ public class MultipolyGoneDialog extends ToggleDialog
         breakScrollPane.setAlignmentX(Component.LEFT_ALIGNMENT);
         breakPanel.add(breakScrollPane);
 
+        // --- Unglue tab (Tab 4) ---
+        unglueStatusLabel = new JLabel(tr("Select an area feature glued to a road"));
+        unglueRunListModel = new DefaultListModel<>();
+        unglueRunList = new JList<>(unglueRunListModel);
+        unglueRunList.setCellRenderer(new CenterlineCorridorRenderer());
+
+        JPanel ungluePanel = new JPanel();
+        ungluePanel.setLayout(new BoxLayout(ungluePanel, BoxLayout.Y_AXIS));
+        unglueStatusLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        ungluePanel.add(unglueStatusLabel);
+        JScrollPane unglueScrollPane = new JScrollPane(unglueRunList);
+        unglueScrollPane.setAlignmentX(Component.LEFT_ALIGNMENT);
+        ungluePanel.add(unglueScrollPane);
+
         // --- Tabbed pane ---
         tabbedPane = new JTabbedPane();
-        tabbedPane.addTab(tr("Fixable"), new JScrollPane(list));
+        tabbedPane.addTab(tr("Simplify"), new JScrollPane(list));
+        tabbedPane.addTab(tr("Break"), breakPanel);
+        tabbedPane.addTab(tr("Unglue"), ungluePanel);
         tabbedPane.addTab(tr("Skipped"), new JScrollPane(skippedTree));
-        tabbedPane.addTab(tr("Break Polygon"), breakPanel);
         tabbedPane.addChangeListener(e -> updateButtonState());
 
         // --- Actions ---
@@ -210,21 +235,21 @@ public class MultipolyGoneDialog extends ToggleDialog
         };
         new ImageProvider("dialogs", "refresh").getResource().attachImageIcon(refreshAction, true);
 
-        goneAction = new AbstractAction(tr("Gone")) {
+        primaryAction = new AbstractAction(tr("Gone")) {
             @Override
             public void actionPerformed(ActionEvent e) {
-                fixSelected();
+                executePrimaryAction();
             }
         };
-        new ImageProvider("dialogs", "fix").getResource().attachImageIcon(goneAction, true);
+        new ImageProvider("dialogs", "fix").getResource().attachImageIcon(primaryAction, true);
 
-        allGoneAction = new AbstractAction(tr("All Gone")) {
+        secondaryAction = new AbstractAction(tr("All Gone")) {
             @Override
             public void actionPerformed(ActionEvent e) {
-                fixAll();
+                executeSecondaryAction();
             }
         };
-        new ImageProvider("dialogs", "fix").getResource().attachImageIcon(allGoneAction, true);
+        new ImageProvider("dialogs", "fix").getResource().attachImageIcon(secondaryAction, true);
 
         downloadRefsAction = new AbstractAction("") {
             @Override
@@ -235,20 +260,11 @@ public class MultipolyGoneDialog extends ToggleDialog
         downloadRefsAction.putValue(AbstractAction.SHORT_DESCRIPTION, tr("Download Refs"));
         new ImageProvider("download").getResource().attachImageIcon(downloadRefsAction, true);
 
-        breakAction = new AbstractAction(tr("Break")) {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                executeBreak();
-            }
-        };
-        new ImageProvider("dialogs", "fix").getResource().attachImageIcon(breakAction, true);
-
         createLayout(tabbedPane, false, Arrays.asList(
             new SideButton(refreshAction),
-            new SideButton(goneAction),
-            new SideButton(allGoneAction),
-            new SideButton(downloadRefsAction),
-            new SideButton(breakAction)
+            new SideButton(primaryAction),
+            new SideButton(secondaryAction),
+            new SideButton(downloadRefsAction)
         ));
     }
 
@@ -289,9 +305,9 @@ public class MultipolyGoneDialog extends ToggleDialog
     }
 
     private void updateTabTitles(int fixCount, int skipCount) {
-        if (tabbedPane.getTabCount() >= 2) {
-            tabbedPane.setTitleAt(0, tr("Fixable ({0})", fixCount));
-            tabbedPane.setTitleAt(1, tr("Skipped ({0})", skipCount));
+        if (tabbedPane.getTabCount() >= 4) {
+            tabbedPane.setTitleAt(TAB_SIMPLIFY, tr("Simplify ({0})", fixCount));
+            tabbedPane.setTitleAt(TAB_SKIPPED, tr("Skipped ({0})", skipCount));
         }
     }
 
@@ -445,7 +461,7 @@ public class MultipolyGoneDialog extends ToggleDialog
             return;
         }
 
-        if (tabbedPane.getSelectedIndex() == 1) {
+        if (tabbedPane.getSelectedIndex() == TAB_SKIPPED) {
             downloadForSkippedRelations(editLayer);
             return;
         }
@@ -704,19 +720,62 @@ public class MultipolyGoneDialog extends ToggleDialog
 
     private void updateButtonState() {
         int selectedTab = tabbedPane.getSelectedIndex();
-        boolean onFixableTab = selectedTab == 0;
-        boolean onBreakTab = selectedTab == 2;
+        boolean onSimplifyTab = selectedTab == TAB_SIMPLIFY;
+        boolean onBreakTab = selectedTab == TAB_BREAK;
+        boolean onUnglueTab = selectedTab == TAB_UNGLUE;
+        boolean onSkippedTab = selectedTab == TAB_SKIPPED;
         boolean hasFixableItems = !listModel.isEmpty();
 
-        goneAction.setEnabled(onFixableTab && hasFixableItems);
-        allGoneAction.setEnabled(onFixableTab && hasFixableItems);
-        breakAction.setEnabled(onBreakTab && currentBreakPlan != null);
+        // Rename buttons based on active tab
+        if (onBreakTab) {
+            primaryAction.putValue(AbstractAction.NAME, tr("Break"));
+            secondaryAction.putValue(AbstractAction.NAME, tr("Break All"));
+        } else if (onUnglueTab) {
+            primaryAction.putValue(AbstractAction.NAME, tr("Unglue"));
+            secondaryAction.putValue(AbstractAction.NAME, tr("Unglue All"));
+        } else {
+            primaryAction.putValue(AbstractAction.NAME, tr("Gone"));
+            secondaryAction.putValue(AbstractAction.NAME, tr("All Gone"));
+        }
+
+        // Enable/disable based on tab context
+        if (onSimplifyTab) {
+            primaryAction.setEnabled(hasFixableItems);
+            secondaryAction.setEnabled(hasFixableItems);
+        } else if (onBreakTab) {
+            primaryAction.setEnabled(currentBreakPlan != null);
+            secondaryAction.setEnabled(false);
+        } else if (onUnglueTab) {
+            primaryAction.setEnabled(currentUngluePlan != null);
+            secondaryAction.setEnabled(getDataSet() != null);
+        } else {
+            primaryAction.setEnabled(false);
+            secondaryAction.setEnabled(false);
+        }
 
         boolean hasDownloadableSkips = currentSkipResults.stream()
             .anyMatch(sr -> sr.getReason() == SkipReason.INCOMPLETE_MEMBERS
                 || sr.getReason() == SkipReason.DELETED_OR_INCOMPLETE_WAY);
         downloadRefsAction.setEnabled(
-            (onFixableTab && hasFixableItems) || (!onFixableTab && !onBreakTab && hasDownloadableSkips));
+            (onSimplifyTab && hasFixableItems)
+            || (onSkippedTab && hasDownloadableSkips));
+    }
+
+    private void executePrimaryAction() {
+        switch (tabbedPane.getSelectedIndex()) {
+            case TAB_SIMPLIFY -> fixSelected();
+            case TAB_BREAK -> executeBreak();
+            case TAB_UNGLUE -> executeUnglue();
+            default -> { }
+        }
+    }
+
+    private void executeSecondaryAction() {
+        switch (tabbedPane.getSelectedIndex()) {
+            case TAB_SIMPLIFY -> fixAll();
+            case TAB_UNGLUE -> unglueAll();
+            default -> { }
+        }
     }
 
     @Override
@@ -762,8 +821,17 @@ public class MultipolyGoneDialog extends ToggleDialog
     @Override
     public void preferenceChanged(org.openstreetmap.josm.spi.preferences.PreferenceChangeEvent e) {
         super.preferenceChanged(e);
-        if (e.getKey().startsWith("multipolygone.") && !listModel.isEmpty()) {
-            refresh();
+        if (e.getKey().startsWith("multipolygone.")) {
+            if (!listModel.isEmpty()) {
+                refresh();
+            }
+            // Re-run Break/Unglue analysis since tag filters may have changed
+            DataSet ds = getDataSet();
+            if (ds != null) {
+                Collection<? extends OsmPrimitive> selected = ds.getSelected();
+                updateBreakAnalysis(selected);
+                updateUnglueAnalysis(selected);
+            }
         }
     }
 
@@ -829,6 +897,9 @@ public class MultipolyGoneDialog extends ToggleDialog
 
             // Update Break Polygon tab analysis
             updateBreakAnalysis(selected);
+
+            // Update Unglue tab analysis
+            updateUnglueAnalysis(selected);
         } finally {
             updatingSelection = false;
         }
@@ -1087,6 +1158,160 @@ public class MultipolyGoneDialog extends ToggleDialog
         // Fallback
         String highway = w.get("highway");
         return highway != null ? "highway=" + highway : "way";
+    }
+
+    // -----------------------------------------------------------------------
+    // Unglue tab logic
+    // -----------------------------------------------------------------------
+
+    /**
+     * Updates the Unglue tab based on the current map selection.
+     */
+    private void updateUnglueAnalysis(Collection<? extends OsmPrimitive> selected) {
+        unglueRunListModel.clear();
+        currentUngluePlan = null;
+
+        DataSet ds = getDataSet();
+        if (ds == null || selected.isEmpty()) {
+            unglueStatusLabel.setText(tr("Select an area feature glued to a road"));
+            updateButtonState();
+            return;
+        }
+
+        // Find a suitable area primitive from the selection
+        OsmPrimitive target = null;
+        for (OsmPrimitive prim : selected) {
+            if (prim instanceof Way way && way.isClosed() && way.getNodesCount() >= 4) {
+                target = way;
+                break;
+            }
+            if (prim instanceof Relation rel
+                && ("multipolygon".equals(rel.get("type")) || "boundary".equals(rel.get("type")))) {
+                target = rel;
+                break;
+            }
+        }
+
+        if (target == null) {
+            unglueStatusLabel.setText(tr("Select an area feature glued to a road"));
+            updateButtonState();
+            return;
+        }
+
+        UngluePlan plan = PolygonUngluer.analyze(target, ds);
+        if (plan == null) {
+            unglueStatusLabel.setText(tr("No glued centerline segments found"));
+            updateButtonState();
+            return;
+        }
+
+        currentUngluePlan = plan;
+        unglueStatusLabel.setText(plan.getDescription());
+        for (UngluePlan.CenterlineCorridor run : plan.getCorridors()) {
+            unglueRunListModel.addElement(run);
+        }
+        updateButtonState();
+    }
+
+    private static boolean confirmUnglueExperimental() {
+        int choice = JOptionPane.showConfirmDialog(
+            MainApplication.getMainFrame(),
+            tr("Unglue is experimental and likely buggy.\nResults require careful review before uploading.\n\nProceed?"),
+            tr("Experimental Feature"),
+            JOptionPane.OK_CANCEL_OPTION,
+            JOptionPane.WARNING_MESSAGE);
+        return choice == JOptionPane.OK_OPTION;
+    }
+
+    private void executeUnglue() {
+        if (currentUngluePlan == null) return;
+        if (!confirmUnglueExperimental()) return;
+
+        // Re-analyze to get fresh plan
+        DataSet ds = getDataSet();
+        if (ds == null) return;
+        UngluePlan freshPlan = PolygonUngluer.analyze(currentUngluePlan.getSource(), ds);
+        if (freshPlan == null) {
+            currentUngluePlan = null;
+            unglueStatusLabel.setText(tr("No glued centerline segments found"));
+            unglueRunListModel.clear();
+            updateButtonState();
+            return;
+        }
+
+        PolygonUnglueFixer.execute(freshPlan);
+        refresh();
+    }
+
+    private void unglueAll() {
+        if (!confirmUnglueExperimental()) return;
+        DataSet ds = getDataSet();
+        if (ds == null) return;
+
+        Set<String> areaTags = getAreaTagKeys();
+        List<UngluePlan> plans = new ArrayList<>();
+        for (Way w : ds.getWays()) {
+            if (w.isDeleted() || w.isIncomplete()) continue;
+            if (!w.isClosed() || w.getNodesCount() < 4) continue;
+            if (!hasAnyKey(w, areaTags)) continue;
+            UngluePlan plan = PolygonUngluer.analyze(w, ds);
+            if (plan != null) {
+                plans.add(plan);
+            }
+        }
+        for (Relation r : ds.getRelations()) {
+            if (r.isDeleted() || r.isIncomplete()) continue;
+            if (!hasAnyKey(r, areaTags)) continue;
+            UngluePlan plan = PolygonUngluer.analyze(r, ds);
+            if (plan != null) {
+                plans.add(plan);
+            }
+        }
+
+        if (plans.isEmpty()) return;
+
+        PolygonUnglueFixer.executeAll(plans);
+        refresh();
+    }
+
+    private static Set<String> getAreaTagKeys() {
+        String pref = Config.getPref().get(
+            MultipolyGonePreferences.PREF_AREA_TAGS,
+            MultipolyGonePreferences.DEFAULT_AREA_TAGS);
+        Set<String> keys = new java.util.HashSet<>();
+        for (String key : pref.split(";")) {
+            String trimmed = key.trim();
+            if (!trimmed.isEmpty()) keys.add(trimmed);
+        }
+        return keys;
+    }
+
+    private static boolean hasAnyKey(OsmPrimitive p, Set<String> keys) {
+        for (String key : keys) {
+            if (p.hasKey(key)) return true;
+        }
+        return false;
+    }
+
+    private static class CenterlineCorridorRenderer extends DefaultListCellRenderer {
+        @Override
+        public Component getListCellRendererComponent(JList<?> jlist, Object value,
+                int index, boolean isSelected, boolean cellHasFocus) {
+            JLabel label = (JLabel) super.getListCellRendererComponent(
+                jlist, value, index, isSelected, cellHasFocus);
+            if (value instanceof UngluePlan.CenterlineCorridor corridor) {
+                Way road = corridor.getCenterlineWay();
+                String name = road != null ? road.get("name") : null;
+                String tagDesc = road != null ? describePrimaryTag(road) : "?";
+                String text = tagDesc;
+                if (name != null) {
+                    text = name + " (" + text + ")";
+                }
+                text += " \u2014 " + corridor.getWidthMeters() + "m wide";
+                label.setText(text);
+            }
+            return label;
+        }
     }
 
     private static class RoadCorridorRenderer extends DefaultListCellRenderer {

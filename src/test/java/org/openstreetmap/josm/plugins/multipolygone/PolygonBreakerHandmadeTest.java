@@ -1001,7 +1001,8 @@ class PolygonBreakerHandmadeTest {
     // Test 107: Compound test — Gone (consolidate open outers) then Break
     // The MP has 3 open outer ways (one tagged waterway=stream).
     // Gone consolidates them into a closed way, preserving the tagged way.
-    // Then Break splits the resulting way by the highway=secondary.
+    // Then Break finds 2 corridors (highway=secondary + waterway=stream)
+    // and splits the resulting way into 2 pieces.
     // -----------------------------------------------------------------------
 
     @Test
@@ -1041,7 +1042,7 @@ class PolygonBreakerHandmadeTest {
         // Now Break should work on the consolidated way
         BreakPlan breakPlan = PolygonBreaker.analyze(consolidatedWay, localDs);
         assertNotNull(breakPlan, "Test 107: Break should work after Gone consolidation");
-        assertEquals(1, breakPlan.getCorridors().size(), "Test 107: should find 1 road corridor");
+        assertEquals(2, breakPlan.getCorridors().size(), "Test 107: should find 2 road corridors (highway + waterway)");
         assertPlanPieces(breakPlan, 2, "107");
         assertAllClosed(breakPlan, "107");
         assertAllPositiveArea(breakPlan, "107");

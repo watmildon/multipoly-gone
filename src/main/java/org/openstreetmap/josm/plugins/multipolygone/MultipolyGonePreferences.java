@@ -47,13 +47,23 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
     public static final String PREF_DEBUG_MODE = "multipolygone.debugMode";
     public static final int DEFAULT_DEBUG_ITERATIONS = 10;
 
+    public static final String PREF_CENTERLINE_TAGS = "multipolygone.centerlineTags";
+    public static final String DEFAULT_CENTERLINE_TAGS = "highway;waterway;railway";
+
+    public static final String PREF_AREA_TAGS = "multipolygone.areaTags";
+    public static final String DEFAULT_AREA_TAGS = "landuse;leisure;building;amenity;natural";
+
     public static final String PREF_ROAD_WIDTHS = "multipolygone.roadWidths";
     public static final String DEFAULT_ROAD_WIDTHS =
-        "highway=motorway=12;highway=trunk=10;highway=primary=7;highway=secondary=5"
-        + ";highway=tertiary=4;highway=residential=3.5;highway=service=3";
+        "highway=motorway=12;highway=trunk=10;highway=primary=7;highway=secondary=7"
+        + ";highway=tertiary=7;highway=unclassified=7;highway=residential=7"
+        + ";highway=service=7;highway=track=3.5"
+        + ";railway=7;waterway=stream=3.5;waterway=river=12";
 
     private DefaultTableModel identityTagsTableModel;
     private DefaultTableModel insignificantTagsTableModel;
+    private DefaultTableModel centerlineTagsTableModel;
+    private DefaultTableModel areaTagsTableModel;
     private DefaultTableModel roadWidthsTableModel;
     private JCheckBox useDiscardableKeysCheckBox;
     private JComboBox<String> downloadBeforeFixCombo;
@@ -99,7 +109,7 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
 
         /** Returns true if the given way matches this tag filter. */
         boolean matches(org.openstreetmap.josm.data.osm.Way w) {
-            if (tagValue == null) {
+            if (tagValue == null || "*".equals(tagValue)) {
                 return w.hasKey(tagKey);
             }
             return tagValue.equals(w.get(tagKey));
@@ -111,10 +121,22 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
         }
     }
 
+    /** Default width in meters when no width is specified for a tag filter. */
+    static final double DEFAULT_TAG_WIDTH = 3.5;
+
     /**
      * Parses the break-tag widths preference.
-     * Format: "key=value=width" for specific value match, "key=width" for wildcard match.
-     * The last "=" separates the width; everything before it is the tag filter.
+     * <p>Supported formats per semicolon-delimited entry:
+     * <ul>
+     *   <li>{@code key=value=width} — match specific tag value with explicit width</li>
+     *   <li>{@code key=width} — match any value of key (wildcard) with explicit width</li>
+     *   <li>{@code key=value} — match specific value, default width (3.5m)</li>
+     *   <li>{@code key} — match any value of key, default width (3.5m)</li>
+     *   <li>{@code key=*=width} — explicit wildcard with width (same as key=width)</li>
+     *   <li>{@code key=*} — explicit wildcard, default width</li>
+     * </ul>
+     * The last "=" separates the width when the trailing segment is a valid number;
+     * otherwise the entire entry is treated as a tag filter with the default width.
      */
     static java.util.List<BreakTagWidth> getBreakTagWidths() {
         String pref = Config.getPref().get(PREF_ROAD_WIDTHS, DEFAULT_ROAD_WIDTHS);
@@ -122,25 +144,39 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
         for (String entry : pref.split(";")) {
             String trimmed = entry.trim();
             if (trimmed.isEmpty()) continue;
+
             int lastEq = trimmed.lastIndexOf('=');
-            if (lastEq <= 0) continue;
-            String filter = trimmed.substring(0, lastEq).trim();
-            String widthStr = trimmed.substring(lastEq + 1).trim();
+            if (lastEq <= 0) {
+                // Bare key (e.g. "count") — wildcard match, default width
+                result.add(new BreakTagWidth(trimmed, null, DEFAULT_TAG_WIDTH));
+                continue;
+            }
+
+            String beforeLast = trimmed.substring(0, lastEq).trim();
+            String afterLast = trimmed.substring(lastEq + 1).trim();
+
+            // Try to parse the part after the last '=' as a width
+            double width = -1;
             try {
-                double width = Double.parseDouble(widthStr);
-                int eqIdx = filter.indexOf('=');
-                if (eqIdx > 0) {
-                    // key=value format
-                    result.add(new BreakTagWidth(
-                        filter.substring(0, eqIdx).trim(),
-                        filter.substring(eqIdx + 1).trim(),
-                        width));
-                } else {
-                    // key-only (wildcard) format
-                    result.add(new BreakTagWidth(filter, null, width));
-                }
+                width = Double.parseDouble(afterLast);
             } catch (NumberFormatException e) {
-                // skip malformed entries
+                // Not a number — treat entire string as tag filter with default width
+            }
+
+            if (width > 0) {
+                // afterLast is a valid width — beforeLast is the tag filter
+                int eqIdx = beforeLast.indexOf('=');
+                if (eqIdx > 0) {
+                    String key = beforeLast.substring(0, eqIdx).trim();
+                    String value = beforeLast.substring(eqIdx + 1).trim();
+                    result.add(new BreakTagWidth(key, value, width));
+                } else {
+                    result.add(new BreakTagWidth(beforeLast, null, width));
+                }
+            } else {
+                // afterLast is not a number — treat as key=value with default width
+                // (e.g. "waterway=river" or "waterway=*")
+                result.add(new BreakTagWidth(beforeLast, afterLast, DEFAULT_TAG_WIDTH));
             }
         }
         return result;
@@ -364,9 +400,9 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
         outerGbc.gridy = 2;
         outerPanel.add(downloadPanel, outerGbc);
 
-        // === Section 4: Polygon Breaking ===
+        // === Section 4: Centerline Offset Widths ===
         JPanel breakPanel = new JPanel(new GridBagLayout());
-        breakPanel.setBorder(BorderFactory.createTitledBorder(tr("Polygon Breaking")));
+        breakPanel.setBorder(BorderFactory.createTitledBorder(tr("Centerline Offset Widths")));
         gbc = new GridBagConstraints();
         gbc.insets = new Insets(3, 5, 3, 5);
         gbc.anchor = GridBagConstraints.WEST;
@@ -376,11 +412,13 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
         gbc.gridy = row++;
         gbc.gridwidth = 4;
         JLabel roadWidthsInfo = new JLabel(
-            tr("Tag filters and widths (meters) for polygon splitting"));
+            tr("Tag filters and widths (meters) for centerline features"));
         roadWidthsInfo.setToolTipText(
-            tr("<html>Ways matching these tag filters are used as split lines.<br>"
+            tr("<html>Used by both <b>Break Polygon</b> and <b>Unglue</b>.<br>"
+               + "Ways matching these tag filters are treated as centerline features.<br>"
                + "Use <b>key=value</b> (e.g. highway=motorway) to match a specific tag,<br>"
-               + "or <b>key</b> alone (e.g. waterway) to match any value of that key.<br>"
+               + "<b>key=*</b> or <b>key</b> alone (e.g. waterway) to match any value of that key.<br>"
+               + "Width is optional \u2014 leave blank to use the default (3.5m).<br>"
                + "The polygon boundary is offset by half the configured width.</html>"));
         breakPanel.add(roadWidthsInfo, gbc);
         gbc.gridwidth = 1;
@@ -398,10 +436,20 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
             String trimmed = entry.trim();
             if (trimmed.isEmpty()) continue;
             int lastEq = trimmed.lastIndexOf('=');
-            if (lastEq > 0) {
-                roadWidthsTableModel.addRow(new Object[]{
-                    trimmed.substring(0, lastEq).trim(),
-                    trimmed.substring(lastEq + 1).trim()});
+            if (lastEq <= 0) {
+                // Bare key (e.g. "count") — no width
+                roadWidthsTableModel.addRow(new Object[]{trimmed, ""});
+            } else {
+                String afterLast = trimmed.substring(lastEq + 1).trim();
+                try {
+                    Double.parseDouble(afterLast);
+                    // Valid number — it's the width
+                    roadWidthsTableModel.addRow(new Object[]{
+                        trimmed.substring(0, lastEq).trim(), afterLast});
+                } catch (NumberFormatException e) {
+                    // Not a number — entire string is the filter (e.g. "waterway=*")
+                    roadWidthsTableModel.addRow(new Object[]{trimmed, ""});
+                }
             }
         }
 
@@ -448,7 +496,134 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
         outerGbc.gridy = 3;
         outerPanel.add(breakPanel, outerGbc);
 
-        // === Section 5: Developer ===
+        // === Section 5: Unglue ===
+        JPanel ungluePanel = new JPanel(new GridBagLayout());
+        ungluePanel.setBorder(BorderFactory.createTitledBorder(tr("Unglue")));
+        gbc = new GridBagConstraints();
+        gbc.insets = new Insets(3, 5, 3, 5);
+        gbc.anchor = GridBagConstraints.WEST;
+        row = 0;
+
+        gbc.gridx = 0;
+        gbc.gridy = row++;
+        gbc.gridwidth = 4;
+        JLabel centerlineInfo = new JLabel(
+            tr("Centerline tag keys (ways with these tags are treated as centerlines to unglue from)"));
+        centerlineInfo.setToolTipText(
+            tr("Area boundaries sharing nodes with ways that have these tag keys "
+               + "will be offset away from the centerline by half the feature width."));
+        ungluePanel.add(centerlineInfo, gbc);
+        gbc.gridwidth = 1;
+
+        centerlineTagsTableModel = new DefaultTableModel(
+                new String[]{tr("Tag key")}, 0);
+
+        String currentCenterlineTags = Config.getPref().get(PREF_CENTERLINE_TAGS,
+            DEFAULT_CENTERLINE_TAGS);
+        for (String key : parseTagSet(currentCenterlineTags)) {
+            centerlineTagsTableModel.addRow(new Object[]{key});
+        }
+
+        JTable centerlineTable = new JTable(centerlineTagsTableModel);
+        centerlineTable.setRowHeight(22);
+        JScrollPane centerlineScrollPane = new JScrollPane(centerlineTable);
+        centerlineScrollPane.setPreferredSize(new Dimension(400, 132));
+
+        gbc.gridx = 0;
+        gbc.gridy = row++;
+        gbc.gridwidth = 4;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.weightx = 1.0;
+        ungluePanel.add(centerlineScrollPane, gbc);
+        gbc.fill = GridBagConstraints.NONE;
+        gbc.weightx = 0;
+        gbc.gridwidth = 1;
+
+        gbc.gridx = 0;
+        gbc.gridy = row++;
+        gbc.gridwidth = 4;
+        JPanel centerlineButtonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        JButton centerlineAddButton = new JButton(tr("Add"));
+        centerlineAddButton.addActionListener(e -> {
+            centerlineTagsTableModel.addRow(new Object[]{""});
+            int newRow = centerlineTagsTableModel.getRowCount() - 1;
+            centerlineTable.editCellAt(newRow, 0);
+            centerlineTable.getSelectionModel().setSelectionInterval(newRow, newRow);
+        });
+        JButton centerlineRemoveButton = new JButton(tr("Remove"));
+        centerlineRemoveButton.addActionListener(e -> {
+            int[] selected = centerlineTable.getSelectedRows();
+            for (int i = selected.length - 1; i >= 0; i--) {
+                centerlineTagsTableModel.removeRow(selected[i]);
+            }
+        });
+        centerlineButtonPanel.add(centerlineAddButton);
+        centerlineButtonPanel.add(centerlineRemoveButton);
+        ungluePanel.add(centerlineButtonPanel, gbc);
+        gbc.gridwidth = 1;
+
+        // Area tag keys sub-section
+        gbc.gridx = 0;
+        gbc.gridy = row++;
+        gbc.gridwidth = 4;
+        JLabel areaTagsInfo = new JLabel(
+            tr("Area tag keys (primitives with these tags are included in \"Unglue All\")"));
+        areaTagsInfo.setToolTipText(
+            tr("Only closed ways and relations tagged with at least one of these keys "
+               + "will be processed by \"Unglue All\". Single-selection unglue is not affected."));
+        ungluePanel.add(areaTagsInfo, gbc);
+        gbc.gridwidth = 1;
+
+        areaTagsTableModel = new DefaultTableModel(
+                new String[]{tr("Tag key")}, 0);
+
+        String currentAreaTags = Config.getPref().get(PREF_AREA_TAGS, DEFAULT_AREA_TAGS);
+        for (String key : parseTagSet(currentAreaTags)) {
+            areaTagsTableModel.addRow(new Object[]{key});
+        }
+
+        JTable areaTagsTable = new JTable(areaTagsTableModel);
+        areaTagsTable.setRowHeight(22);
+        JScrollPane areaTagsScrollPane = new JScrollPane(areaTagsTable);
+        areaTagsScrollPane.setPreferredSize(new Dimension(400, 132));
+
+        gbc.gridx = 0;
+        gbc.gridy = row++;
+        gbc.gridwidth = 4;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.weightx = 1.0;
+        ungluePanel.add(areaTagsScrollPane, gbc);
+        gbc.fill = GridBagConstraints.NONE;
+        gbc.weightx = 0;
+        gbc.gridwidth = 1;
+
+        gbc.gridx = 0;
+        gbc.gridy = row++;
+        gbc.gridwidth = 4;
+        JPanel areaTagsButtonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        JButton areaTagsAddButton = new JButton(tr("Add"));
+        areaTagsAddButton.addActionListener(e -> {
+            areaTagsTableModel.addRow(new Object[]{""});
+            int newRow = areaTagsTableModel.getRowCount() - 1;
+            areaTagsTable.editCellAt(newRow, 0);
+            areaTagsTable.getSelectionModel().setSelectionInterval(newRow, newRow);
+        });
+        JButton areaTagsRemoveButton = new JButton(tr("Remove"));
+        areaTagsRemoveButton.addActionListener(e -> {
+            int[] selected = areaTagsTable.getSelectedRows();
+            for (int i = selected.length - 1; i >= 0; i--) {
+                areaTagsTableModel.removeRow(selected[i]);
+            }
+        });
+        areaTagsButtonPanel.add(areaTagsAddButton);
+        areaTagsButtonPanel.add(areaTagsRemoveButton);
+        ungluePanel.add(areaTagsButtonPanel, gbc);
+        gbc.gridwidth = 1;
+
+        outerGbc.gridy = 4;
+        outerPanel.add(ungluePanel, outerGbc);
+
+        // === Section 6: Developer ===
         JPanel devPanel = new JPanel(new GridBagLayout());
         devPanel.setBorder(BorderFactory.createTitledBorder(tr("Developer")));
         gbc = new GridBagConstraints();
@@ -470,16 +645,19 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
             Config.getPref().getBoolean(PREF_DEBUG_MODE, false));
         addCheckBox(devPanel, gbc, row++, debugModeCheckBox);
 
-        outerGbc.gridy = 4;
+        outerGbc.gridy = 5;
         outerPanel.add(devPanel, outerGbc);
 
         JPanel wrapper = new JPanel(new BorderLayout());
         wrapper.add(outerPanel, BorderLayout.NORTH);
+        JScrollPane outerScrollPane = new JScrollPane(wrapper);
+        outerScrollPane.setBorder(BorderFactory.createEmptyBorder());
+        outerScrollPane.getVerticalScrollBar().setUnitIncrement(16);
         GridBagConstraints tabConstraints = new GridBagConstraints();
         tabConstraints.fill = GridBagConstraints.BOTH;
         tabConstraints.weightx = 1.0;
         tabConstraints.weighty = 1.0;
-        gui.createPreferenceTab(this).add(wrapper, tabConstraints);
+        gui.createPreferenceTab(this).add(outerScrollPane, tabConstraints);
     }
 
     private static void addCheckBox(JPanel panel, GridBagConstraints gbc, int row, JCheckBox checkBox) {
@@ -531,14 +709,39 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
         String[] downloadValues = {"prompt", "always", "never"};
         Config.getPref().put(PREF_DOWNLOAD_BEFORE_FIX, downloadValues[downloadBeforeFixCombo.getSelectedIndex()]);
 
+        // Serialize centerline tags table
+        StringBuilder centerlineTags = new StringBuilder();
+        for (int i = 0; i < centerlineTagsTableModel.getRowCount(); i++) {
+            String key = ((String) centerlineTagsTableModel.getValueAt(i, 0)).trim();
+            if (key.isEmpty()) continue;
+            if (centerlineTags.length() > 0) centerlineTags.append(';');
+            centerlineTags.append(key);
+        }
+        Config.getPref().put(PREF_CENTERLINE_TAGS, centerlineTags.toString());
+
+        // Serialize area tags table
+        StringBuilder areaTags = new StringBuilder();
+        for (int i = 0; i < areaTagsTableModel.getRowCount(); i++) {
+            String key = ((String) areaTagsTableModel.getValueAt(i, 0)).trim();
+            if (key.isEmpty()) continue;
+            if (areaTags.length() > 0) areaTags.append(';');
+            areaTags.append(key);
+        }
+        Config.getPref().put(PREF_AREA_TAGS, areaTags.toString());
+
         // Serialize break-tag widths table
         StringBuilder roadWidths = new StringBuilder();
         for (int i = 0; i < roadWidthsTableModel.getRowCount(); i++) {
             String filter = ((String) roadWidthsTableModel.getValueAt(i, 0)).trim();
             String width = ((String) roadWidthsTableModel.getValueAt(i, 1)).trim();
-            if (filter.isEmpty() || width.isEmpty()) continue;
+            if (filter.isEmpty()) continue;
             if (roadWidths.length() > 0) roadWidths.append(';');
-            roadWidths.append(filter).append('=').append(width);
+            if (width.isEmpty()) {
+                // Key-only or key=value without explicit width
+                roadWidths.append(filter);
+            } else {
+                roadWidths.append(filter).append('=').append(width);
+            }
         }
         Config.getPref().put(PREF_ROAD_WIDTHS, roadWidths.toString());
 

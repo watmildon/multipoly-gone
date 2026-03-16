@@ -44,7 +44,7 @@ public class MultipolygonAnalyzer {
         "name;name:*;alt_name;old_name;loc_name;short_name;official_name;reg_name;nat_name;int_name;"
         + "wikidata;wikipedia;ref;ref:*;"
         + "place;boundary;admin_level;protect_class;"
-        + "operator;brand;owner";
+        + "operator;brand;owner;capacity";
 
     /**
      * Returns true if the relation has any tag key that matches the configured

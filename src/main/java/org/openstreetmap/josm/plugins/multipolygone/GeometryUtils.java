@@ -8,12 +8,16 @@ import org.locationtech.jts.algorithm.RobustLineIntersector;
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.CoordinateSequence;
 import org.locationtech.jts.geom.GeometryFactory;
+import org.locationtech.jts.geom.LineString;
 import org.locationtech.jts.geom.LinearRing;
+import org.locationtech.jts.geom.Polygon;
 import org.locationtech.jts.geom.impl.CoordinateArraySequence;
 import org.locationtech.jts.operation.valid.IsSimpleOp;
 import org.openstreetmap.josm.data.coor.EastNorth;
 import org.openstreetmap.josm.data.osm.Node;
+import org.openstreetmap.josm.data.osm.Way;
 import org.openstreetmap.josm.data.projection.ProjectionRegistry;
+import org.openstreetmap.josm.tools.Logging;
 
 /**
  * Shared geometry primitives used by multiple classes in the plugin.
@@ -176,7 +180,58 @@ class GeometryUtils {
     /**
      * Converts a list of Nodes to a JTS Polygon (exterior ring only, no holes).
      */
-    static org.locationtech.jts.geom.Polygon nodesToJtsPolygon(List<Node> nodes) {
+    static Polygon nodesToJtsPolygon(List<Node> nodes) {
         return GF.createPolygon(GF.createLinearRing(nodesToClosedCoords(nodes)));
+    }
+
+    /**
+     * Converts a closed OSM Way to a JTS Polygon.
+     * Returns null if the way has fewer than 4 nodes or JTS creation fails.
+     */
+    static Polygon wayToJtsPolygon(Way way) {
+        List<Node> nodes = way.getNodes();
+        if (nodes.size() < 4) return null;
+
+        Coordinate[] coords = new Coordinate[nodes.size()];
+        for (int i = 0; i < nodes.size(); i++) {
+            EastNorth en = nodes.get(i).getEastNorth();
+            coords[i] = new Coordinate(en.east(), en.north());
+        }
+        // Ensure closure
+        if (!coords[0].equals2D(coords[coords.length - 1])) {
+            Coordinate[] closed = new Coordinate[coords.length + 1];
+            System.arraycopy(coords, 0, closed, 0, coords.length);
+            closed[closed.length - 1] = new Coordinate(coords[0].x, coords[0].y);
+            coords = closed;
+        }
+
+        try {
+            LinearRing ring = GF.createLinearRing(coords);
+            return GF.createPolygon(ring);
+        } catch (Exception e) {
+            Logging.warn("Multipoly-Gone: failed to create JTS polygon: " + e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Converts an OSM Way to a JTS LineString.
+     * Returns null if the way has fewer than 2 nodes or JTS creation fails.
+     */
+    static LineString wayToJtsLineString(Way way) {
+        List<Node> nodes = way.getNodes();
+        if (nodes.size() < 2) return null;
+
+        Coordinate[] coords = new Coordinate[nodes.size()];
+        for (int i = 0; i < nodes.size(); i++) {
+            EastNorth en = nodes.get(i).getEastNorth();
+            coords[i] = new Coordinate(en.east(), en.north());
+        }
+
+        try {
+            return GF.createLineString(coords);
+        } catch (Exception e) {
+            return null;
+        }
     }
 }
