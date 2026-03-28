@@ -41,10 +41,26 @@ public class MultipolygonAnalyzer {
      * matches name:en, name:fr, etc.).
      */
     static final String DEFAULT_IDENTITY_TAGS =
+        // Naming and external references
         "name;name:*;alt_name;old_name;loc_name;short_name;official_name;reg_name;nat_name;int_name;"
         + "wikidata;wikipedia;ref;ref:*;"
+        // Administrative and organizational
         + "place;boundary;admin_level;protect_class;"
-        + "operator;brand;owner;capacity";
+        + "operator;brand;owner;capacity;"
+        // Features that typically represent a specific named place, often mapped
+        // without a name in hopes someone will add it later
+        + "tourism=artwork;tourism=museum;tourism=attraction;"
+        + "leisure=park;leisure=nature_reserve;leisure=golf_course;leisure=sports_centre;leisure=stadium;"
+        + "amenity=school;amenity=university;amenity=hospital;amenity=place_of_worship;"
+        + "landuse=cemetery;landuse=military;"
+        + "man_made=geoglyph;"
+        + "historic=monument;historic=memorial;historic=castle;historic=archaeological_site;historic=ruins;"
+        + "aeroway=aerodrome;"
+        // Tags implying a countable/specific installation
+        + "generator:solar:modules;student:count;personnel:count;"
+        // Mapper notes — signal that someone is tracking a specific feature;
+        // a mapper can remove these then break apart the relation
+        + "note;description;fixme";
 
     /**
      * Returns true if the relation has any tag key that matches the configured
@@ -53,8 +69,8 @@ public class MultipolygonAnalyzer {
      */
     static boolean hasIdentityTags(Relation relation) {
         Set<String> patterns = getIdentityTagPatterns();
-        for (String key : relation.getKeys().keySet()) {
-            if (matchesAnyPattern(key, patterns)) {
+        for (Map.Entry<String, String> entry : relation.getKeys().entrySet()) {
+            if (matchesAnyPattern(entry.getKey(), entry.getValue(), patterns)) {
                 return true;
             }
         }
@@ -78,12 +94,23 @@ public class MultipolygonAnalyzer {
     }
 
     /**
-     * Returns true if the given key matches any of the patterns.
-     * A pattern ending with '*' is treated as a prefix match.
+     * Returns true if the given key (and value) matches any of the patterns.
+     * Supported pattern forms:
+     * - "key" — matches any tag with that key
+     * - "key:*" — prefix match on the key (e.g. "name:*" matches "name:en")
+     * - "key=value" — matches only when both key and value match
      */
-    private static boolean matchesAnyPattern(String key, Set<String> patterns) {
+    private static boolean matchesAnyPattern(String key, String value, Set<String> patterns) {
         for (String pattern : patterns) {
-            if (pattern.endsWith("*")) {
+            int eqIdx = pattern.indexOf('=');
+            if (eqIdx >= 0) {
+                // key=value pattern
+                String patKey = pattern.substring(0, eqIdx);
+                String patVal = pattern.substring(eqIdx + 1);
+                if (patKey.equals(key) && patVal.equals(value)) {
+                    return true;
+                }
+            } else if (pattern.endsWith("*")) {
                 String prefix = pattern.substring(0, pattern.length() - 1);
                 if (key.startsWith(prefix)) {
                     return true;
