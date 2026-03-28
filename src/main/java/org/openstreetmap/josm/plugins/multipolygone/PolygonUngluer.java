@@ -357,11 +357,15 @@ class PolygonUngluer {
         double width = PolygonBreaker.parseWidthTag(w.get("width"));
         if (width > 0) return width;
 
-        // 2. Estimate from lanes
+        // 2. Empirical median width from highway type + lane count
+        width = PolygonBreaker.estimateWidthFromHighwayType(w);
+        if (width > 0) return width;
+
+        // 3. Flat lanes estimate (non-highway centerlines with lane tags)
         width = PolygonBreaker.estimateWidthFromLanes(w);
         if (width > 0) return width;
 
-        // 3. Best matching tag filter
+        // 4. Best matching tag filter
         double filterWidth = 0;
         for (MultipolyGonePreferences.BreakTagWidth tw : tagWidths) {
             if (tw.matches(w)) {
@@ -370,7 +374,7 @@ class PolygonUngluer {
         }
         if (filterWidth > 0) return filterWidth;
 
-        // 4. Default
+        // 5. Default
         return 3.5;
     }
 }

@@ -482,6 +482,100 @@ class PolygonBreaker {
     /** Meters per lane — US standard is 12 ft (3.66m); 3.5m is a conservative international default. */
     static final double METERS_PER_LANE = 3.5;
 
+    /**
+     * Empirically-derived median highway widths from real OSM data, keyed by
+     * highway type → lane count → width in meters.  Lane count 0 means
+     * "unspecified" (no lanes tag).  Source: osm_guesstimator (MIT license),
+     * https://github.com/PizzaTreeIsland/osm_guesstimator
+     */
+    private static final Map<String, Map<Integer, Double>> HIGHWAY_WIDTH_TABLE = buildHighwayWidthTable();
+
+    private static Map<String, Map<Integer, Double>> buildHighwayWidthTable() {
+        Map<String, Map<Integer, Double>> t = new HashMap<>();
+        // lane count 0 = "unspecified" (default for that highway type)
+        addWidths(t, "motorway",       12.0, 6.0, 7.5, 11.5, 15.0, 19.0, 21.9, 22.0, 35.0);
+        addWidths(t, "motorway_link",   4.7, 0, 10.0, 12.0, 14.8, 22.0, 28.0, 35.0, 0);
+        addWidths(t, "trunk",           7.0, 5.3, 7.7, 10.0, 13.4, 18.29, 21.0, 26.82, 29.26);
+        addWidths(t, "trunk_link",      7.0, 6.0, 7.9, 10.0, 10.0, 0, 0, 0, 0);
+        addWidths(t, "primary",         7.0, 5.0, 8.0, 10.97, 14.0, 18.0, 20.1, 20.73, 27.0);
+        addWidths(t, "primary_link",    7.0, 5.0, 7.8, 9.0, 12.0, 0, 14.0, 0, 0);
+        addWidths(t, "secondary",       6.0, 5.0, 8.0, 10.5, 14.0, 17.8, 20.73, 24.5, 25.6);
+        addWidths(t, "secondary_link",  9.0, 5.0, 8.5, 9.0, 8.0, 0, 12.0, 0, 0);
+        addWidths(t, "tertiary",        5.2, 4.0, 6.0, 10.0, 12.0, 17.0, 19.0, 23.47, 24.99);
+        addWidths(t, "tertiary_link",   5.5, 4.0, 7.0, 12.0, 12.0, 0, 0, 0, 0);
+        addWidths(t, "residential",     5.0, 4.0, 9.1, 9.5, 9.0, 15.2, 20.0, 0, 0);
+        addWidths(t, "unclassified",    4.0, 3.5, 5.0, 10.0, 12.2, 17.84, 21.95, 27.5, 0);
+        addWidths(t, "service",         3.0, 3.0, 6.0, 10.0, 10.0, 12.5, 21.9, 21.0, 25.5);
+        addWidths(t, "living_street",   3.0, 2.0, 3.0, 6.0, 5.0, 0, 5.0, 0, 0);
+        addWidths(t, "pedestrian",      4.0, 4.0, 5.45, 8.0, 10.0, 0, 0, 0, 0);
+        addWidths(t, "track",           2.5, 3.0, 4.0, 5.75, 0, 0, 0, 0, 0);
+        addWidths(t, "road",            3.0, 2.75, 6.0, 0, 0, 0, 0, 0, 0);
+        addWidths(t, "busway",          5.0, 3.0, 5.5, 9.0, 0, 0, 0, 0, 0);
+        addWidths(t, "cycleway",        2.4, 2.0, 2.5, 4.5, 4.4, 0, 0, 0, 0);
+        addWidths(t, "footway",         1.52, 1.5, 2.0, 3.0, 3.0, 0, 6.5, 0, 8.0);
+        addWidths(t, "path",            1.0, 2.0, 3.0, 0, 4.0, 0, 0, 0, 10.0);
+        addWidths(t, "bridleway",       1.95, 1.0, 6.0, 0, 0, 0, 0, 0, 0);
+        addWidths(t, "steps",           1.8, 1.25, 1.75, 0, 0, 0, 0, 0, 0);
+        return Collections.unmodifiableMap(t);
+    }
+
+    /**
+     * Helper to populate the width table.  Args: default (0 lanes), then lanes 1-8.
+     * A value of 0 means no data for that lane count.
+     */
+    private static void addWidths(Map<String, Map<Integer, Double>> table,
+                                   String type, double def,
+                                   double l1, double l2, double l3, double l4,
+                                   double l5, double l6, double l7, double l8) {
+        Map<Integer, Double> m = new HashMap<>();
+        m.put(0, def);
+        if (l1 > 0) m.put(1, l1);
+        if (l2 > 0) m.put(2, l2);
+        if (l3 > 0) m.put(3, l3);
+        if (l4 > 0) m.put(4, l4);
+        if (l5 > 0) m.put(5, l5);
+        if (l6 > 0) m.put(6, l6);
+        if (l7 > 0) m.put(7, l7);
+        if (l8 > 0) m.put(8, l8);
+        table.put(type, Collections.unmodifiableMap(m));
+    }
+
+    /**
+     * Estimates width from the highway type and optional lane count using the
+     * empirical median width table.  Returns 0 if the highway type is unknown.
+     */
+    static double estimateWidthFromHighwayType(Way w) {
+        String highwayType = w.get("highway");
+        if (highwayType == null) return 0;
+        Map<Integer, Double> byLanes = HIGHWAY_WIDTH_TABLE.get(highwayType);
+        if (byLanes == null) return 0;
+
+        // Try lane-specific lookup first
+        int lanes = parseTotalLanes(w);
+        if (lanes > 0) {
+            Double laneWidth = byLanes.get(lanes);
+            if (laneWidth != null) return laneWidth;
+        }
+        // Fall back to the type default (lane count 0 = "unspecified")
+        Double def = byLanes.get(0);
+        return def != null ? def : 0;
+    }
+
+    /** Parses total lane count from lane tags, returns 0 if not available. */
+    private static int parseTotalLanes(Way w) {
+        String lanesStr = w.get("lanes");
+        if (lanesStr != null) {
+            try {
+                int n = Integer.parseInt(lanesStr.trim());
+                if (n > 0) return n;
+            } catch (NumberFormatException e) { /* fall through */ }
+        }
+        int total = parseLaneCount(w.get("lanes:forward"))
+                  + parseLaneCount(w.get("lanes:backward"))
+                  + parseLaneCount(w.get("lanes:both_ways"));
+        return total;
+    }
+
     /** Returns true if the way matches at least one configured tag filter. */
     private static boolean matchesAnyTagFilter(Way w,
                                                 List<MultipolyGonePreferences.BreakTagWidth> tagWidths) {
@@ -503,13 +597,19 @@ class PolygonBreaker {
                 maxWidth = Math.max(maxWidth, wayWidth);
                 continue;
             }
-            // 2. Estimate from "lanes" tag
+            // 2. Empirical median width from highway type + lane count
+            wayWidth = estimateWidthFromHighwayType(w);
+            if (wayWidth > 0) {
+                maxWidth = Math.max(maxWidth, wayWidth);
+                continue;
+            }
+            // 3. Flat lanes estimate (non-highway centerlines with lane tags)
             wayWidth = estimateWidthFromLanes(w);
             if (wayWidth > 0) {
                 maxWidth = Math.max(maxWidth, wayWidth);
                 continue;
             }
-            // 3. Best matching tag filter width (use largest if multiple filters match)
+            // 4. Best matching tag filter width (use largest if multiple filters match)
             double filterWidth = 0;
             for (MultipolyGonePreferences.BreakTagWidth tw : tagWidths) {
                 if (tw.matches(w)) {
@@ -520,7 +620,7 @@ class PolygonBreaker {
                 maxWidth = Math.max(maxWidth, filterWidth);
             }
         }
-        // Default width if no width/lanes tag and no tag filter matched
+        // Default width if nothing matched
         return maxWidth > 0 ? maxWidth : 3.5;
     }
 
