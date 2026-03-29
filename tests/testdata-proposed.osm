@@ -14127,4 +14127,136 @@
     <tag k='_test_notes' v='post-consolidation split: 1 closed outer + 3 open outers -&gt; 2 disconnected rings, each with inner' />
     <tag k='_test_expected' v='SPLIT_RELATION: consolidate ring B, split into 2 sub-relations' />
   </relation>
+  <node id='-5820' action='modify' visible='true' lat='47.57000000000' lon='-122.47800000000' />
+  <node id='-5821' action='modify' visible='true' lat='47.57173205081' lon='-122.47900000000' />
+  <node id='-5822' action='modify' visible='true' lat='47.57173205081' lon='-122.48100000000' />
+  <node id='-5823' action='modify' visible='true' lat='47.57000000000' lon='-122.48200000000' />
+  <node id='-5824' action='modify' visible='true' lat='47.56826794919' lon='-122.48100000000' />
+  <node id='-5825' action='modify' visible='true' lat='47.56826794919' lon='-122.47900000000' />
+  <node id='-5826' action='modify' visible='true' lat='47.57000000000' lon='-122.47300000000' />
+  <node id='-5827' action='modify' visible='true' lat='47.57173205081' lon='-122.47400000000' />
+  <node id='-5828' action='modify' visible='true' lat='47.57173205081' lon='-122.47600000000' />
+  <node id='-5829' action='modify' visible='true' lat='47.57000000000' lon='-122.47700000000' />
+  <node id='-5830' action='modify' visible='true' lat='47.56826794919' lon='-122.47600000000' />
+  <node id='-5831' action='modify' visible='true' lat='47.56826794919' lon='-122.47400000000' />
+  <node id='-5832' action='modify' visible='true' lat='47.57000000000' lon='-122.47020000000' />
+  <node id='-5833' action='modify' visible='true' lat='47.57069282032' lon='-122.47060000000' />
+  <node id='-5834' action='modify' visible='true' lat='47.57069282032' lon='-122.47140000000' />
+  <node id='-5835' action='modify' visible='true' lat='47.57000000000' lon='-122.47180000000' />
+  <node id='-5836' action='modify' visible='true' lat='47.56930717968' lon='-122.47140000000' />
+  <node id='-5837' action='modify' visible='true' lat='47.56930717968' lon='-122.47060000000' />
+  <node id='-5838' action='modify' visible='true' lat='47.57000000000' lon='-122.46820000000' />
+  <node id='-5839' action='modify' visible='true' lat='47.57069282032' lon='-122.46860000000' />
+  <node id='-5840' action='modify' visible='true' lat='47.57069282032' lon='-122.46940000000' />
+  <node id='-5841' action='modify' visible='true' lat='47.57000000000' lon='-122.46980000000' />
+  <node id='-5842' action='modify' visible='true' lat='47.56930717968' lon='-122.46940000000' />
+  <node id='-5843' action='modify' visible='true' lat='47.56930717968' lon='-122.46860000000' />
+  <node id='-5844' action='modify' visible='true' lat='47.57000000000' lon='-122.46300000000' />
+  <node id='-5845' action='modify' visible='true' lat='47.57173205081' lon='-122.46400000000' />
+  <node id='-5846' action='modify' visible='true' lat='47.57173205081' lon='-122.46600000000' />
+  <node id='-5847' action='modify' visible='true' lat='47.57000000000' lon='-122.46700000000' />
+  <node id='-5848' action='modify' visible='true' lat='47.56826794919' lon='-122.46600000000' />
+  <node id='-5849' action='modify' visible='true' lat='47.56826794919' lon='-122.46400000000' />
+  <node id='-5850' action='modify' visible='true' lat='47.57000000000' lon='-122.45800000000' />
+  <node id='-5851' action='modify' visible='true' lat='47.57173205081' lon='-122.45900000000' />
+  <node id='-5852' action='modify' visible='true' lat='47.57173205081' lon='-122.46100000000' />
+  <node id='-5853' action='modify' visible='true' lat='47.57000000000' lon='-122.46200000000' />
+  <node id='-5854' action='modify' visible='true' lat='47.56826794919' lon='-122.46100000000' />
+  <node id='-5855' action='modify' visible='true' lat='47.56826794919' lon='-122.45900000000' />
+  <way id='-5856' action='modify' visible='true'>
+    <nd ref='-5820' />
+    <nd ref='-5821' />
+    <nd ref='-5822' />
+    <nd ref='-5823' />
+    <nd ref='-5824' />
+    <nd ref='-5825' />
+    <nd ref='-5820' />
+  </way>
+  <way id='-5857' action='modify' visible='true'>
+    <nd ref='-5826' />
+    <nd ref='-5827' />
+    <nd ref='-5828' />
+    <nd ref='-5829' />
+    <nd ref='-5830' />
+    <nd ref='-5831' />
+    <nd ref='-5826' />
+  </way>
+  <way id='-5858' action='modify' visible='true'>
+    <nd ref='-5832' />
+    <nd ref='-5833' />
+    <nd ref='-5834' />
+    <nd ref='-5835' />
+    <nd ref='-5836' />
+    <nd ref='-5837' />
+    <nd ref='-5832' />
+  </way>
+  <way id='-5859' action='modify' visible='true'>
+    <nd ref='-5838' />
+    <nd ref='-5839' />
+    <nd ref='-5840' />
+    <nd ref='-5841' />
+    <nd ref='-5842' />
+    <nd ref='-5843' />
+    <nd ref='-5838' />
+  </way>
+  <way id='-5860' action='modify' visible='true'>
+    <nd ref='-5844' />
+    <nd ref='-5845' />
+    <nd ref='-5846' />
+    <nd ref='-5847' />
+    <nd ref='-5848' />
+    <nd ref='-5849' />
+    <nd ref='-5844' />
+  </way>
+  <way id='-5861' action='modify' visible='true'>
+    <nd ref='-5850' />
+    <nd ref='-5851' />
+    <nd ref='-5852' />
+    <nd ref='-5853' />
+    <nd ref='-5854' />
+    <nd ref='-5855' />
+    <nd ref='-5850' />
+  </way>
+  <relation id='-5862' action='modify' visible='true'>
+    <member type='way' ref='-5856' role='outer' />
+    <tag k='type' v='multipolygon' />
+    <tag k='highway' v='pedestrian' />
+    <tag k='_test_id' v='144' />
+    <tag k='_test_notes' v='highway=pedestrian plaza, linear-by-default tag needs area=yes on dissolve' />
+    <tag k='_test_expected' v='DISSOLVE: tag outer with highway=pedestrian + area=yes' />
+  </relation>
+  <relation id='-5863' action='modify' visible='true'>
+    <member type='way' ref='-5857' role='outer' />
+    <tag k='type' v='multipolygon' />
+    <tag k='natural' v='water' />
+    <tag k='_test_id' v='145' />
+    <tag k='_test_notes' v='natural=water, already area-by-default, should NOT get area=yes on dissolve' />
+    <tag k='_test_expected' v='DISSOLVE: tag outer with natural=water only, no area=yes' />
+  </relation>
+  <relation id='-5864' action='modify' visible='true'>
+    <member type='way' ref='-5858' role='outer' />
+    <member type='way' ref='-5859' role='outer' />
+    <tag k='type' v='multipolygon' />
+    <tag k='highway' v='pedestrian' />
+    <tag k='_test_id' v='146' />
+    <tag k='_test_notes' v='2 outers with highway=pedestrian, EXTRACT should add area=yes' />
+    <tag k='_test_expected' v='EXTRACT + DISSOLVE: both outers get highway=pedestrian + area=yes' />
+  </relation>
+  <relation id='-5865' action='modify' visible='true'>
+    <member type='way' ref='-5860' role='outer' />
+    <tag k='type' v='multipolygon' />
+    <tag k='barrier' v='hedge' />
+    <tag k='_test_id' v='147' />
+    <tag k='_test_notes' v='barrier=hedge, linear-by-default tag needs area=yes on dissolve' />
+    <tag k='_test_expected' v='DISSOLVE: tag outer with barrier=hedge + area=yes' />
+  </relation>
+  <relation id='-5866' action='modify' visible='true'>
+    <member type='way' ref='-5861' role='outer' />
+    <tag k='type' v='multipolygon' />
+    <tag k='highway' v='pedestrian' />
+    <tag k='area' v='yes' />
+    <tag k='_test_id' v='148' />
+    <tag k='_test_notes' v='highway=pedestrian with area=yes already on relation, no duplication' />
+    <tag k='_test_expected' v='DISSOLVE: tag outer with highway=pedestrian + area=yes (already present)' />
+  </relation>
 </osm>

@@ -1882,4 +1882,114 @@ class MultipolygonFixerTest {
         assertFalse(planAfter.getRelation().isDeleted(),
             "Relation should NOT be deleted when it has a parent relation");
     }
+
+    // --- Test case 144 (from testdata-proposed.osm): area=yes added for linear-by-default tag ---
+
+    @Test
+    void testCase144_dissolve_addsAreaYes_forHighwayPedestrian() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "144");
+        assertNotNull(plan);
+
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        List<Way> taggedWays = ds.getWays().stream()
+            .filter(w -> !w.isDeleted() && "pedestrian".equals(w.get("highway")))
+            .collect(Collectors.toList());
+        assertFalse(taggedWays.isEmpty(),
+            "At least one way should have highway=pedestrian after dissolve");
+        for (Way w : taggedWays) {
+            assertEquals("yes", w.get("area"),
+                "Way with highway=pedestrian should have area=yes after dissolve");
+        }
+    }
+
+    // --- Test case 145 (from testdata-proposed.osm): no area=yes for already-area tag ---
+
+    @Test
+    void testCase145_dissolve_noAreaYes_forNaturalWater() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "145");
+        assertNotNull(plan);
+
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        List<Way> taggedWays = ds.getWays().stream()
+            .filter(w -> !w.isDeleted() && "water".equals(w.get("natural")))
+            .collect(Collectors.toList());
+        assertFalse(taggedWays.isEmpty(),
+            "At least one way should have natural=water after dissolve");
+        for (Way w : taggedWays) {
+            assertNull(w.get("area"),
+                "Way with natural=water should NOT have area=yes (already area-by-default)");
+        }
+    }
+
+    // --- Test case 146 (from testdata-proposed.osm): area=yes on EXTRACT for linear-by-default ---
+
+    @Test
+    void testCase146_extract_addsAreaYes_forHighwayPedestrian() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "146");
+        assertNotNull(plan);
+
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        List<Way> taggedWays = ds.getWays().stream()
+            .filter(w -> !w.isDeleted() && "pedestrian".equals(w.get("highway")))
+            .collect(Collectors.toList());
+        assertEquals(2, taggedWays.size(),
+            "Both outers should have highway=pedestrian after extract+dissolve");
+        for (Way w : taggedWays) {
+            assertEquals("yes", w.get("area"),
+                "Extracted outer with highway=pedestrian should have area=yes");
+        }
+    }
+
+    // --- Test case 147 (from testdata-proposed.osm): area=yes for barrier=hedge ---
+
+    @Test
+    void testCase147_dissolve_addsAreaYes_forBarrierHedge() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "147");
+        assertNotNull(plan);
+
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        List<Way> taggedWays = ds.getWays().stream()
+            .filter(w -> !w.isDeleted() && "hedge".equals(w.get("barrier")))
+            .collect(Collectors.toList());
+        assertFalse(taggedWays.isEmpty(),
+            "At least one way should have barrier=hedge after dissolve");
+        for (Way w : taggedWays) {
+            assertEquals("yes", w.get("area"),
+                "Way with barrier=hedge should have area=yes after dissolve");
+        }
+    }
+
+    // --- Test case 148 (from testdata-proposed.osm): area=yes already present, no duplication ---
+
+    @Test
+    void testCase148_dissolve_preservesExistingAreaYes() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = findPlanByTestId(plans, "148");
+        assertNotNull(plan);
+
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        List<Way> taggedWays = ds.getWays().stream()
+            .filter(w -> !w.isDeleted() && "pedestrian".equals(w.get("highway")))
+            .collect(Collectors.toList());
+        assertFalse(taggedWays.isEmpty(),
+            "At least one way should have highway=pedestrian after dissolve");
+        for (Way w : taggedWays) {
+            assertEquals("yes", w.get("area"),
+                "Way should have area=yes (was already on relation)");
+        }
+    }
 }

@@ -819,6 +819,17 @@ public class MultipolygonFixer {
         Map<String, String> tags = new java.util.LinkedHashMap<>(relation.getKeys());
         tags.remove("type");
         tags.keySet().removeIf(k -> k.startsWith("_"));
+        // When the multipolygon confers area status to tags that are linear by
+        // default (e.g. highway=pedestrian), add area=yes so the closed way
+        // retains area semantics after dissolution.  Uses JOSM's own
+        // hasAreaTags() logic to decide.
+        if (!tags.containsKey("area")) {
+            Way probe = new Way();
+            probe.setKeys(tags);
+            if (!probe.hasAreaTags()) {
+                tags.put("area", "yes");
+            }
+        }
         return tags;
     }
 
