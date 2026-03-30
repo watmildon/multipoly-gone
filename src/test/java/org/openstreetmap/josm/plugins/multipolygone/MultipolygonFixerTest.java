@@ -1992,4 +1992,128 @@ class MultipolygonFixerTest {
                 "Way should have area=yes (was already on relation)");
         }
     }
+
+    // --- Test cases 149/150: DEDUPLICATE_WAYS (both untagged) ---
+
+    @Test
+    void testCase149_150_dedup_bothUntagged_detectsDuplicates() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+
+        // Find dedup plans for relations 149 and 150
+        List<FixPlan> dedupPlans = plans.stream()
+            .filter(p -> {
+                String tid = p.getRelation().get("_test_id");
+                return ("149".equals(tid) || "150".equals(tid));
+            })
+            .filter(p -> p.getOperations().stream()
+                .anyMatch(op -> op.getType() == FixOpType.DEDUPLICATE_WAYS))
+            .collect(Collectors.toList());
+
+        // At least one relation should get a dedup plan (the one with the higher-ID way)
+        assertFalse(dedupPlans.isEmpty(),
+            "Should detect duplicate ways across relations 149/150");
+    }
+
+    @Test
+    void testCase149_150_dedup_bothUntagged_fixReplacesWay() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> allPlans = MultipolygonAnalyzer.findFixableRelations(ds);
+
+        List<FixPlan> dedupPlans = allPlans.stream()
+            .filter(p -> {
+                String tid = p.getRelation().get("_test_id");
+                return ("149".equals(tid) || "150".equals(tid));
+            })
+            .filter(p -> p.getOperations().stream()
+                .anyMatch(op -> op.getType() == FixOpType.DEDUPLICATE_WAYS))
+            .collect(Collectors.toList());
+
+        assertFalse(dedupPlans.isEmpty());
+        MultipolygonFixer.fixRelations(dedupPlans);
+
+        // After fix, the two relations should share the same way for the shared ring
+        Relation rel149 = ds.getRelations().stream()
+            .filter(r -> "149".equals(r.get("_test_id"))).findFirst().orElse(null);
+        Relation rel150 = ds.getRelations().stream()
+            .filter(r -> "150".equals(r.get("_test_id"))).findFirst().orElse(null);
+        assertNotNull(rel149);
+        assertNotNull(rel150);
+
+        Set<Way> ways149 = new HashSet<>();
+        for (RelationMember m : rel149.getMembers()) {
+            if (m.isWay()) ways149.add(m.getWay());
+        }
+        Set<Way> ways150 = new HashSet<>();
+        for (RelationMember m : rel150.getMembers()) {
+            if (m.isWay()) ways150.add(m.getWay());
+        }
+
+        // The shared ring should now be the same way in both relations
+        Set<Way> shared = new HashSet<>(ways149);
+        shared.retainAll(ways150);
+        assertFalse(shared.isEmpty(),
+            "After dedup, both relations should share the same way for the shared ring");
+    }
+
+    // --- Test cases 151/152: DEDUPLICATE_WAYS (one tagged) ---
+
+    @Test
+    void testCase151_152_dedup_oneTagged_survivorIsTagged() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> allPlans = MultipolygonAnalyzer.findFixableRelations(ds);
+
+        // Only rel 151 should have a dedup plan (it has the untagged duplicate)
+        FixPlan dedupPlan = allPlans.stream()
+            .filter(p -> "151".equals(p.getRelation().get("_test_id")))
+            .filter(p -> p.getOperations().stream()
+                .anyMatch(op -> op.getType() == FixOpType.DEDUPLICATE_WAYS))
+            .findFirst().orElse(null);
+
+        assertNotNull(dedupPlan,
+            "Rel 151 (untagged inner) should get a dedup plan");
+
+        // Rel 152 should NOT get a dedup plan (it already has the tagged survivor)
+        FixPlan noDedupPlan = allPlans.stream()
+            .filter(p -> "152".equals(p.getRelation().get("_test_id")))
+            .filter(p -> p.getOperations().stream()
+                .anyMatch(op -> op.getType() == FixOpType.DEDUPLICATE_WAYS))
+            .findFirst().orElse(null);
+
+        assertNull(noDedupPlan,
+            "Rel 152 (tagged outer = survivor) should NOT get a dedup plan");
+
+        // Execute the dedup
+        MultipolygonFixer.fixRelations(List.of(dedupPlan));
+
+        // After fix, rel 151's inner should be the tagged way (natural=water)
+        Relation rel151 = dedupPlan.getRelation();
+        Way innerWay = rel151.getMembers().stream()
+            .filter(m -> "inner".equals(m.getRole()) && m.isWay())
+            .map(RelationMember::getWay)
+            .findFirst().orElse(null);
+        assertNotNull(innerWay);
+        assertEquals("water", innerWay.get("natural"),
+            "After dedup, the inner should be the tagged survivor (natural=water)");
+    }
+
+    // --- Test cases 153/154: No dedup (both tagged) ---
+
+    @Test
+    void testCase153_154_dedup_bothTagged_noDedup() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata-proposed.osm");
+        List<FixPlan> allPlans = MultipolygonAnalyzer.findFixableRelations(ds);
+
+        List<FixPlan> dedupPlans = allPlans.stream()
+            .filter(p -> {
+                String tid = p.getRelation().get("_test_id");
+                return ("153".equals(tid) || "154".equals(tid));
+            })
+            .filter(p -> p.getOperations().stream()
+                .anyMatch(op -> op.getType() == FixOpType.DEDUPLICATE_WAYS))
+            .collect(Collectors.toList());
+
+        assertTrue(dedupPlans.isEmpty(),
+            "No dedup plans when both ways have own tags");
+    }
 }

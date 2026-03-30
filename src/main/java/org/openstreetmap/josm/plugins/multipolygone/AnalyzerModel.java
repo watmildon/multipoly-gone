@@ -38,7 +38,9 @@ enum FixOpType {
     /** Merge 1 outer + 1 inner sharing nodes into closed way(s), delete relation. */
     TOUCHING_INNER_MERGE,
     /** Split relation into disconnected components, each analyzed independently. */
-    SPLIT_RELATION
+    SPLIT_RELATION,
+    /** Replace a duplicate member way with an identical-geometry way from another relation. */
+    DEDUPLICATE_WAYS
 }
 
 /** Reason why a multipolygon/boundary relation was not fixable. */
@@ -289,6 +291,23 @@ class ConsolidatedInnerGroup {
     public WayChainBuilder.Ring getMergedRing() { return mergedRing; }
 }
 
+/**
+ * Describes a single way replacement within a DEDUPLICATE_WAYS operation:
+ * replace {@code duplicate} with {@code survivor} in the relation's membership.
+ */
+class DuplicateWayReplacement {
+    private final Way duplicate;
+    private final Way survivor;
+
+    DuplicateWayReplacement(Way duplicate, Way survivor) {
+        this.duplicate = duplicate;
+        this.survivor = survivor;
+    }
+
+    public Way getDuplicate() { return duplicate; }
+    public Way getSurvivor() { return survivor; }
+}
+
 class FixOp {
     private final FixOpType type;
     private final List<WayChainBuilder.Ring> rings;
@@ -297,6 +316,7 @@ class FixOp {
     private final List<DecomposedRing> decomposedRings;
     private final List<ConsolidatedInnerGroup> consolidatedInnerGroups;
     private final List<Node> newNodes;
+    private final List<DuplicateWayReplacement> duplicateReplacements;
 
     FixOp(FixOpType type, List<WayChainBuilder.Ring> rings, List<List<Node>> mergedWays) {
         this(type, rings, mergedWays, null);
@@ -310,6 +330,7 @@ class FixOp {
         this.decomposedRings = null;
         this.consolidatedInnerGroups = null;
         this.newNodes = newNodes;
+        this.duplicateReplacements = null;
     }
 
     FixOp(FixOpType type, List<ComponentResult> components) {
@@ -320,6 +341,7 @@ class FixOp {
         this.decomposedRings = null;
         this.consolidatedInnerGroups = null;
         this.newNodes = null;
+        this.duplicateReplacements = null;
     }
 
     FixOp(FixOpType type, List<DecomposedRing> decomposedRings, @SuppressWarnings("unused") Void marker) {
@@ -330,6 +352,7 @@ class FixOp {
         this.decomposedRings = decomposedRings;
         this.consolidatedInnerGroups = null;
         this.newNodes = null;
+        this.duplicateReplacements = null;
     }
 
     FixOp(FixOpType type, List<ConsolidatedInnerGroup> groups, @SuppressWarnings("unused") int marker) {
@@ -340,6 +363,18 @@ class FixOp {
         this.decomposedRings = null;
         this.consolidatedInnerGroups = groups;
         this.newNodes = null;
+        this.duplicateReplacements = null;
+    }
+
+    FixOp(FixOpType type, List<DuplicateWayReplacement> replacements, @SuppressWarnings("unused") boolean marker) {
+        this.type = type;
+        this.rings = null;
+        this.mergedWays = null;
+        this.components = null;
+        this.decomposedRings = null;
+        this.consolidatedInnerGroups = null;
+        this.newNodes = null;
+        this.duplicateReplacements = replacements;
     }
 
     public FixOpType getType() {
@@ -368,6 +403,10 @@ class FixOp {
 
     public List<Node> getNewNodes() {
         return newNodes;
+    }
+
+    public List<DuplicateWayReplacement> getDuplicateReplacements() {
+        return duplicateReplacements;
     }
 }
 
@@ -616,6 +655,16 @@ class FixPlan {
                     }
                     comps.sort(String::compareTo);
                     sb.append(" components=").append(comps);
+                }
+            }
+            case DEDUPLICATE_WAYS -> {
+                if (op.getDuplicateReplacements() != null) {
+                    List<String> repls = new ArrayList<>();
+                    for (DuplicateWayReplacement r : op.getDuplicateReplacements()) {
+                        repls.add(r.getDuplicate().getUniqueId() + "->" + r.getSurvivor().getUniqueId());
+                    }
+                    repls.sort(String::compareTo);
+                    sb.append(" replacements=").append(repls);
                 }
             }
         }

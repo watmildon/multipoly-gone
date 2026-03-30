@@ -247,15 +247,44 @@ public class MultipolygonFixer {
         // Re-analyze all relations upfront to get fresh plans with current geometry.
         // This prevents crashes when the user modifies the dataset (e.g., deletes or
         // adds nodes) between clicking Refresh and clicking Gone (issue #14).
+        // Dedup ops are re-verified rather than re-analyzed (they're cross-relation).
         List<FixPlan> freshPlans = new ArrayList<>();
         for (FixPlan stalePlan : sortedPlans) {
             Relation relation = stalePlan.getRelation();
             if (relation.isDeleted()) {
                 continue;
             }
-            FixPlan fresh = MultipolygonAnalyzer.reanalyze(relation);
-            if (fresh != null) {
-                freshPlans.add(fresh);
+            if (isDedupPlan(stalePlan)) {
+                // Pure dedup plan — just re-verify
+                if (isDedupStillValid(stalePlan)) {
+                    freshPlans.add(stalePlan);
+                }
+            } else {
+                // Extract any dedup ops from a merged plan, re-verify them separately
+                List<FixOp> verifiedDedupOps = new ArrayList<>();
+                for (FixOp op : stalePlan.getOperations()) {
+                    if (op.getType() == FixOpType.DEDUPLICATE_WAYS) {
+                        // Build a temporary plan to re-verify
+                        FixPlan tempDedup = new FixPlan(relation, List.of(op), "",
+                            stalePlan.isBoundary());
+                        if (isDedupStillValid(tempDedup)) {
+                            verifiedDedupOps.add(op);
+                        }
+                    }
+                }
+                FixPlan fresh = MultipolygonAnalyzer.reanalyze(relation);
+                if (fresh != null && !verifiedDedupOps.isEmpty()) {
+                    // Re-merge verified dedup ops with fresh per-relation plan
+                    List<FixOp> merged = new ArrayList<>(verifiedDedupOps);
+                    merged.addAll(fresh.getOperations());
+                    freshPlans.add(new FixPlan(relation, merged,
+                        fresh.getDescription(), fresh.isBoundary()));
+                } else if (fresh != null) {
+                    freshPlans.add(fresh);
+                } else if (!verifiedDedupOps.isEmpty()) {
+                    freshPlans.add(new FixPlan(relation, verifiedDedupOps,
+                        "Deduplicate ways", stalePlan.isBoundary()));
+                }
             }
         }
 
@@ -495,6 +524,13 @@ public class MultipolygonFixer {
                         insignificantTags, commands, waysToCleanup, waysRetainedByPlans,
                         nodesToCleanup);
                     splitHandled = true;
+                }
+
+                case DEDUPLICATE_WAYS -> {
+                    for (DuplicateWayReplacement repl : op.getDuplicateReplacements()) {
+                        memberReplacements.put(repl.getDuplicate(), repl.getSurvivor());
+                        waysToCleanup.add(repl.getDuplicate());
+                    }
                 }
             }
         }
@@ -813,6 +849,34 @@ public class MultipolygonFixer {
             }
             return false;
         }
+    }
+
+    /** Returns true if the plan consists solely of DEDUPLICATE_WAYS operations. */
+    private static boolean isDedupPlan(FixPlan plan) {
+        return plan.getOperations().stream()
+            .allMatch(op -> op.getType() == FixOpType.DEDUPLICATE_WAYS);
+    }
+
+    /**
+     * Re-verifies that a dedup plan is still valid: the relation still has the
+     * duplicate way as a member, the duplicate and survivor still exist and still
+     * have matching geometry, and the tag preconditions still hold.
+     */
+    private static boolean isDedupStillValid(FixPlan plan) {
+        Set<Way> memberWays = plan.getMemberWays();
+        for (FixOp op : plan.getOperations()) {
+            if (op.getDuplicateReplacements() == null) return false;
+            for (DuplicateWayReplacement repl : op.getDuplicateReplacements()) {
+                Way dup = repl.getDuplicate();
+                Way surv = repl.getSurvivor();
+                if (dup.isDeleted() || surv.isDeleted()) return false;
+                if (!memberWays.contains(dup)) return false;
+                if (!dup.isClosed() || !surv.isClosed()) return false;
+                if (dup.getNodesCount() != surv.getNodesCount()) return false;
+                if (!ringsMatch(dup.getNodes(), surv.getNodes())) return false;
+            }
+        }
+        return true;
     }
 
     private static Map<String, String> getTransferrableTags(Relation relation) {

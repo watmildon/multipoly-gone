@@ -148,6 +148,13 @@ public class MultipolygonAnalyzer {
             return new AnalysisResult(fixPlans, skipResults);
         }
 
+        // Pre-pass: detect cross-relation duplicate ways
+        // Index by relation so we can merge into per-relation plans below
+        Map<Relation, FixPlan> dedupByRelation = new HashMap<>();
+        for (FixPlan dp : findDuplicateWays(dataSet)) {
+            dedupByRelation.put(dp.getRelation(), dp);
+        }
+
         List<Relation> relations = new ArrayList<>(dataSet.getRelations());
         if (rng != null) {
             Collections.shuffle(relations, rng);
@@ -163,12 +170,26 @@ public class MultipolygonAnalyzer {
             }
 
             AnalyzeOutcome outcome = analyze(relation, rng);
+            FixPlan dedupPlan = dedupByRelation.get(relation);
+
             if (outcome.plan != null) {
+                if (dedupPlan != null) {
+                    // Merge: prepend dedup ops to the per-relation plan
+                    List<FixOp> merged = new ArrayList<>(dedupPlan.getOperations());
+                    merged.addAll(outcome.plan.getOperations());
+                    String desc = dedupPlan.getDescription() + " + " + outcome.plan.getDescription();
+                    fixPlans.add(new FixPlan(relation, merged, desc, outcome.plan.isBoundary()));
+                } else {
+                    fixPlans.add(outcome.plan);
+                }
                 if (debug) {
                     Logging.info("Multipoly-Gone DEBUG: plan for relation {0}: {1}",
-                        relation.getUniqueId(), outcome.plan.fingerprint());
+                        relation.getUniqueId(),
+                        fixPlans.get(fixPlans.size() - 1).fingerprint());
                 }
-                fixPlans.add(outcome.plan);
+            } else if (dedupPlan != null) {
+                // Relation has no per-relation fix, but has dedup → standalone dedup plan
+                fixPlans.add(dedupPlan);
             } else if (outcome.skip != null) {
                 skipResults.add(outcome.skip);
             }
@@ -178,6 +199,97 @@ public class MultipolygonAnalyzer {
                 fixPlans.size(), skipResults.size());
         }
         return new AnalysisResult(fixPlans, skipResults);
+    }
+
+    /**
+     * Finds closed ways with identical geometry that are members of different
+     * multipolygon/boundary relations. For each group of duplicates, picks a
+     * survivor and emits a DEDUPLICATE_WAYS plan for each affected relation.
+     *
+     * Survivor selection: if exactly one way has own tags, it survives.
+     * If none have own tags, the way with the lowest ID survives.
+     * If multiple have own tags, the group is skipped (can't consolidate).
+     */
+    static List<FixPlan> findDuplicateWays(DataSet dataSet) {
+        // Collect all closed ways that are members of MP/boundary relations
+        // Map: way -> set of relations it belongs to
+        Map<Way, Set<Relation>> wayToRelations = new HashMap<>();
+        for (Relation relation : dataSet.getRelations()) {
+            if (relation.isDeleted() || relation.isIncomplete()) continue;
+            String relType = relation.get("type");
+            if (!"multipolygon".equals(relType) && !"boundary".equals(relType)) continue;
+
+            for (RelationMember member : relation.getMembers()) {
+                if (!member.isWay()) continue;
+                Way way = member.getWay();
+                if (way.isDeleted() || way.isIncomplete() || !way.isClosed()) continue;
+                wayToRelations.computeIfAbsent(way, k -> new HashSet<>()).add(relation);
+            }
+        }
+
+        // Group ways by canonical geometry key.
+        // Key: sorted set of node IDs (order-independent since cyclic rings can start anywhere
+        // and go in either direction — two rings with the same node set are identical).
+        Map<Set<Long>, List<Way>> geometryGroups = new HashMap<>();
+        for (Way way : wayToRelations.keySet()) {
+            Set<Long> nodeIdSet = new HashSet<>();
+            // Exclude closing duplicate node (first == last for closed ways)
+            List<Node> nodes = way.getNodes();
+            for (int i = 0; i < nodes.size() - 1; i++) {
+                nodeIdSet.add(nodes.get(i).getUniqueId());
+            }
+            geometryGroups.computeIfAbsent(nodeIdSet, k -> new ArrayList<>()).add(way);
+        }
+
+        // For each group of 2+ ways, verify actual cyclic match and pick survivor
+        List<FixPlan> plans = new ArrayList<>();
+        for (List<Way> group : geometryGroups.values()) {
+            if (group.size() < 2) continue;
+
+            // Verify geometry match pairwise against the first way (node-set match
+            // is necessary but not sufficient — node order matters for ring identity)
+            List<Way> verified = new ArrayList<>();
+            verified.add(group.get(0));
+            List<Node> refNodes = group.get(0).getNodes();
+            for (int i = 1; i < group.size(); i++) {
+                if (MultipolygonFixer.ringsMatch(refNodes, group.get(i).getNodes())) {
+                    verified.add(group.get(i));
+                }
+            }
+            if (verified.size() < 2) continue;
+
+            // Pick survivor: prefer tagged way, else lowest ID
+            Way tagged = null;
+            boolean multipleTagged = false;
+            for (Way w : verified) {
+                if (wayHasOwnTags(w)) {
+                    if (tagged != null) {
+                        multipleTagged = true;
+                        break;
+                    }
+                    tagged = w;
+                }
+            }
+            if (multipleTagged) continue; // can't consolidate
+
+            Way survivor = tagged != null ? tagged : verified.stream()
+                .min(java.util.Comparator.comparingLong(Way::getUniqueId)).orElseThrow();
+
+            // Emit a plan for each relation that has a duplicate (non-survivor) way
+            for (Way duplicate : verified) {
+                if (duplicate == survivor) continue;
+                for (Relation relation : wayToRelations.get(duplicate)) {
+                    List<DuplicateWayReplacement> replacements = new ArrayList<>();
+                    replacements.add(new DuplicateWayReplacement(duplicate, survivor));
+                    FixOp op = new FixOp(FixOpType.DEDUPLICATE_WAYS, replacements, true);
+                    String desc = "Deduplicate: replace way " + duplicate.getUniqueId()
+                        + " with " + survivor.getUniqueId();
+                    plans.add(new FixPlan(relation, List.of(op), desc,
+                        "boundary".equals(relation.get("type"))));
+                }
+            }
+        }
+        return plans;
     }
 
     /** Internal union type: either a FixPlan (fixable) or a SkipResult (not fixable). */
