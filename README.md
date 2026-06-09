@@ -21,7 +21,7 @@ After some more battle hardening, this may be made available in a more standard 
 ## Fixing geometrically unnecessay or unusually constructed multipolygons
 
 1. Open a data layer containing multipolygon or boundary relations
-2. Open the Multipoly-Gone panel (Alt+Shift+M, or Windows menu > Multipoly-Gone)
+2. Open the Multipoly-Gone panel (Ctrl+Alt+M, or Windows menu > Multipoly-Gone)
 3. Click **Refresh** to scan the current layer
 4. The **Fixable** tab shows relations that can be simplified, with a description of what will change
 5. Select a relation and click **Gone** to fix it, or **All Gone** to fix everything
@@ -44,7 +44,7 @@ Relations with identity tags (`name`, `ref`, `wikidata`, etc.) are protected fro
 Often landuses and other features are mapped across huge swathes of the map. It is advisable to break these into more managable components and highways and other features are typical and useful breakpoints. The "Break Polygon" tab will evaluate a selected area (closed way or mulptipolygon) and offer to break things and offset them along intervening features.
 
 1. Select the way or multipolygon you wish to break apart
-2. Open the Multipoly-Gone panel (Alt+Shift+M, or Windows menu > Multipoly-Gone)
+2. Open the Multipoly-Gone panel (Ctrl+Alt+M, or Windows menu > Multipoly-Gone)
 3. Select the Break Polygon tab
 4. Review the suggested breaks, hit Break
 5. Apply the JOSM simplify command if necessary

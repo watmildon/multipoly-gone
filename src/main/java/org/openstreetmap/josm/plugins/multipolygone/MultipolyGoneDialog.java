@@ -108,7 +108,7 @@ public class MultipolyGoneDialog extends ToggleDialog
             Shortcut.registerShortcut(
                 "subwindow:multipolygone",
                 tr("Windows: {0}", tr("Multipoly-Gone")),
-                KeyEvent.VK_M, Shortcut.ALT_SHIFT
+                KeyEvent.VK_M, Shortcut.ALT_CTRL
             ),
             150
         );
