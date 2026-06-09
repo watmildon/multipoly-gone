@@ -8,15 +8,13 @@ The plugin should never change the semantics of an OSM object, only the represen
 
 ## Installation
 
-Download `multipoly-gone.jar` from [Releases](https://github.com/watmildon/multipoly-gone/releases) and drop it into your JOSM plugins directory:
+Install through the standard JOSM plugin preferences:
 
-* **Windows:** `%APPDATA%\JOSM\plugins\`
-* **macOS:** `~/Library/JOSM/plugins/`
-* **Linux:** `~/.local/share/JOSM/plugins/`
+1. In JOSM, open **Preferences** (F12) > **Plugins** tab
+2. Click **Download list** to refresh the available plugins
+3. Search for `multipoly-gone`, tick the checkbox, and click **OK**
+4. Restart JOSM when prompted
 
-Restart JOSM and add it through the plugins preference page.
-
-After some more battle hardening, this may be made available in a more standard way. I don't want to hand out experimental hammers just yet.
 
 ## Fixing geometrically unnecessay or unusually constructed multipolygons
 
