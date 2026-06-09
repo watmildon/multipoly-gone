@@ -13,6 +13,8 @@ bin/
 *.class
 *.jar
 *.war
+# Gradle wrapper must be tracked so CI and fresh clones can bootstrap Gradle
+!gradle/wrapper/gradle-wrapper.jar
 
 # OS
 .DS_Store
