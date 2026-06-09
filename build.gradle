@@ -3,6 +3,14 @@ plugins {
     id 'org.openstreetmap.josm' version '0.8.2'
 }
 
+// Plugin-Version is taken from project.version by gradle-josm-plugin. On
+// release builds, set RELEASE_VERSION (the workflow does this from the git
+// tag); otherwise fall back to a SNAPSHOT marker for local dev builds.
+def releaseVersion = System.getenv('RELEASE_VERSION')
+version = releaseVersion != null && !releaseVersion.isEmpty()
+        ? releaseVersion
+        : 'dev-SNAPSHOT'
+
 josm {
     pluginName = 'multipoly-gone'
     josmCompileVersion = 19439
@@ -10,6 +18,10 @@ josm {
         description = 'Dissolve unnecessary multipolygon relations into simpler closed ways'
         mainClass = 'org.openstreetmap.josm.plugins.multipolygone.MultipolyGonePlugin'
         minJosmVersion = 19439
+        iconPath = 'images/preferences/multipoly-gone.svg'
+        author = 'watmildon'
+        website('https://github.com/watmildon/multipoly-gone')
+        canLoadAtRuntime = true
     }
 }
 
