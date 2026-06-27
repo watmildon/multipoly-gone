@@ -647,9 +647,10 @@ public class MultipolygonAnalyzer {
             List<Way> compOuters = outerComponents.get(c);
             List<Way> compInners = outerCompInners.get(c);
             ComponentResult cr = analyzeComponent(compOuters, compInners, false, false, false, null);
-            if (cr == null && !compInners.isEmpty()) {
+            if (cr == null) {
                 // Component can't be simplified internally, but in a multi-component split
-                // it still needs to become its own sub-relation. Create a no-op result.
+                // it still needs to become its own sub-relation so the disconnected groups
+                // are actually separated. Create a no-op result.
                 cr = new ComponentResult(compOuters, compInners, new ArrayList<>(), false,
                     null, null, "retained as sub-relation");
             }
@@ -780,7 +781,7 @@ public class MultipolygonAnalyzer {
             // Analyze each sub-component independently through the full pipeline
             ComponentResult cr = analyzeComponent(compOuterWays, compInnerWays,
                 false, false, false, null);
-            if (cr == null && !compInnerWays.isEmpty()) {
+            if (cr == null) {
                 // Not simplifiable but still needs its own sub-relation
                 cr = new ComponentResult(compOuterWays, compInnerWays, new ArrayList<>(), false,
                     null, null, "retained as sub-relation");

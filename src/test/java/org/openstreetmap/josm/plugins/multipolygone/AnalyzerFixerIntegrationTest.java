@@ -928,4 +928,40 @@ class AnalyzerFixerIntegrationTest {
                 "Way " + wayId + " should retain landuse=farmland");
         }
     }
+
+    // Regression: relation 20623692 splits into 2 disconnected outer components,
+    // both with rings that exceed MAX_WAY_NODES. The split was claimed in the plan
+    // description but never produced a sub-relation, because the no-inners component
+    // returned null from analyzeComponent and the fallback at analyzeMultiComponent
+    // only retained components that had inners. Fix: always retain disconnected
+    // components as sub-relations so the split actually happens.
+    @Test
+    void megaGrassland_splitClaim_producesNewSubRelation() {
+        DataSet ds = JosmTestSetup.loadDataSet("regression/real-data-mega-grassland-weird-noop.osm");
+        long relationsBefore = ds.getRelations().stream().filter(r -> !r.isDeleted()).count();
+
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+        FixPlan plan = plans.stream()
+            .filter(p -> p.getRelation().getUniqueId() == 20623692L)
+            .findFirst().orElse(null);
+        assertNotNull(plan, "Relation 20623692 should be fixable");
+        assertTrue(plan.getOperations().stream()
+                .anyMatch(op -> op.getType() == FixOpType.SPLIT_RELATION),
+            "Plan should include SPLIT_RELATION");
+
+        // SPLIT_RELATION op should have both sub-components present (no nulls)
+        FixOp splitOp = plan.getOperations().stream()
+            .filter(op -> op.getType() == FixOpType.SPLIT_RELATION)
+            .findFirst().orElseThrow();
+        assertEquals(2, splitOp.getComponents().size(),
+            "Should produce 2 sub-components");
+        assertTrue(splitOp.getComponents().stream().allMatch(c -> c != null),
+            "Neither sub-component should be null (would cause silent no-op fix)");
+
+        MultipolygonFixer.fixRelations(plans);
+
+        long relationsAfter = ds.getRelations().stream().filter(r -> !r.isDeleted()).count();
+        assertEquals(relationsBefore + 1, relationsAfter,
+            "Split should produce exactly one new sub-relation");
+    }
 }
