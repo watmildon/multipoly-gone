@@ -1,24 +1,22 @@
 #!/usr/bin/env python3
 """
-Strip unnecessary metadata from real-world .osm test data files.
+Strip unnecessary metadata from .osm test data files.
 
-Removes timestamp, uid, user, changeset, and action attributes from
-node/way/relation elements. Keeps id, version, visible, lat, lon, ref,
-role, and all tags — everything the plugin and JOSM's OsmReader need.
+Strips timestamp, uid, user, changeset, action, and visible attributes from
+node/way/relation elements. Keeps id, version (required for positive-ID
+primitives), lat, lon, ref, role, and all tags — everything the plugin
+and JOSM's OsmReader need. See CLAUDE.md "Required Shape for .osm Test Files".
 
 Usage:
-    python tests/strip-osm-metadata.py                    # strip all real-world test files
-    python tests/strip-osm-metadata.py tests/newfile.osm  # strip a specific file
-
-Skips testdata.osm (hand-crafted with intentional negative IDs and action attrs).
+    python tests/strip-osm-metadata.py                    # strip every testdata*.osm file
+    python tests/strip-osm-metadata.py tests/newfile.osm  # strip specific files
 """
 
 import glob
 import re
 import sys
 
-ATTRS_TO_STRIP = ['timestamp', 'uid', 'user', 'changeset', 'action']
-SKIP_FILES = ['testdata.osm']
+ATTRS_TO_STRIP = ['timestamp', 'uid', 'user', 'changeset', 'action', 'visible']
 
 
 def strip_file(filepath):
@@ -29,8 +27,15 @@ def strip_file(filepath):
     original_size = len(content)
 
     for attr in ATTRS_TO_STRIP:
+        # Single-quoted values: attr='...'
         content = re.sub(
             r"(<(?:node|way|relation)\b[^>]*?) " + attr + r"='[^']*'",
+            r'\1',
+            content
+        )
+        # Double-quoted values: attr="..."
+        content = re.sub(
+            r'(<(?:node|way|relation)\b[^>]*?) ' + attr + r'="[^"]*"',
             r'\1',
             content
         )
@@ -49,9 +54,8 @@ def main():
         # Strip specific files passed as arguments
         files = sys.argv[1:]
     else:
-        # Strip all .osm files in tests/ except skipped ones
+        # Strip every testdata*.osm file in tests/
         files = sorted(glob.glob('tests/testdata*.osm'))
-        files = [f for f in files if not any(f.endswith(s) for s in SKIP_FILES)]
 
     if not files:
         print('No files to process.')

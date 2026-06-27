@@ -1,12 +1,12 @@
 <?xml version='1.0' encoding='UTF-8'?>
 <osm version='0.6' generator='JOSM'>
-  <node id='-1' action='modify' visible='true' lat='47.769' lon='-122.495' />
-  <node id='-2' action='modify' visible='true' lat='47.769' lon='-122.493' />
-  <node id='-3' action='modify' visible='true' lat='47.767' lon='-122.493' />
-  <node id='-4' action='modify' visible='true' lat='47.767' lon='-122.495' />
-  <node id='-5' action='modify' visible='true' lat='47.7685' lon='-122.4945' />
-  <node id='-6' action='modify' visible='true' lat='47.7685' lon='-122.4935' />
-  <way id='-7' action='modify' visible='true'>
+  <node id='-1' lat='47.769' lon='-122.495' />
+  <node id='-2' lat='47.769' lon='-122.493' />
+  <node id='-3' lat='47.767' lon='-122.493' />
+  <node id='-4' lat='47.767' lon='-122.495' />
+  <node id='-5' lat='47.7685' lon='-122.4945' />
+  <node id='-6' lat='47.7685' lon='-122.4935' />
+  <way id='-7'>
     <nd ref='-2' />
     <nd ref='-3' />
     <nd ref='-4' />
