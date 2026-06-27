@@ -128,7 +128,9 @@ class RegressionSnapshotTest {
 
     private static DataSet loadDataSetFromDisk(Path path) throws Exception {
         try (var is = Files.newInputStream(path)) {
-            return OsmReader.parseDataSet(is, null);
+            DataSet ds = OsmReader.parseDataSet(is, null);
+            JosmTestSetup.markAllReferrersDownloaded(ds);
+            return ds;
         }
     }
 

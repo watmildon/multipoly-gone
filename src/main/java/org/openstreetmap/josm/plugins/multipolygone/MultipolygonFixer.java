@@ -160,6 +160,10 @@ public class MultipolygonFixer {
         }
         for (Node node : sourceNodes) {
             if (!mergedNodes.contains(node)) {
+                // Fail-closed: if we don't know all the node's referrers, don't delete it.
+                if (!node.isReferrersDownloaded()) {
+                    continue;
+                }
                 boolean usedElsewhere = node.getReferrers().stream()
                     .anyMatch(r -> r instanceof Way w && !waysToCleanup.contains(w));
                 if (!usedElsewhere) {
@@ -331,8 +335,9 @@ public class MultipolygonFixer {
         // Delete orphaned nodes after ways, so undo restores nodes before ways.
         // Re-check each node: only delete if all its referrer ways are being deleted.
         // The earlier check (during plan building) may have used stale cross-plan state.
+        // Fail-closed: skip if referrer info is incomplete.
         for (Node node : nodesToCleanup) {
-            if (!node.isDeleted()) {
+            if (!node.isDeleted() && node.isReferrersDownloaded()) {
                 boolean safeToDelete = node.getReferrers().stream()
                     .filter(Way.class::isInstance)
                     .map(Way.class::cast)
@@ -457,6 +462,12 @@ public class MultipolygonFixer {
                         for (Way src : allSourceWays) {
                             memberReplacements.put(src, ct.targetWay);
                         }
+
+                        // Twin-edge elimination strands the interior nodes of the eliminated
+                        // shared edge — they were on the boundary of two rings, now on neither.
+                        // Schedule them for cleanup if nothing else references them.
+                        scheduleNodeCleanup(new HashSet<>(mergedRing.getNodes()),
+                            allSourceWays, waysToCleanup, nodesToCleanup);
                     }
                 }
 
@@ -658,6 +669,11 @@ public class MultipolygonFixer {
                                 splitReplacements.put(src, ct.targetWay);
                                 compReplacements.put(src, ct.targetWay);
                             }
+
+                            // Twin-edge elimination strands nodes interior to the eliminated
+                            // shared edge — they were on the boundary of two rings, now on neither.
+                            scheduleNodeCleanup(new HashSet<>(mergedRing.getNodes()),
+                                allSrcWays, waysToCleanup, nodesToCleanup);
                         }
                     }
                     case DECOMPOSE_SELF_INTERSECTIONS -> {
@@ -899,6 +915,11 @@ public class MultipolygonFixer {
 
     private static boolean isUnusedAfterBatch(Way way, Set<Relation> processedRelations,
             Set<String> insignificantTags) {
+        // Fail-closed: without complete referrer info we cannot prove the way is unused.
+        // Refuse to delete rather than risk breaking a parent relation we haven't seen.
+        if (!way.isReferrersDownloaded()) {
+            return false;
+        }
         for (OsmPrimitive referrer : way.getReferrers()) {
             if (referrer instanceof Relation r && !processedRelations.contains(r)) {
                 return false;
@@ -919,6 +940,12 @@ public class MultipolygonFixer {
      * A shared way must not be reused (geometry-changed) because other relations depend on its nodes.
      */
     private static boolean isSharedWithOtherRelation(Way way, Relation currentRelation) {
+        // Fail-closed: without complete referrer info we cannot prove the way is unshared.
+        // Treat it as shared to prevent silently rewriting its nodes under a parent we
+        // haven't downloaded.
+        if (!way.isReferrersDownloaded()) {
+            return true;
+        }
         for (OsmPrimitive referrer : way.getReferrers()) {
             if (referrer instanceof Relation r && r != currentRelation) {
                 return true;

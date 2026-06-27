@@ -44,6 +44,12 @@ public class JosmTestSetup implements BeforeAllCallback {
 
     /**
      * Load a .osm test data file from the classpath into a DataSet.
+     *
+     * <p>Marks every loaded primitive as having referrers downloaded. Tests assume
+     * the file represents a complete world (whatever the test author put in the file
+     * is everything that exists). Production code now refuses to delete or mutate
+     * primitives whose referrer status is unknown — without this marking, every test
+     * would hit the fail-closed path.
      */
     public static DataSet loadDataSet(String resourceName) {
         try (InputStream is = JosmTestSetup.class.getResourceAsStream("/" + resourceName)) {
@@ -51,9 +57,22 @@ public class JosmTestSetup implements BeforeAllCallback {
                 throw new IllegalStateException(
                     "Test resource not found on classpath: " + resourceName);
             }
-            return OsmReader.parseDataSet(is, null);
+            DataSet ds = OsmReader.parseDataSet(is, null);
+            markAllReferrersDownloaded(ds);
+            return ds;
         } catch (IllegalDataException | java.io.IOException e) {
             throw new RuntimeException("Failed to load test data: " + resourceName, e);
         }
+    }
+
+    /**
+     * Marks every primitive in the dataset as having its referrers downloaded.
+     * Test fixtures are complete by construction; production code's fail-closed
+     * referrer checks would otherwise reject any deletion/mutation under tests.
+     */
+    public static void markAllReferrersDownloaded(DataSet ds) {
+        ds.getNodes().forEach(n -> n.setReferrersDownloaded(true));
+        ds.getWays().forEach(w -> w.setReferrersDownloaded(true));
+        ds.getRelations().forEach(r -> r.setReferrersDownloaded(true));
     }
 }

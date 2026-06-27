@@ -12,6 +12,7 @@ import org.junit.jupiter.api.extension.RegisterExtension;
 import org.openstreetmap.josm.data.UndoRedoHandler;
 import org.openstreetmap.josm.data.osm.DataSet;
 import org.openstreetmap.josm.data.osm.Relation;
+import org.openstreetmap.josm.data.osm.RelationMember;
 import org.openstreetmap.josm.data.osm.Way;
 
 
@@ -963,5 +964,59 @@ class AnalyzerFixerIntegrationTest {
         long relationsAfter = ds.getRelations().stream().filter(r -> !r.isDeleted()).count();
         assertEquals(relationsBefore + 1, relationsAfter,
             "Split should produce exactly one new sub-relation");
+    }
+
+    // ---- Referrer-safety fail-closed tests ----
+    // Regression: users with partial data layers could trigger silent deletion of ways
+    // that belonged to relations outside their loaded bbox. The fixer now refuses to
+    // delete any way whose referrers haven't been downloaded.
+
+    @Test
+    void unverifiedReferrers_consolidateDoesNotDeleteSourceWays() {
+        DataSet ds = JosmTestSetup.loadDataSet("testdata.osm");
+        List<FixPlan> plans = MultipolygonAnalyzer.findFixableRelations(ds);
+
+        // Find any plan whose CONSOLIDATE_RINGS op has untagged source ways.
+        // Test data relation -147 (test 2) chains -102 and -120, both untagged.
+        FixPlan plan = null;
+        Set<Long> untaggedSourceIds = new java.util.HashSet<>();
+        for (FixPlan p : plans) {
+            for (FixOp op : p.getOperations()) {
+                if (op.getType() != FixOpType.CONSOLIDATE_RINGS || op.getRings() == null) continue;
+                for (WayChainBuilder.Ring ring : op.getRings()) {
+                    for (Way src : ring.getSourceWays()) {
+                        boolean tagged = src.getKeys().keySet().stream()
+                            .anyMatch(k -> !k.startsWith("_"));
+                        if (!tagged) {
+                            untaggedSourceIds.add(src.getUniqueId());
+                        }
+                    }
+                }
+            }
+            if (!untaggedSourceIds.isEmpty()) {
+                plan = p;
+                break;
+            }
+        }
+        assertNotNull(plan, "Test setup: no plan with untagged source ways found");
+        long relId = plan.getRelation().getUniqueId();
+
+        // Mark all untagged source ways as having un-downloaded referrers
+        for (long id : untaggedSourceIds) {
+            Way w = (Way) ds.getPrimitiveById(id, org.openstreetmap.josm.data.osm.OsmPrimitiveType.WAY);
+            w.setReferrersDownloaded(false);
+        }
+
+        MultipolygonFixer.fixRelations(List.of(plan));
+
+        // Untagged source ways must still exist because we don't know if they're
+        // referenced by relations outside our loaded data.
+        for (long id : untaggedSourceIds) {
+            Way way = (Way) ds.getPrimitiveById(id, org.openstreetmap.josm.data.osm.OsmPrimitiveType.WAY);
+            assertNotNull(way, "Source way " + id + " should still exist in dataset");
+            assertFalse(way.isDeleted(),
+                "Untagged source way " + id + " of relation " + relId
+                + " was deleted despite referrers not being downloaded");
+        }
     }
 }

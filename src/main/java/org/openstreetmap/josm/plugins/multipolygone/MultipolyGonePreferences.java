@@ -388,11 +388,10 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
         gbc.gridwidth = GridBagConstraints.REMAINDER;
         gbc.weightx = 1.0;
         gbc.fill = GridBagConstraints.NONE;
-        String[] downloadOptions = {tr("Always prompt"), tr("Always download"), tr("Never download")};
+        String[] downloadOptions = {tr("Always prompt"), tr("Always download")};
         downloadBeforeFixCombo = new JComboBox<>(downloadOptions);
         String currentDownloadPref = Config.getPref().get(PREF_DOWNLOAD_BEFORE_FIX, "prompt");
-        downloadBeforeFixCombo.setSelectedIndex(
-            "always".equals(currentDownloadPref) ? 1 : "never".equals(currentDownloadPref) ? 2 : 0);
+        downloadBeforeFixCombo.setSelectedIndex("always".equals(currentDownloadPref) ? 1 : 0);
         downloadPanel.add(downloadBeforeFixCombo, gbc);
         gbc.gridwidth = 1;
         gbc.weightx = 0;
@@ -706,7 +705,7 @@ public class MultipolyGonePreferences extends DefaultTabPreferenceSetting {
         Config.getPref().put(PREF_INSIGNIFICANT_TAGS_MP, mpTags.toString());
         Config.getPref().put(PREF_INSIGNIFICANT_TAGS_BOUNDARY, boundTags.toString());
 
-        String[] downloadValues = {"prompt", "always", "never"};
+        String[] downloadValues = {"prompt", "always"};
         Config.getPref().put(PREF_DOWNLOAD_BEFORE_FIX, downloadValues[downloadBeforeFixCombo.getSelectedIndex()]);
 
         // Serialize centerline tags table

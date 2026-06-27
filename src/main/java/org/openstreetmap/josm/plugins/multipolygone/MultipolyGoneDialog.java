@@ -382,12 +382,27 @@ public class MultipolyGoneDialog extends ToggleDialog
 
     /**
      * Finds primitives that need referrer data downloaded before fixes can safely proceed.
-     * This includes:
-     * - Source ways from CONSOLIDATE_RINGS, CONSOLIDATE_INNERS, DECOMPOSE ops (cleanup candidates)
-     * - Member ways from TOUCHING_INNER_MERGE ops (all become cleanup candidates)
-     * - Relations themselves when the plan would delete them (DISSOLVE, TOUCHING_INNER_MERGE)
-     *   and we don't know if they have parent relations
-     * Only ways without significant tags need referrer data (tagged ways are kept regardless).
+     *
+     * <p>The fixer's safety checks ({@code isUnusedAfterBatch}, {@code isSharedWithOtherRelation},
+     * the node-cleanup pass) all fail closed when referrers are not downloaded: they refuse to
+     * delete or geometry-mutate. This method's job is to surface every primitive the fixer
+     * might touch destructively so the user is asked to download exactly once instead of
+     * having operations silently skipped at execute time.
+     *
+     * <p>Covers:
+     * <ul>
+     *   <li>Every untagged source way in CONSOLIDATE_RINGS / CONSOLIDATE_INNERS / DECOMPOSE /
+     *       EXTRACT_OUTERS / EXTRACT_INNERS / DISSOLVE (candidates for cleanup deletion or
+     *       in-place geometry mutation)</li>
+     *   <li>All member ways of TOUCHING_INNER_MERGE (the relation's whole membership becomes
+     *       cleanup candidates)</li>
+     *   <li>Both ways in DEDUPLICATE_WAYS (the duplicate is deleted; the survivor's parent
+     *       set determines whether the dedup is safe at all)</li>
+     *   <li>The relation itself whenever the plan could delete it (DISSOLVE, TOUCHING_INNER_MERGE,
+     *       or a SPLIT_RELATION where every component dissolves) — so we know whether the
+     *       relation has parents</li>
+     *   <li>Recursively walks SPLIT_RELATION sub-component operations</li>
+     * </ul>
      */
     private Set<OsmPrimitive> findPrimitivesNeedingReferrers(List<FixPlan> plans) {
         Set<String> mpInsignificantTags = MultipolygonFixer.getInsignificantTagsForMultipolygon();
@@ -397,62 +412,113 @@ public class MultipolyGoneDialog extends ToggleDialog
         for (FixPlan plan : plans) {
             Set<String> insignificantTags = plan.isBoundary()
                 ? boundaryInsignificantTags : mpInsignificantTags;
-            boolean planDeletesRelation = false;
-            for (FixOp op : plan.getOperations()) {
-                if (op.getType() == FixOpType.CONSOLIDATE_RINGS && op.getRings() != null) {
-                    for (WayChainBuilder.Ring ring : op.getRings()) {
-                        for (Way way : ring.getSourceWays()) {
-                            if (!way.isReferrersDownloaded()
-                                    && !MultipolygonFixer.hasSignificantTags(way, insignificantTags)) {
-                                result.add(way);
-                            }
-                        }
-                    }
-                }
-                if (op.getType() == FixOpType.CONSOLIDATE_INNERS
-                        && op.getConsolidatedInnerGroups() != null) {
-                    for (var group : op.getConsolidatedInnerGroups()) {
-                        for (WayChainBuilder.Ring srcRing : group.getSourceRings()) {
-                            for (Way way : srcRing.getSourceWays()) {
-                                if (!way.isReferrersDownloaded()
-                                        && !MultipolygonFixer.hasSignificantTags(
-                                            way, insignificantTags)) {
-                                    result.add(way);
-                                }
-                            }
-                        }
-                    }
-                }
-                if (op.getType() == FixOpType.DECOMPOSE_SELF_INTERSECTIONS && op.getDecomposedRings() != null) {
-                    for (var decomp : op.getDecomposedRings()) {
-                        for (Way way : decomp.getOriginalRing().getSourceWays()) {
-                            if (!way.isReferrersDownloaded()
-                                    && !MultipolygonFixer.hasSignificantTags(way, insignificantTags)) {
-                                result.add(way);
-                            }
-                        }
-                    }
-                }
-                if (op.getType() == FixOpType.TOUCHING_INNER_MERGE) {
-                    planDeletesRelation = true;
-                    for (RelationMember m : plan.getRelation().getMembers()) {
-                        if (m.isWay() && !m.getWay().isReferrersDownloaded()
-                                && !MultipolygonFixer.hasSignificantTags(m.getWay(), insignificantTags)) {
-                            result.add(m.getWay());
-                        }
-                    }
-                }
-                if (op.getType() == FixOpType.DISSOLVE) {
-                    planDeletesRelation = true;
-                }
-            }
-            // If this plan would delete the relation, we need to know if the relation
-            // has parent relations. Download referrers for the relation itself if unknown.
+            boolean planDeletesRelation = collectFromOps(
+                plan.getOperations(), plan.getRelation(), insignificantTags, result);
             if (planDeletesRelation && !plan.getRelation().isReferrersDownloaded()) {
                 result.add(plan.getRelation());
             }
         }
         return result;
+    }
+
+    /**
+     * Walks a list of ops, adding deletion/mutation-candidate primitives to {@code result}.
+     * Returns true if any op in the list could cause the enclosing relation to be deleted.
+     */
+    private static boolean collectFromOps(List<FixOp> ops, Relation relation,
+            Set<String> insignificantTags, Set<OsmPrimitive> result) {
+        boolean deletesRelation = false;
+        for (FixOp op : ops) {
+            switch (op.getType()) {
+                case CONSOLIDATE_RINGS -> {
+                    if (op.getRings() != null) {
+                        for (WayChainBuilder.Ring ring : op.getRings()) {
+                            addUntaggedSources(ring.getSourceWays(), insignificantTags, result);
+                        }
+                    }
+                }
+                case CONSOLIDATE_INNERS -> {
+                    if (op.getConsolidatedInnerGroups() != null) {
+                        for (var group : op.getConsolidatedInnerGroups()) {
+                            for (WayChainBuilder.Ring srcRing : group.getSourceRings()) {
+                                addUntaggedSources(srcRing.getSourceWays(), insignificantTags, result);
+                            }
+                        }
+                    }
+                }
+                case DECOMPOSE_SELF_INTERSECTIONS -> {
+                    if (op.getDecomposedRings() != null) {
+                        for (var decomp : op.getDecomposedRings()) {
+                            addUntaggedSources(decomp.getOriginalRing().getSourceWays(),
+                                insignificantTags, result);
+                        }
+                    }
+                }
+                case EXTRACT_OUTERS, EXTRACT_INNERS -> {
+                    if (op.getRings() != null) {
+                        for (WayChainBuilder.Ring ring : op.getRings()) {
+                            addUntaggedSources(ring.getSourceWays(), insignificantTags, result);
+                        }
+                    }
+                }
+                case DISSOLVE -> {
+                    deletesRelation = true;
+                    if (op.getRings() != null) {
+                        for (WayChainBuilder.Ring ring : op.getRings()) {
+                            addUntaggedSources(ring.getSourceWays(), insignificantTags, result);
+                        }
+                    }
+                }
+                case TOUCHING_INNER_MERGE -> {
+                    deletesRelation = true;
+                    for (RelationMember m : relation.getMembers()) {
+                        if (m.isWay()) {
+                            addUntaggedSources(List.of(m.getWay()), insignificantTags, result);
+                        }
+                    }
+                }
+                case DEDUPLICATE_WAYS -> {
+                    if (op.getDuplicateReplacements() != null) {
+                        for (DuplicateWayReplacement repl : op.getDuplicateReplacements()) {
+                            if (!repl.getDuplicate().isReferrersDownloaded()) {
+                                result.add(repl.getDuplicate());
+                            }
+                            if (!repl.getSurvivor().isReferrersDownloaded()) {
+                                result.add(repl.getSurvivor());
+                            }
+                        }
+                    }
+                }
+                case SPLIT_RELATION -> {
+                    if (op.getComponents() != null) {
+                        boolean allDissolve = true;
+                        for (ComponentResult comp : op.getComponents()) {
+                            if (comp == null) continue;
+                            if (!comp.dissolvesCompletely()) allDissolve = false;
+                            collectFromOps(comp.getOperations(), relation, insignificantTags, result);
+                        }
+                        if (allDissolve) deletesRelation = true;
+                    }
+                }
+                default -> { }
+            }
+        }
+        return deletesRelation;
+    }
+
+    /**
+     * Adds untagged ways from the list to {@code result} if they don't yet have referrers.
+     * Tagged ways are kept regardless of cleanup decisions, so their referrer status doesn't
+     * affect plan execution.
+     */
+    private static void addUntaggedSources(List<Way> ways, Set<String> insignificantTags,
+            Set<OsmPrimitive> result) {
+        for (Way way : ways) {
+            if (!way.isReferrersDownloaded()
+                    && !MultipolygonFixer.hasSignificantTags(way, insignificantTags)) {
+                result.add(way);
+            }
+        }
     }
 
     private void downloadReferrersForSelected() {
@@ -504,34 +570,28 @@ public class MultipolyGoneDialog extends ToggleDialog
         String pref = Config.getPref().get(
             MultipolyGonePreferences.PREF_DOWNLOAD_BEFORE_FIX, "prompt");
 
-        if ("never".equals(pref)) {
-            return false;
-        }
-
         if ("always".equals(pref)) {
             downloadThenFix(primitivesNeeding, fixAction);
             return true;
         }
 
-        // "prompt" — show dialog
+        // "prompt" — show dialog. Fixing without download is no longer an option;
+        // the fixer refuses to delete or mutate primitives whose referrers are unknown,
+        // and silently leaving the work half-done strands data.
         int choice = showDownloadPrompt(primitivesNeeding.size());
         if (choice == 0) { // Download and Fix
             downloadThenFix(primitivesNeeding, fixAction);
             return true;
-        }
-        if (choice == 1) { // Fix Without Download
-            return false;
         }
         return true; // Cancel or closed — don't proceed
     }
 
     private int showDownloadPrompt(int primitiveCount) {
         String message = tr("{0} primitive(s) do not have referrers downloaded.\n"
-            + "Downloading referrers ensures that ways shared with other\n"
+            + "Downloading referrers is required so ways shared with other\n"
             + "relations are not accidentally deleted or modified.", primitiveCount);
         String[] options = {
             tr("Download and Fix"),
-            tr("Fix Without Download"),
             tr("Cancel")
         };
         return JOptionPane.showOptionDialog(
@@ -1025,9 +1085,7 @@ public class MultipolyGoneDialog extends ToggleDialog
         }
         if (source instanceof Relation rel) {
             for (RelationMember m : rel.getMembers()) {
-                if (m.isWay()
-                        && ("outer".equals(m.getRole()) || m.getRole().isEmpty())
-                        && !m.getWay().isReferrersDownloaded()) {
+                if (m.isWay() && !m.getWay().isReferrersDownloaded()) {
                     needDownload.add(m.getWay());
                 }
             }
@@ -1040,10 +1098,6 @@ public class MultipolyGoneDialog extends ToggleDialog
         String pref = Config.getPref().get(
             MultipolyGonePreferences.PREF_DOWNLOAD_BEFORE_FIX, "prompt");
 
-        if ("never".equals(pref)) {
-            return false;
-        }
-
         if ("always".equals(pref)) {
             downloadThenFix(needDownload, fixAction);
             return true;
@@ -1054,9 +1108,6 @@ public class MultipolyGoneDialog extends ToggleDialog
         if (choice == 0) {
             downloadThenFix(needDownload, fixAction);
             return true;
-        }
-        if (choice == 1) {
-            return false;
         }
         return true; // Cancel
     }
